@@ -15,3 +15,9 @@ IAM manages accounts, authentication, and application-level authorization. Each 
 ## Support and maintenance
 
 Report usage issues and improvement suggestions through [GitHub Issues](https://github.com/iXayda/IAM/issues). The project is maintained by ka1i. Contact: <iXayda@outlook.com>.
+
+For vulnerabilities, follow the [security policy](SECURITY.md). Read the [contribution guide](CONTRIBUTING.md) before contributing.
+
+## License
+
+The [Code of Conduct](CODE_OF_CONDUCT.md) is licensed under CC BY-SA 4.0 as stated in that file.

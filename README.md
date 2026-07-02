@@ -15,3 +15,9 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 ## 反馈与维护
 
 使用问题和改进建议可在 [GitHub Issues](https://github.com/iXayda/IAM/issues) 提出。项目由 ka1i 维护，联系邮箱：<iXayda@outlook.com>。
+
+漏洞请按 [安全策略](SECURITY.md)私下报告；参与开发前请阅读 [贡献指南](CONTRIBUTING.md)。
+
+## 许可证
+
+[社区行为准则](CODE_OF_CONDUCT.md)按其声明采用 CC BY-SA 4.0。
