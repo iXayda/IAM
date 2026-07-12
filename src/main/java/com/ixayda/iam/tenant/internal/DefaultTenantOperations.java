@@ -13,8 +13,10 @@ import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.tenant.TenantStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @Transactional(readOnly = true)
@@ -59,6 +61,9 @@ class DefaultTenantOperations implements TenantOperations {
 	@Transactional(propagation = Propagation.MANDATORY)
 	public Tenant requireActiveForWrite(TenantId tenantId) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+			throw new IllegalTransactionStateException("Tenant write guard requires a read-write transaction");
+		}
 		Tenant tenant = this.repository.findByIdForShare(tenantId)
 			.orElseThrow(() -> new TenantNotFoundException(tenantId));
 		return requireActive(tenant);

@@ -92,6 +92,17 @@ class TenantOperationsIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void requiresAReadWriteTransactionForTheWriteGuard() {
+		TransactionTemplate transaction = transactionTemplate();
+		transaction.setReadOnly(true);
+
+		assertThatThrownBy(
+				() -> transaction.executeWithoutResult(status -> this.tenants.requireActiveForWrite(TenantId.DEFAULT)))
+			.isInstanceOf(IllegalTransactionStateException.class)
+			.hasMessage("Tenant write guard requires a read-write transaction");
+	}
+
+	@Test
 	void preventsTenantDisableUntilAGuardedWriteCompletes() throws Exception {
 		Tenant created = create("write-guard", "Write Guard");
 		CountDownLatch guardAcquired = new CountDownLatch(1);
