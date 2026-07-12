@@ -88,7 +88,7 @@ class TenantDomainTests {
 		assertThat(defaultTenant.isBuiltInDefault()).isTrue();
 		assertThat(defaultTenant.activate(CREATED_AT.plusSeconds(1))).isSameAs(defaultTenant);
 		assertThatThrownBy(() -> defaultTenant.disable(CREATED_AT.plusSeconds(1)))
-			.isInstanceOf(IllegalStateException.class);
+			.isInstanceOf(ProtectedTenantException.class);
 		assertThatThrownBy(() -> new Tenant(TenantId.DEFAULT, "other", "Default",
 				TenantStatus.ACTIVE, 0, CREATED_AT, CREATED_AT)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new Tenant(TenantId.DEFAULT, "default", "Default", TenantStatus.DISABLED, 0,

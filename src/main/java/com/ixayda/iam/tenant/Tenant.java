@@ -46,7 +46,7 @@ public record Tenant(TenantId id, String slug, String displayName, TenantStatus 
 
 	public Tenant disable(Instant changedAt) {
 		if (isBuiltInDefault()) {
-			throw new IllegalStateException("The built-in default tenant cannot be disabled");
+			throw new ProtectedTenantException(this.id);
 		}
 		return changeStatus(TenantStatus.DISABLED, changedAt);
 	}
