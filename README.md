@@ -115,8 +115,10 @@ IAM 不负责：
 
 - Spring Boot 4.1 模块化单体基础
 - PostgreSQL 与 Flyway schema 管理
-- 租户领域模型、JDBC 持久化和事务化生命周期操作
-- 受保护的内置默认租户和乐观并发控制
+- 租户领域模型、受保护的内置默认租户和事务化生命周期操作
+- 租户隔离的组织模型、JDBC 持久化和乐观并发控制
+- 租户隔离的用户目录、统一登录标识和事务化生命周期操作
+- 用户软删除标识保留、乐观并发收敛和租户写入保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - GraalVM Native Image 构建与启动验证
 - JUnit、Spring Boot Test 和 Testcontainers 测试基线
