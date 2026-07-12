@@ -1,6 +1,10 @@
 spring:
   application:
     name: iam-core-service
+  datasource:
+    hikari:
+      data-source-properties:
+        logServerErrorDetail: false
   docker:
     compose:
       enabled: false
