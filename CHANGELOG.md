@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Tenant-scoped user directory schema with unified login identifier uniqueness.
 - Validated username, email, and phone login identifier rules.
 - Type-independent canonical login keys for tenant-scoped lookup.
+- Immutable user creation requests with unambiguous login identifiers.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
 

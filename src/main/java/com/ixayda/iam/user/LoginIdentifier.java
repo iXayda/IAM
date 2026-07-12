@@ -1,7 +1,11 @@
 package com.ixayda.iam.user;
 
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public record LoginIdentifier(LoginIdentifierType type, String value, String canonicalValue) {
@@ -44,6 +48,26 @@ public record LoginIdentifier(LoginIdentifierType type, String value, String can
 
 	public LoginKey loginKey() {
 		return LoginKey.canonical(this.canonicalValue);
+	}
+
+	static List<LoginIdentifier> validatedCopy(List<LoginIdentifier> identifiers) {
+		Objects.requireNonNull(identifiers, "Login identifiers must not be null");
+		List<LoginIdentifier> copy = List.copyOf(identifiers);
+		if (copy.isEmpty()) {
+			throw new IllegalArgumentException("At least one login identifier is required");
+		}
+
+		Set<LoginIdentifierType> types = EnumSet.noneOf(LoginIdentifierType.class);
+		Set<String> canonicalValues = new HashSet<>();
+		for (LoginIdentifier identifier : copy) {
+			if (!types.add(identifier.type())) {
+				throw new IllegalArgumentException("Only one login identifier of each type is allowed");
+			}
+			if (!canonicalValues.add(identifier.canonicalValue())) {
+				throw new IllegalArgumentException("Login identifiers must be unambiguous");
+			}
+		}
+		return copy;
 	}
 
 	@Override
