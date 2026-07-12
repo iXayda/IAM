@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - Tenant-scoped JDBC user lookup by ID and canonical login key.
 - Transactional JDBC user creation with PII-safe login conflict handling.
 - Tenant-scoped JDBC user status updates with optimistic concurrency.
+- Transactional user lifecycle operations with active-tenant enforcement.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
 

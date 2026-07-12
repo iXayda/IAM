@@ -21,6 +21,9 @@ public interface UserOperations {
 
 	User lock(TenantId tenantId, UserId userId);
 
+	/**
+	 * Marks a user as deleted while retaining its reserved login identifiers.
+	 */
 	User delete(TenantId tenantId, UserId userId);
 
 	User requireActive(TenantId tenantId, UserId userId);
