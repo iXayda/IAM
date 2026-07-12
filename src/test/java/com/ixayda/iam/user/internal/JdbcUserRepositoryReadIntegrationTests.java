@@ -1,0 +1,178 @@
+package com.ixayda.iam.user.internal;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+
+import com.ixayda.iam.ApplicationIntegrationTest;
+import com.ixayda.iam.tenant.TenantId;
+import com.ixayda.iam.user.LoginIdentifier;
+import com.ixayda.iam.user.LoginKey;
+import com.ixayda.iam.user.User;
+import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserStatus;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
+
+class JdbcUserRepositoryReadIntegrationTests extends ApplicationIntegrationTest {
+
+	private static final TenantId SECOND_TENANT_ID =
+			new TenantId(UUID.fromString("019bc1e7-14d1-7d38-bd23-0877f2cd0ce1"));
+
+	private static final Instant CREATED_AT = Instant.parse("2026-01-01T00:00:00Z");
+
+	private static final Instant UPDATED_AT = CREATED_AT.plusSeconds(30);
+
+	private final List<UserReference> usersToDelete = new ArrayList<>();
+
+	@Autowired
+	private JdbcUserRepository repository;
+
+	@Autowired
+	private JdbcClient jdbcClient;
+
+	@BeforeEach
+	void createSecondTenant() {
+		this.jdbcClient.sql("""
+				INSERT INTO tenants (tenant_id, slug, display_name)
+				VALUES (:tenantId, 'second-user-tenant', 'Second User Tenant')
+				""").param("tenantId", SECOND_TENANT_ID.value()).update();
+	}
+
+	@AfterEach
+	void deleteFixtures() {
+		this.usersToDelete.forEach(reference -> {
+			this.jdbcClient.sql("""
+					DELETE FROM user_login_identifiers
+					WHERE tenant_id = :tenantId AND user_id = :userId
+					""")
+				.param("tenantId", reference.tenantId().value())
+				.param("userId", reference.userId().value())
+				.update();
+			this.jdbcClient.sql("DELETE FROM users WHERE tenant_id = :tenantId AND user_id = :userId")
+				.param("tenantId", reference.tenantId().value())
+				.param("userId", reference.userId().value())
+				.update();
+		});
+		this.jdbcClient.sql("DELETE FROM tenants WHERE tenant_id = :tenantId")
+			.param("tenantId", SECOND_TENANT_ID.value())
+			.update();
+	}
+
+	@Test
+	void findsAUserAndAllIdentifiersByIdOrLoginKey() {
+		LoginIdentifier email = LoginIdentifier.email("O'Reilly;--@Example.COM");
+		User user = user(TenantId.DEFAULT, UserStatus.ACTIVE,
+				List.of(email, LoginIdentifier.phone("+1 (555) 123-4567"), LoginIdentifier.username("alice")));
+		insert(user);
+
+		assertThat(this.repository.findById(TenantId.DEFAULT, user.id())).contains(user);
+		assertThat(this.repository.findByLogin(TenantId.DEFAULT, LoginKey.from(email.value()))).contains(user);
+		assertThat(this.repository.findByLogin(TenantId.DEFAULT, LoginKey.from("alice"))).contains(user);
+	}
+
+	@Test
+	void scopesTypeIndependentLoginKeysToATenant() {
+		User usernameUser = user(TenantId.DEFAULT, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.username("15551234567")));
+		User phoneUser = user(SECOND_TENANT_ID, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.phone("+1 (555) 123-4567")));
+		insert(usernameUser);
+		insert(phoneUser);
+		LoginKey phoneKey = LoginKey.from("+1 (555) 123-4567");
+
+		assertThat(this.repository.findByLogin(TenantId.DEFAULT, phoneKey)).contains(usernameUser);
+		assertThat(this.repository.findByLogin(SECOND_TENANT_ID, phoneKey)).contains(phoneUser);
+		assertThat(this.repository.findById(SECOND_TENANT_ID, usernameUser.id())).isEmpty();
+		assertThat(this.repository.findById(TenantId.DEFAULT, phoneUser.id())).isEmpty();
+		TenantId unknownTenantId = TenantId.random();
+		assertThat(this.repository.findById(unknownTenantId, usernameUser.id())).isEmpty();
+		assertThat(this.repository.findByLogin(unknownTenantId, phoneKey)).isEmpty();
+	}
+
+	@Test
+	void returnsDeletedUsersWithoutReleasingTheirIdentifiers() {
+		User deleted = new User(UserId.random(), TenantId.DEFAULT,
+				List.of(LoginIdentifier.email("deleted@example.com")), UserStatus.DELETED, 3, CREATED_AT, UPDATED_AT, null);
+		insert(deleted);
+
+		assertThat(this.repository.findById(TenantId.DEFAULT, deleted.id())).contains(deleted);
+		assertThat(this.repository.findByLogin(TenantId.DEFAULT, LoginKey.from("deleted@example.com")))
+			.contains(deleted);
+	}
+
+	@Test
+	void reportsAStoredUserWithoutLoginIdentifiersAsInvalid() {
+		UserId userId = UserId.random();
+		this.usersToDelete.add(new UserReference(TenantId.DEFAULT, userId));
+		this.jdbcClient.sql("""
+				INSERT INTO users (user_id, tenant_id, created_at, updated_at)
+				VALUES (:userId, :tenantId, :createdAt, :updatedAt)
+				""")
+			.param("userId", userId.value())
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("createdAt", databaseValue(CREATED_AT))
+			.param("updatedAt", databaseValue(UPDATED_AT))
+			.update();
+
+		assertThatThrownBy(() -> this.repository.findById(TenantId.DEFAULT, userId))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessage("User has no login identifiers: " + userId);
+	}
+
+	private User user(TenantId tenantId, UserStatus status, List<LoginIdentifier> identifiers) {
+		return new User(UserId.random(), tenantId, identifiers, status, 3, CREATED_AT, UPDATED_AT,
+				CREATED_AT.plusSeconds(15));
+	}
+
+	private void insert(User user) {
+		this.usersToDelete.add(new UserReference(user.tenantId(), user.id()));
+		this.jdbcClient.sql("""
+				INSERT INTO users
+				    (user_id, tenant_id, status, version, created_at, updated_at, last_login_at)
+				VALUES
+				    (:userId, :tenantId, :status, :version, :createdAt, :updatedAt,
+				     CAST(:lastLoginAt AS timestamptz))
+				""")
+			.param("userId", user.id().value())
+			.param("tenantId", user.tenantId().value())
+			.param("status", user.status().name().toLowerCase(Locale.ROOT))
+			.param("version", user.version())
+			.param("createdAt", databaseValue(user.createdAt()))
+			.param("updatedAt", databaseValue(user.updatedAt()))
+			.param("lastLoginAt", databaseValue(user.lastLoginAt()))
+			.update();
+		user.identifiers().forEach(identifier -> this.jdbcClient.sql("""
+				INSERT INTO user_login_identifiers
+				    (tenant_id, user_id, identifier_type, identifier_value, canonical_value, created_at, updated_at)
+				VALUES
+				    (:tenantId, :userId, :type, :value, :canonicalValue, :createdAt, :updatedAt)
+				""")
+			.param("tenantId", user.tenantId().value())
+			.param("userId", user.id().value())
+			.param("type", identifier.type().name().toLowerCase(Locale.ROOT))
+			.param("value", identifier.value())
+			.param("canonicalValue", identifier.canonicalValue())
+			.param("createdAt", databaseValue(user.createdAt()))
+			.param("updatedAt", databaseValue(user.updatedAt()))
+			.update());
+	}
+
+	private static OffsetDateTime databaseValue(Instant instant) {
+		return instant == null ? null : OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
+	}
+
+	private record UserReference(TenantId tenantId, UserId userId) {
+	}
+
+}
