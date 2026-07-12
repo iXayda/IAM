@@ -5,3 +5,16 @@ services:
       - '3000:3000'
       - '4317'
       - '4318'
+  postgres:
+    image: 'postgres:latest'
+    environment:
+      POSTGRES_DB: '${IAM_DB_NAME:-iam}'
+      POSTGRES_PASSWORD: '${IAM_DB_PASSWORD:-iam-local}'
+      POSTGRES_USER: '${IAM_DB_USERNAME:-iam}'
+    ports:
+      - '5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 10

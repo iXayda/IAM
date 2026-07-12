@@ -5,6 +5,15 @@ spring:
     compose:
       enabled: false
       file: compose.yaml
+  flyway:
+    baseline-on-migrate: false
+    clean-disabled: true
+    out-of-order: false
+    validate-migration-naming: true
+    validate-on-migrate: true
+  sql:
+    init:
+      mode: never
 
 management:
   endpoints:
