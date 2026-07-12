@@ -113,60 +113,39 @@ IAM 不负责：
 
 当前项目已经具备以下基础能力：
 
-- 本地用户账号
-- 管理员账号
-- 服务账号
-- OAuth 2.0 授权
-- OIDC 登录与 SSO
-- JWT Access Token
-- OIDC ID Token
-- Refresh Token 哈希存储与轮换
-- Token 撤销
-- Token introspection
-- OIDC Discovery
-- JWKS
-- SCIM 2.0 Users / Groups
-- Admin RBAC
-- 服务端 scope 授权
-- TOTP 管理员 MFA
-- 恢复码
-- 高风险操作二次确认
-- 密码重置
-- 审计日志
-- 风险事件
-- SIEM 审计导出
-- Prometheus / OpenTelemetry 基础观测能力
+- Spring Boot 4.1 模块化单体基础
+- PostgreSQL 与 Flyway schema 管理
+- 租户领域模型、JDBC 持久化和事务化生命周期操作
+- 受保护的内置默认租户和乐观并发控制
+- Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
+- GraalVM Native Image 构建与启动验证
+- JUnit、Spring Boot Test 和 Testcontainers 测试基线
 
 ## 技术栈
 
-IAM 当前采用 Java 与 Spring 生态构建，核心技术栈如下：
+IAM 当前采用 Java 与 Spring 生态构建，已引入的核心技术栈如下：
 
 | 类别 | 技术 |
 |---|---|
-| 编程语言 | Java 21+ |
-| 应用框架 | Spring Boot |
-| 安全框架 | Spring Security |
+| 编程语言 | Java 21 |
+| 应用框架 | Spring Boot 4.1 |
 | 模块化架构 | Spring Modulith |
 | Web API | Spring MVC |
 | 数据访问 | Spring JDBC / JdbcClient |
 | 数据库 | PostgreSQL |
-| API 文档 | Springdoc OpenAPI |
+| 数据库迁移 | Flyway |
 | 配置管理 | Spring Boot Configuration Properties / Environment Variables |
-| 认证协议 | OAuth 2.0、OpenID Connect |
-| 用户同步协议 | SCIM 2.0 |
-| Token | JWT、Opaque Refresh Token |
-| 管理员 MFA | TOTP |
 | 观测 | Spring Boot Actuator、Micrometer、Prometheus、OpenTelemetry |
 | 本地开发 | Maven Wrapper、Docker Compose |
-| 测试 | JUnit 5、Spring Boot Test、Spring Security Test、Testcontainers、Mockito |
+| 测试 | JUnit 5、Spring Boot Test、Testcontainers、Mockito |
 | 构建 | Maven |
-| Native 构建 | GraalVM Native Image |
+| Native 构建 | Oracle GraalVM 25 |
 
 第一阶段新增或强化的技术组件：
 
 | 类别 | 技术方向 |
 |---|---|
-| 数据库迁移 | Flyway 或 Liquibase |
+| 数据库迁移 | Flyway |
 | 分布式临时状态 | Redis |
 | 企业目录认证 | LDAP / Active Directory bind |
 | 外部凭据校验 | Credential verifier SPI |
@@ -249,15 +228,35 @@ IAM 管理与自服务接口：
 
 ## 运行
 
-待补充。
+使用本地 profile 启动应用，Spring Boot 会读取根目录的 Compose 配置：
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+```
 
 ## 配置
 
-待补充。
+默认配置位于 `src/main/resources/application.yaml`，本地开发覆盖位于
+`src/main/resources/application-local.yaml`。生产环境应通过标准 Spring Boot 配置来源提供
+数据库连接和 OTLP exporter 配置。
 
 ## 测试
 
-待补充。
+运行完整测试：
+
+```bash
+./mvnw test
+```
+
+使用 Oracle GraalVM 25 构建 Native Image：
+
+```bash
+export JAVA_HOME=/path/to/graalvm-jdk-25
+export GRAALVM_HOME="$JAVA_HOME"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+./mvnw -DskipTests -Pnative native:compile
+```
 
 ## 路线图
 
