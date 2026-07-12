@@ -2,7 +2,9 @@ package com.ixayda.iam.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -18,7 +20,11 @@ import com.ixayda.iam.ApplicationIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class TenantOperationsIntegrationTests extends ApplicationIntegrationTest {
 
@@ -29,6 +35,9 @@ class TenantOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	@Autowired
 	private JdbcClient jdbcClient;
+
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	@AfterEach
 	void deleteCreatedTenants() {
@@ -74,6 +83,48 @@ class TenantOperationsIntegrationTests extends ApplicationIntegrationTest {
 		assertThat(active.version()).isEqualTo(2);
 		assertThat(this.tenants.activate(created.id())).isEqualTo(active);
 		assertThat(this.tenants.requireActive(created.id())).isEqualTo(active);
+	}
+
+	@Test
+	void requiresAnExistingTransactionForTheWriteGuard() {
+		assertThatThrownBy(() -> this.tenants.requireActiveForWrite(TenantId.DEFAULT))
+			.isInstanceOf(IllegalTransactionStateException.class);
+	}
+
+	@Test
+	void preventsTenantDisableUntilAGuardedWriteCompletes() throws Exception {
+		Tenant created = create("write-guard", "Write Guard");
+		CountDownLatch guardAcquired = new CountDownLatch(1);
+		CountDownLatch releaseGuard = new CountDownLatch(1);
+
+		try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+			Future<Tenant> guardedWrite = executor.submit(() -> transactionTemplate().execute(status -> {
+				Tenant guarded = this.tenants.requireActiveForWrite(created.id());
+				guardAcquired.countDown();
+				await(releaseGuard);
+				return guarded;
+			}));
+
+			assertThat(guardAcquired.await(5, TimeUnit.SECONDS)).isTrue();
+			try {
+				Throwable lockTimeout = catchThrowable(() -> transactionTemplate().executeWithoutResult(status -> {
+					this.jdbcClient.sql("SET LOCAL lock_timeout = '1s'").update();
+					this.tenants.disable(created.id());
+				}));
+				assertThat(lockTimeout).isInstanceOf(DataAccessException.class);
+				assertThat(((DataAccessException) lockTimeout).getRootCause())
+					.isInstanceOfSatisfying(SQLException.class,
+							ex -> assertThat(ex.getSQLState()).isEqualTo("55P03"));
+				assertThat(this.tenants.requireActive(created.id())).isEqualTo(created);
+			}
+			finally {
+				releaseGuard.countDown();
+			}
+
+			assertThat(guardedWrite.get(5, TimeUnit.SECONDS)).isEqualTo(created);
+		}
+
+		assertThat(this.tenants.disable(created.id()).status()).isEqualTo(TenantStatus.DISABLED);
 	}
 
 	@Test
@@ -140,6 +191,22 @@ class TenantOperationsIntegrationTests extends ApplicationIntegrationTest {
 		Tenant tenant = this.tenants.create(new CreateTenantRequest(slug, displayName));
 		this.tenantsToDelete.add(tenant.id());
 		return tenant;
+	}
+
+	private TransactionTemplate transactionTemplate() {
+		return new TransactionTemplate(this.transactionManager);
+	}
+
+	private static void await(CountDownLatch latch) {
+		try {
+			if (!latch.await(5, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("Timed out waiting to release the tenant write guard");
+			}
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Interrupted while holding the tenant write guard", ex);
+		}
 	}
 
 }

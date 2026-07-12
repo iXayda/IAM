@@ -61,6 +61,14 @@ class JdbcTenantRepository {
 			.optional();
 	}
 
+	Optional<Tenant> findByIdForShare(TenantId tenantId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		return this.jdbcClient.sql("SELECT " + COLUMNS + " FROM tenants WHERE tenant_id = :tenantId FOR SHARE")
+			.param("tenantId", tenantId.value())
+			.query(TENANT_ROW_MAPPER)
+			.optional();
+	}
+
 	Optional<Tenant> findBySlug(String slug) {
 		Objects.requireNonNull(slug, "Tenant slug must not be null");
 		return this.jdbcClient.sql("SELECT " + COLUMNS + " FROM tenants WHERE slug = :slug")

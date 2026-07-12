@@ -33,6 +33,15 @@ class DefaultTenantOperationsTests {
 			new DefaultTenantOperations(this.repository, this.timeSource);
 
 	@Test
+	void usesALockedReadWhenRequiringAnActiveTenantForWrite() {
+		Tenant active = tenant(TenantStatus.ACTIVE, 0, CREATED_AT);
+		when(this.repository.findByIdForShare(TENANT_ID)).thenReturn(Optional.of(active));
+
+		assertThat(this.operations.requireActiveForWrite(TENANT_ID)).isEqualTo(active);
+		verify(this.repository).findByIdForShare(TENANT_ID);
+	}
+
+	@Test
 	void returnsTheLatestTenantWhenAConcurrentRequestReachedTheTargetStatus() {
 		Tenant active = tenant(TenantStatus.ACTIVE, 0, CREATED_AT);
 		Tenant disabled = tenant(TenantStatus.DISABLED, 3, CREATED_AT.plusSeconds(3));

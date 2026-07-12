@@ -13,6 +13,7 @@ import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.tenant.TenantStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -51,6 +52,19 @@ class DefaultTenantOperations implements TenantOperations {
 	@Override
 	public Tenant requireActive(TenantId tenantId) {
 		Tenant tenant = requireTenant(tenantId);
+		return requireActive(tenant);
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public Tenant requireActiveForWrite(TenantId tenantId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Tenant tenant = this.repository.findByIdForShare(tenantId)
+			.orElseThrow(() -> new TenantNotFoundException(tenantId));
+		return requireActive(tenant);
+	}
+
+	private Tenant requireActive(Tenant tenant) {
 		if (!tenant.isActive()) {
 			throw new TenantDisabledException(tenant.id());
 		}

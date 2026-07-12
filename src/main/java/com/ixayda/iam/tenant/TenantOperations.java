@@ -16,4 +16,9 @@ public interface TenantOperations {
 
 	Tenant requireActive(TenantId tenantId);
 
+	/**
+	 * Requires an active tenant for a write coordinated by the caller's transaction.
+	 */
+	Tenant requireActiveForWrite(TenantId tenantId);
+
 }
