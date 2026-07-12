@@ -1,0 +1,13 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  docker:
+    compose:
+      enabled: true
+
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: true

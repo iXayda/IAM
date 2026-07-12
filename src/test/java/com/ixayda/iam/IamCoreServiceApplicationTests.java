@@ -8,10 +8,12 @@ import java.net.http.HttpResponse;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
+@AutoConfigureMetrics
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 class IamCoreServiceApplicationTests {
 
@@ -19,15 +21,18 @@ class IamCoreServiceApplicationTests {
 	private int port;
 
 	@Test
-	void startsWebServer() throws Exception {
-		HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + this.port + "/"))
+	void startsWebServerAndExposesObservabilityEndpoints() throws Exception {
+		HttpClient client = HttpClient.newHttpClient();
+
+		assertThat(status(client, "/actuator/health")).isEqualTo(200);
+		assertThat(status(client, "/actuator/prometheus")).isEqualTo(200);
+	}
+
+	private int status(HttpClient client, String path) throws Exception {
+		HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + this.port + path))
 			.GET()
 			.build();
-
-		HttpResponse<Void> response = HttpClient.newHttpClient()
-			.send(request, HttpResponse.BodyHandlers.discarding());
-
-		assertThat(response.statusCode()).isEqualTo(404);
+		return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
 	}
 
 }
