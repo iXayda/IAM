@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - Immutable user creation requests with unambiguous login identifiers.
 - UUID-backed user identities.
 - User lifecycle model with explicit state transitions and monotonic timestamps.
+- Tenant-scoped user operations contract and application module boundary.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
 
