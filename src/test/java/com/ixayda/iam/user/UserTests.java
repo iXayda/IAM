@@ -64,6 +64,16 @@ class UserTests {
 	}
 
 	@Test
+	void reportsInvalidTransitionsWithDomainContext() {
+		User deleted = user(UserStatus.DELETED);
+
+		assertThatThrownBy(() -> deleted.activate(UPDATED_AT.plusSeconds(1)))
+			.isInstanceOf(InvalidUserStatusTransitionException.class)
+			.extracting("userId", "source", "target")
+			.containsExactly(USER_ID, UserStatus.DELETED, UserStatus.ACTIVE);
+	}
+
+	@Test
 	void defensivelyCopiesIdentifiers() {
 		List<LoginIdentifier> source = new ArrayList<>();
 		source.add(USERNAME);

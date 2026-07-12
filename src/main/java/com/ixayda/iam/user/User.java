@@ -64,7 +64,7 @@ public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifie
 			return this;
 		}
 		if (!canTransitionTo(targetStatus)) {
-			throw new IllegalStateException("User cannot transition from " + this.status + " to " + targetStatus);
+			throw new InvalidUserStatusTransitionException(this.id, this.status, targetStatus);
 		}
 		if (changedAt.isBefore(this.updatedAt)) {
 			throw new IllegalArgumentException("User status change time must not be before its last update");
