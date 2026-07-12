@@ -11,3 +11,7 @@ All notable changes to this project will be documented in this file.
 - PostgreSQL service connections and Flyway-managed schema lifecycle.
 - Tenant persistence with a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
+
+### Fixed
+
+- GraalVM native application startup.
