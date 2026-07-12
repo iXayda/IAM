@@ -1,3 +1,29 @@
 # Local agent instructions and working documents
 /AGENTS.md
 /docs/
+
+# Maven
+/target/
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# IDEs and editors
+.apt_generated
+.classpath
+.factorypath
+.idea/
+.project
+.settings/
+.springBeans
+.sts4-cache
+.vscode/
+*.iml
+*.ipr
+*.iws
+/nbbuild/
+/nbdist/
+/nbproject/private/
+/dist/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
