@@ -2,7 +2,9 @@ package com.ixayda.iam.user.internal;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -14,11 +16,16 @@ import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.LoginIdentifierType;
 import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
+import com.ixayda.iam.user.UserAlreadyExistsException;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserStatus;
 import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 class JdbcUserRepository {
@@ -84,6 +91,35 @@ class JdbcUserRepository {
 		this.jdbcClient = jdbcClient;
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY)
+	public User insert(User user) {
+		Objects.requireNonNull(user, "User must not be null");
+		requireWriteTransaction();
+		int affected = this.jdbcClient.sql("""
+				INSERT INTO users
+				    (user_id, tenant_id, status, version, created_at, updated_at, last_login_at)
+				VALUES
+				    (:userId, :tenantId, :status, :version, :createdAt, :updatedAt,
+				     CAST(:lastLoginAt AS timestamptz))
+				""")
+			.param("userId", user.id().value())
+			.param("tenantId", user.tenantId().value())
+			.param("status", databaseValue(user.status()))
+			.param("version", user.version())
+			.param("createdAt", databaseValue(user.createdAt()))
+			.param("updatedAt", databaseValue(user.updatedAt()))
+			.param("lastLoginAt", databaseValue(user.lastLoginAt()))
+			.update();
+		if (affected != 1) {
+			throw new IllegalStateException("Creating a user affected an unexpected number of rows: " + affected);
+		}
+
+		for (LoginIdentifier identifier : user.identifiers()) {
+			insertIdentifier(user, identifier);
+		}
+		return user;
+	}
+
 	Optional<User> findById(TenantId tenantId, UserId userId) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(userId, "User ID must not be null");
@@ -100,6 +136,38 @@ class JdbcUserRepository {
 			.param("tenantId", tenantId.value())
 			.param("canonicalValue", loginKey.canonicalValue())
 			.query(USER_EXTRACTOR);
+	}
+
+	private void insertIdentifier(User user, LoginIdentifier identifier) {
+		int affected = this.jdbcClient.sql("""
+				INSERT INTO user_login_identifiers
+				    (tenant_id, user_id, identifier_type, identifier_value, canonical_value, created_at, updated_at)
+				VALUES
+				    (:tenantId, :userId, :type, :value, :canonicalValue, :createdAt, :updatedAt)
+				ON CONFLICT ON CONSTRAINT user_login_identifiers_tenant_canonical_key DO NOTHING
+				""")
+			.param("tenantId", user.tenantId().value())
+			.param("userId", user.id().value())
+			.param("type", databaseValue(identifier.type()))
+			.param("value", identifier.value())
+			.param("canonicalValue", identifier.canonicalValue())
+			.param("createdAt", databaseValue(user.createdAt()))
+			.param("updatedAt", databaseValue(user.updatedAt()))
+			.update();
+		if (affected == 0) {
+			throw new UserAlreadyExistsException(user.tenantId());
+		}
+		if (affected != 1) {
+			throw new IllegalStateException("Creating a login identifier affected an unexpected number of rows: "
+					+ affected);
+		}
+	}
+
+	private static void requireWriteTransaction() {
+		if (!TransactionSynchronizationManager.isActualTransactionActive()
+				|| TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+			throw new IllegalTransactionStateException("User write requires an existing read-write transaction");
+		}
 	}
 
 	private static Optional<User> extractUser(ResultSet resultSet) throws SQLException {
@@ -141,6 +209,27 @@ class JdbcUserRepository {
 			case "phone" -> LoginIdentifierType.PHONE;
 			default -> throw new IllegalStateException("Unsupported login identifier type in the database: " + value);
 		};
+	}
+
+	private static String databaseValue(LoginIdentifierType type) {
+		return switch (type) {
+			case USERNAME -> "username";
+			case EMAIL -> "email";
+			case PHONE -> "phone";
+		};
+	}
+
+	private static String databaseValue(UserStatus status) {
+		return switch (status) {
+			case ACTIVE -> "active";
+			case DISABLED -> "disabled";
+			case LOCKED -> "locked";
+			case DELETED -> "deleted";
+		};
+	}
+
+	private static OffsetDateTime databaseValue(Instant instant) {
+		return instant == null ? null : OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
 	}
 
 	private static UserStatus status(String value) {
