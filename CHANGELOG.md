@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - GraalVM native application startup.
+- Concurrent user status commands now converge without an unexpected transaction rollback.
 - Login identifier normalization and database validation for phone formatting and login timestamps.
 - Deterministic login keys for phone-like usernames and printable email identifiers.
 

@@ -139,7 +139,7 @@ class JdbcUserRepository {
 			.query(USER_EXTRACTOR);
 	}
 
-	@Transactional(propagation = Propagation.MANDATORY)
+	@Transactional(propagation = Propagation.MANDATORY, noRollbackFor = UserConcurrentUpdateException.class)
 	public User updateStatus(User current, User changed) {
 		Objects.requireNonNull(current, "Current user must not be null");
 		Objects.requireNonNull(changed, "Changed user must not be null");
