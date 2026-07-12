@@ -86,6 +86,8 @@ class JdbcUserRepository {
 			         END
 			""";
 
+	private static final String FIND_BY_ID_FOR_SHARE = FIND_BY_ID + "\nFOR SHARE OF u";
+
 	private final JdbcClient jdbcClient;
 
 	JdbcUserRepository(JdbcClient jdbcClient) {
@@ -125,6 +127,17 @@ class JdbcUserRepository {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(userId, "User ID must not be null");
 		return this.jdbcClient.sql(FIND_BY_ID)
+			.param("tenantId", tenantId.value())
+			.param("userId", userId.value())
+			.query(USER_EXTRACTOR);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<User> findByIdForShare(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		requireWriteTransaction();
+		return this.jdbcClient.sql(FIND_BY_ID_FOR_SHARE)
 			.param("tenantId", tenantId.value())
 			.param("userId", userId.value())
 			.query(USER_EXTRACTOR);

@@ -17,6 +17,7 @@ import com.ixayda.iam.user.UserNotFoundException;
 import com.ixayda.iam.user.UserOperations;
 import com.ixayda.iam.user.UserStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -59,11 +60,18 @@ class DefaultUserOperations implements UserOperations {
 	@Override
 	public User requireActive(TenantId tenantId, UserId userId) {
 		this.tenants.requireActive(tenantId);
-		User user = requireUser(tenantId, userId);
-		if (!user.isActive()) {
-			throw new UserNotActiveException(tenantId, user.id(), user.status());
-		}
-		return user;
+		return requireActive(requireUser(tenantId, userId));
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public User requireActiveForWrite(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		this.tenants.requireActiveForWrite(tenantId);
+		User user = this.repository.findByIdForShare(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		return requireActive(user);
 	}
 
 	@Override
@@ -120,6 +128,13 @@ class DefaultUserOperations implements UserOperations {
 		Objects.requireNonNull(userId, "User ID must not be null");
 		return this.repository.findById(tenantId, userId)
 			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+	}
+
+	private User requireActive(User user) {
+		if (!user.isActive()) {
+			throw new UserNotActiveException(user.tenantId(), user.id(), user.status());
+		}
+		return user;
 	}
 
 }

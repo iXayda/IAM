@@ -28,4 +28,10 @@ public interface UserOperations {
 
 	User requireActive(TenantId tenantId, UserId userId);
 
+	/**
+	 * Requires an active user and holds a shared row lock for a write coordinated by
+	 * the caller's existing read-write transaction.
+	 */
+	User requireActiveForWrite(TenantId tenantId, UserId userId);
+
 }

@@ -98,6 +98,31 @@ class DefaultUserOperationsTests {
 		verify(this.tenants).requireActive(TenantId.DEFAULT);
 	}
 
+	@Test
+	void acquiresTenantAndUserWriteGuardsInOrder() {
+		User active = user(UserStatus.ACTIVE, 0, CREATED_AT);
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForShare(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(active));
+
+		assertThat(this.operations.requireActiveForWrite(TenantId.DEFAULT, USER_ID)).isEqualTo(active);
+		InOrder order = inOrder(this.tenants, this.repository);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForShare(TenantId.DEFAULT, USER_ID);
+	}
+
+	@ParameterizedTest
+	@EnumSource(value = UserStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+	void rejectsInactiveUsersForWrite(UserStatus status) {
+		User user = user(status, 0, CREATED_AT);
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForShare(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(user));
+
+		assertThatThrownBy(() -> this.operations.requireActiveForWrite(TenantId.DEFAULT, USER_ID))
+			.isInstanceOf(UserNotActiveException.class)
+			.extracting("tenantId", "userId", "status")
+			.containsExactly(TenantId.DEFAULT, USER_ID, status);
+	}
+
 	@ParameterizedTest
 	@EnumSource(UserStatus.class)
 	void usesTheTenantWriteGuardForEveryStatusCommand(UserStatus target) {

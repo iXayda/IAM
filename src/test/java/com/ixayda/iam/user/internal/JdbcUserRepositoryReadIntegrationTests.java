@@ -9,6 +9,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
@@ -23,6 +24,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class JdbcUserRepositoryReadIntegrationTests extends ApplicationIntegrationTest {
 
@@ -40,6 +44,9 @@ class JdbcUserRepositoryReadIntegrationTests extends ApplicationIntegrationTest 
 
 	@Autowired
 	private JdbcClient jdbcClient;
+
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	@BeforeEach
 	void createSecondTenant() {
@@ -128,6 +135,27 @@ class JdbcUserRepositoryReadIntegrationTests extends ApplicationIntegrationTest 
 		assertThatThrownBy(() -> this.repository.findById(TenantId.DEFAULT, userId))
 			.isInstanceOf(IllegalStateException.class)
 			.hasMessage("User has no login identifiers: " + userId);
+	}
+
+	@Test
+	void requiresAReadWriteTransactionForTheSharedUserLock() {
+		User user = user(TenantId.DEFAULT, UserStatus.ACTIVE, List.of(LoginIdentifier.username("locked-user")));
+		insert(user);
+
+		assertThatThrownBy(() -> this.repository.findByIdForShare(TenantId.DEFAULT, user.id()))
+			.isInstanceOf(IllegalTransactionStateException.class);
+
+		TransactionTemplate readOnly = new TransactionTemplate(this.transactionManager);
+		readOnly.setReadOnly(true);
+		assertThatThrownBy(() -> readOnly
+			.execute(status -> this.repository.findByIdForShare(TenantId.DEFAULT, user.id())))
+			.isInstanceOf(IllegalTransactionStateException.class)
+			.hasMessage("User write requires an existing read-write transaction");
+
+		TransactionTemplate readWrite = new TransactionTemplate(this.transactionManager);
+		Optional<User> locked = readWrite
+			.execute(status -> this.repository.findByIdForShare(TenantId.DEFAULT, user.id()));
+		assertThat(locked).contains(user);
 	}
 
 	private User user(TenantId tenantId, UserStatus status, List<LoginIdentifier> identifiers) {
