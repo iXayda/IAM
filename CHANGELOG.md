@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - PostgreSQL service connections and Flyway-managed schema lifecycle.
 - Tenant-scoped organization schema and database isolation constraints.
 - Validated organization domain model and tenant-scoped lifecycle contract.
+- Transactional organization lifecycle operations with active-tenant enforcement and optimistic concurrency.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
 
