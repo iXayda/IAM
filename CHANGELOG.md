@@ -19,3 +19,4 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - GraalVM native application startup.
+- Login identifier normalization and database validation for phone formatting and login timestamps.
