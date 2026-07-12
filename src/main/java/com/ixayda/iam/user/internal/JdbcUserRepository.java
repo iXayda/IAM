@@ -17,6 +17,7 @@ import com.ixayda.iam.user.LoginIdentifierType;
 import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserAlreadyExistsException;
+import com.ixayda.iam.user.UserConcurrentUpdateException;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserStatus;
 import org.springframework.jdbc.core.ResultSetExtractor;
@@ -136,6 +137,46 @@ class JdbcUserRepository {
 			.param("tenantId", tenantId.value())
 			.param("canonicalValue", loginKey.canonicalValue())
 			.query(USER_EXTRACTOR);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	public User updateStatus(User current, User changed) {
+		Objects.requireNonNull(current, "Current user must not be null");
+		Objects.requireNonNull(changed, "Changed user must not be null");
+		requireWriteTransaction();
+		if (!current.id().equals(changed.id()) || !current.tenantId().equals(changed.tenantId())
+				|| !current.identifiers().equals(changed.identifiers())
+				|| !current.createdAt().equals(changed.createdAt())
+				|| !Objects.equals(current.lastLoginAt(), changed.lastLoginAt()) || current.status() == changed.status()
+				|| current.version() == Long.MAX_VALUE || changed.version() != current.version() + 1
+				|| changed.updatedAt().isBefore(current.updatedAt())) {
+			throw new IllegalArgumentException(
+					"User status update must preserve ownership and identity, and advance one version to a different status");
+		}
+
+		int affected = this.jdbcClient.sql("""
+				UPDATE users
+				SET status = :newStatus, version = :newVersion, updated_at = :updatedAt
+				WHERE tenant_id = :tenantId
+				  AND user_id = :userId
+				  AND version = :expectedVersion
+				  AND status = :expectedStatus
+				""")
+			.param("newStatus", databaseValue(changed.status()))
+			.param("newVersion", changed.version())
+			.param("updatedAt", databaseValue(changed.updatedAt()))
+			.param("tenantId", current.tenantId().value())
+			.param("userId", current.id().value())
+			.param("expectedVersion", current.version())
+			.param("expectedStatus", databaseValue(current.status()))
+			.update();
+		if (affected == 0) {
+			throw new UserConcurrentUpdateException(current.tenantId(), current.id(), current.version());
+		}
+		if (affected != 1) {
+			throw new IllegalStateException("Updating a user affected an unexpected number of rows: " + affected);
+		}
+		return changed;
 	}
 
 	private void insertIdentifier(User user, LoginIdentifier identifier) {
