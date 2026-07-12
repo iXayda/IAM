@@ -42,6 +42,10 @@ public record LoginIdentifier(LoginIdentifierType type, String value, String can
 		return create(LoginIdentifierType.PHONE, value);
 	}
 
+	public LoginKey loginKey() {
+		return LoginKey.canonical(this.canonicalValue);
+	}
+
 	@Override
 	public String toString() {
 		return "LoginIdentifier[type=" + this.type + "]";
@@ -59,6 +63,15 @@ public record LoginIdentifier(LoginIdentifierType type, String value, String can
 			throw new IllegalArgumentException("Login identifier value must not be empty");
 		}
 		return normalized;
+	}
+
+	static String canonicalizeLoginKey(String value) {
+		String normalizedValue = normalizeValue(value);
+		if (normalizedValue.indexOf('@') >= 0) {
+			return canonicalizeEmail(normalizedValue);
+		}
+		String canonicalPhone = canonicalPhoneIfValid(normalizedValue);
+		return canonicalPhone != null ? canonicalPhone : canonicalizeUsername(normalizedValue);
 	}
 
 	private static String canonicalize(LoginIdentifierType type, String value) {
