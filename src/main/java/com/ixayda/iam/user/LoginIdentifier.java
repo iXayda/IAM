@@ -67,7 +67,7 @@ public record LoginIdentifier(LoginIdentifierType type, String value, String can
 				throw new IllegalArgumentException("Login identifiers must be unambiguous");
 			}
 		}
-		return copy;
+		return copy.stream().sorted((left, right) -> left.type().compareTo(right.type())).toList();
 	}
 
 	@Override

@@ -28,12 +28,14 @@ class CreateUserRequestTests {
 	@Test
 	void defensivelyCopiesIdentifiers() {
 		List<LoginIdentifier> source = new ArrayList<>();
+		source.add(LoginIdentifier.email("alice@example.com"));
 		source.add(LoginIdentifier.username("alice"));
 		CreateUserRequest request = new CreateUserRequest(source);
 
-		source.add(LoginIdentifier.email("alice@example.com"));
+		source.add(LoginIdentifier.phone("15551234567"));
 
-		assertThat(request.identifiers()).hasSize(1);
+		assertThat(request.identifiers()).extracting(LoginIdentifier::type)
+			.containsExactly(LoginIdentifierType.USERNAME, LoginIdentifierType.EMAIL);
 		assertThatThrownBy(() -> request.identifiers().add(LoginIdentifier.phone("15551234567")))
 			.isInstanceOf(UnsupportedOperationException.class);
 	}
