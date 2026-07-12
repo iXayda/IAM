@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Validated organization domain model and tenant-scoped lifecycle contract.
 - Transactional organization lifecycle operations with active-tenant enforcement and optimistic concurrency.
 - Tenant-scoped user directory schema with unified login identifier uniqueness.
+- Validated username, email, and phone login identifier rules.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
 
