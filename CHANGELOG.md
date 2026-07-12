@@ -20,3 +20,4 @@ All notable changes to this project will be documented in this file.
 
 - GraalVM native application startup.
 - Login identifier normalization and database validation for phone formatting and login timestamps.
+- Deterministic login keys for phone-like usernames and printable email identifiers.

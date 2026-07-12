@@ -73,7 +73,7 @@ class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void createsTheBuiltInTenant() {
-		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success")).isEqualTo(4);
+		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success")).isEqualTo(5);
 		assertThat(count("SELECT count(*) FROM tenants")).isOne();
 		assertThat(this.jdbcClient.sql("SELECT status FROM tenants WHERE slug = 'default'")
 			.query(String.class)
@@ -152,10 +152,18 @@ class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 				"bob@example.com")).isInstanceOf(DataIntegrityViolationException.class);
 		assertThatThrownBy(() -> insertIdentifier(FIRST_USER_ID, DEFAULT_TENANT_ID, "email", "alice@@example.com",
 				"alice@@example.com")).isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertIdentifier(FIRST_USER_ID, DEFAULT_TENANT_ID, "email",
+				"alice\u0001@example.com", "alice\u0001@example.com"))
+			.isInstanceOf(DataIntegrityViolationException.class);
 		assertThatThrownBy(() -> insertIdentifier(FIRST_USER_ID, DEFAULT_TENANT_ID, "phone", "+15551234567",
 				"+15551234567")).isInstanceOf(DataIntegrityViolationException.class);
 		assertThatThrownBy(() -> insertIdentifier(FIRST_USER_ID, DEFAULT_TENANT_ID, "phone", "+1\t5551234567",
 				"15551234567")).isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertIdentifier(FIRST_USER_ID, DEFAULT_TENANT_ID, "username", "123-456",
+				"123-456")).isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertIdentifier(FIRST_USER_ID, DEFAULT_TENANT_ID, "username", "123.456",
+				"123.456")).isInstanceOf(DataIntegrityViolationException.class);
+		insertIdentifier(FIRST_USER_ID, DEFAULT_TENANT_ID, "username", "123456", "123456");
 	}
 
 	@Test
