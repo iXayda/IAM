@@ -8,6 +8,6 @@ import org.springframework.context.annotation.Import;
 @AutoConfigureMetrics
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
-abstract class ApplicationIntegrationTest {
+public abstract class ApplicationIntegrationTest {
 
 }
