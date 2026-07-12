@@ -11,8 +11,8 @@ final class PasswordCredentialAlreadyExistsException extends RuntimeException {
 
 	private final UserId userId;
 
-	PasswordCredentialAlreadyExistsException(TenantId tenantId, UserId userId, Throwable cause) {
-		super("Password credential already exists for user: " + userId, cause);
+	PasswordCredentialAlreadyExistsException(TenantId tenantId, UserId userId) {
+		super("Password credential already exists for user: " + userId);
 		this.tenantId = Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		this.userId = Objects.requireNonNull(userId, "User ID must not be null");
 	}
