@@ -6,6 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.tenant.TenantId;
@@ -184,6 +190,59 @@ class JdbcPasswordCredentialRepositoryIntegrationTests extends ApplicationIntegr
 		assertCredential(this.repository.findByUser(TenantId.DEFAULT, USER_ID), initial);
 	}
 
+	@Test
+	void requiresAnExistingReadWriteTransactionForTheCredentialLock() {
+		PasswordCredential initial = insert(credential(TenantId.DEFAULT, ENCODED_PASSWORD));
+
+		assertThatThrownBy(() -> this.repository.findByUserForUpdate(TenantId.DEFAULT, USER_ID))
+			.isInstanceOf(IllegalTransactionStateException.class);
+		TransactionTemplate readOnly = transactionTemplate();
+		readOnly.setReadOnly(true);
+		assertThatThrownBy(() -> readOnly
+			.execute(status -> this.repository.findByUserForUpdate(TenantId.DEFAULT, USER_ID)))
+			.isInstanceOf(IllegalTransactionStateException.class)
+			.hasMessage("Password credential write requires an existing read-write transaction");
+
+		Optional<PasswordCredential> locked = transactionTemplate()
+			.execute(status -> this.repository.findByUserForUpdate(TenantId.DEFAULT, USER_ID));
+		assertCredential(locked, initial);
+	}
+
+	@Test
+	void holdsTheCredentialLockUntilTheCallerTransactionCompletes() throws Exception {
+		PasswordCredential initial = insert(credential(TenantId.DEFAULT, ENCODED_PASSWORD));
+		CountDownLatch firstLockAcquired = new CountDownLatch(1);
+		CountDownLatch releaseFirstLock = new CountDownLatch(1);
+		CountDownLatch secondLockStarted = new CountDownLatch(1);
+		AtomicInteger secondBackendId = new AtomicInteger();
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<PasswordCredential> first = executor.submit(() -> transactionTemplate().execute(status -> {
+				PasswordCredential locked = this.repository.findByUserForUpdate(TenantId.DEFAULT, USER_ID).orElseThrow();
+				firstLockAcquired.countDown();
+				await(releaseFirstLock, "Timed out holding the password credential lock");
+				return locked;
+			}));
+			Future<PasswordCredential> second;
+			try {
+				assertThat(firstLockAcquired.await(5, TimeUnit.SECONDS)).isTrue();
+				second = executor.submit(() -> transactionTemplate().execute(status -> {
+					secondBackendId.set(backendId());
+					secondLockStarted.countDown();
+					return this.repository.findByUserForUpdate(TenantId.DEFAULT, USER_ID).orElseThrow();
+				}));
+				assertThat(secondLockStarted.await(5, TimeUnit.SECONDS)).isTrue();
+				assertThat(waitUntilBlocked(secondBackendId.get())).isTrue();
+			}
+			finally {
+				releaseFirstLock.countDown();
+			}
+
+			assertThat(first.get(5, TimeUnit.SECONDS).encodedPassword()).isEqualTo(initial.encodedPassword());
+			assertThat(second.get(5, TimeUnit.SECONDS).encodedPassword()).isEqualTo(initial.encodedPassword());
+		}
+	}
+
 	private PasswordCredential credential(TenantId tenantId, String encodedPassword) {
 		return credential(tenantId, USER_ID, encodedPassword);
 	}
@@ -209,6 +268,38 @@ class JdbcPasswordCredentialRepositoryIntegrationTests extends ApplicationIntegr
 
 	private TransactionTemplate transactionTemplate() {
 		return new TransactionTemplate(this.transactionManager);
+	}
+
+	private int backendId() {
+		return this.jdbcClient.sql("SELECT pg_backend_pid()").query(Integer.class).single();
+	}
+
+	private boolean waitUntilBlocked(int backendId) throws InterruptedException {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+		do {
+			boolean blocked = this.jdbcClient.sql("SELECT cardinality(pg_blocking_pids(:backendId)) > 0")
+				.param("backendId", backendId)
+				.query(Boolean.class)
+				.single();
+			if (blocked) {
+				return true;
+			}
+			Thread.sleep(10);
+		}
+		while (System.nanoTime() < deadline);
+		return false;
+	}
+
+	private static void await(CountDownLatch latch, String timeoutMessage) {
+		try {
+			if (!latch.await(5, TimeUnit.SECONDS)) {
+				throw new IllegalStateException(timeoutMessage);
+			}
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Interrupted while coordinating password credential locks", ex);
+		}
 	}
 
 	private static void assertCredential(Optional<PasswordCredential> actual, PasswordCredential expected) {

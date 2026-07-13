@@ -77,6 +77,19 @@ class JdbcPasswordCredentialRepository {
 			.optional();
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<PasswordCredential> findByUserForUpdate(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		requireWriteTransaction();
+		return this.jdbcClient.sql("SELECT " + COLUMNS
+				+ " FROM user_password_credentials WHERE tenant_id = :tenantId AND user_id = :userId FOR UPDATE")
+			.param("tenantId", tenantId.value())
+			.param("userId", userId.value())
+			.query(ROW_MAPPER)
+			.optional();
+	}
+
 	@Transactional(propagation = Propagation.MANDATORY,
 			noRollbackFor = PasswordCredentialConcurrentUpdateException.class)
 	PasswordCredential update(PasswordCredential current, PasswordCredential changed) {
