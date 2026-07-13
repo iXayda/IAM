@@ -1,12 +1,11 @@
-package com.ixayda.iam.organization.internal;
+package com.ixayda.iam.organization;
 
 import java.util.Objects;
 
-import com.ixayda.iam.organization.OrganizationId;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
 
-final class OrganizationMembershipConcurrentUpdateException extends RuntimeException {
+public final class OrganizationMembershipConcurrentUpdateException extends RuntimeException {
 
 	private final TenantId tenantId;
 
@@ -16,9 +15,9 @@ final class OrganizationMembershipConcurrentUpdateException extends RuntimeExcep
 
 	private final long expectedVersion;
 
-	OrganizationMembershipConcurrentUpdateException(TenantId tenantId, OrganizationId organizationId, UserId userId,
-			long expectedVersion) {
-		super("Organization membership changed concurrently for organization " + organizationId + " and user "
+	public OrganizationMembershipConcurrentUpdateException(TenantId tenantId, OrganizationId organizationId,
+			UserId userId, long expectedVersion) {
+		super("Organization membership was updated concurrently for organization " + organizationId + " and user "
 				+ userId);
 		this.tenantId = Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		this.organizationId = Objects.requireNonNull(organizationId, "Organization ID must not be null");
@@ -29,19 +28,19 @@ final class OrganizationMembershipConcurrentUpdateException extends RuntimeExcep
 		this.expectedVersion = expectedVersion;
 	}
 
-	TenantId tenantId() {
+	public TenantId tenantId() {
 		return this.tenantId;
 	}
 
-	OrganizationId organizationId() {
+	public OrganizationId organizationId() {
 		return this.organizationId;
 	}
 
-	UserId userId() {
+	public UserId userId() {
 		return this.userId;
 	}
 
-	long expectedVersion() {
+	public long expectedVersion() {
 		return this.expectedVersion;
 	}
 

@@ -8,6 +8,7 @@ import java.time.Instant;
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.organization.OrganizationId;
 import com.ixayda.iam.organization.OrganizationMembership;
+import com.ixayda.iam.organization.OrganizationMembershipConcurrentUpdateException;
 import com.ixayda.iam.organization.OrganizationMembershipStatus;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;

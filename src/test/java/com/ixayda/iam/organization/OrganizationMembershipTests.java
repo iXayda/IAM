@@ -94,6 +94,26 @@ class OrganizationMembershipTests {
 		assertThatThrownBy(() -> maximumVersion.remove(CREATED_AT)).isInstanceOf(ArithmeticException.class);
 	}
 
+	@Test
+	void validatesPublicMembershipExceptionContext() {
+		OrganizationMembershipNotFoundException missing =
+				new OrganizationMembershipNotFoundException(TenantId.DEFAULT, ORGANIZATION_ID, USER_ID);
+		OrganizationMembershipNotActiveException inactive = new OrganizationMembershipNotActiveException(
+				TenantId.DEFAULT, ORGANIZATION_ID, USER_ID, OrganizationMembershipStatus.REMOVED);
+		OrganizationMembershipConcurrentUpdateException concurrent =
+				new OrganizationMembershipConcurrentUpdateException(TenantId.DEFAULT, ORGANIZATION_ID, USER_ID, 7);
+
+		assertThat(missing.tenantId()).isEqualTo(TenantId.DEFAULT);
+		assertThat(missing.organizationId()).isEqualTo(ORGANIZATION_ID);
+		assertThat(missing.userId()).isEqualTo(USER_ID);
+		assertThat(inactive.status()).isEqualTo(OrganizationMembershipStatus.REMOVED);
+		assertThat(concurrent.expectedVersion()).isEqualTo(7);
+		assertThatThrownBy(() -> new OrganizationMembershipNotActiveException(TenantId.DEFAULT, ORGANIZATION_ID,
+				USER_ID, OrganizationMembershipStatus.ACTIVE)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new OrganizationMembershipConcurrentUpdateException(TenantId.DEFAULT,
+				ORGANIZATION_ID, USER_ID, -1)).isInstanceOf(IllegalArgumentException.class);
+	}
+
 	private OrganizationMembership activeMembership() {
 		return OrganizationMembership.active(TenantId.DEFAULT, ORGANIZATION_ID, USER_ID, CREATED_AT);
 	}

@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Tenant-scoped organization schema and database isolation constraints.
 - Tenant-scoped organization membership schema with database-enforced parent ownership.
 - Validated organization membership lifecycle model with soft removal and reactivation.
+- Transactional membership addition and checks with active-parent guards, plus soft removal after parent deactivation.
 - Validated organization domain model and tenant-scoped lifecycle contract.
 - Transactional organization lifecycle operations with active-tenant enforcement and optimistic concurrency.
 - Tenant-scoped user directory schema with unified login identifier uniqueness.
