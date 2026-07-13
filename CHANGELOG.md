@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 - Tenant-scoped current password credential schema for local users.
 - Tenant-scoped local password setting and verification with adaptive hash upgrades.
 - Atomic local password login with generic failures and fixed-lifetime session issuance.
+- Provider-neutral external credential verification contract with opaque subject identifiers and redacted diagnostics.
 - Non-bearer user session metadata with tenant and user lifecycle-version snapshots.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
