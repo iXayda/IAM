@@ -29,6 +29,17 @@ class PasswordHashing {
 		}
 	}
 
+	String reencode(PasswordAttempt attempt) {
+		Objects.requireNonNull(attempt, "Password attempt must not be null");
+		char[] value = attempt.copy();
+		try {
+			return this.passwordEncoder.encode(CharBuffer.wrap(value));
+		}
+		finally {
+			Arrays.fill(value, '\0');
+		}
+	}
+
 	boolean matches(PasswordAttempt attempt, String encodedPassword) {
 		Objects.requireNonNull(attempt, "Password attempt must not be null");
 		Objects.requireNonNull(encodedPassword, "Encoded password must not be null");

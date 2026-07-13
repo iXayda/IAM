@@ -31,6 +31,16 @@ class PasswordHashingTests {
 	}
 
 	@Test
+	void clearsTheCopiedAttemptAfterReencoding() {
+		CapturingPasswordEncoder encoder = new CapturingPasswordEncoder();
+		PasswordHashing hashing = new PasswordHashing(encoder);
+
+		assertThat(hashing.reencode(new PasswordAttempt("attempt".toCharArray())))
+			.isEqualTo("{test}encoded-password-value-1234567890");
+		assertCleared(encoder.captured);
+	}
+
+	@Test
 	void validatesInputsAndDelegatesUpgradeChecks() {
 		CapturingPasswordEncoder encoder = new CapturingPasswordEncoder();
 		PasswordHashing hashing = new PasswordHashing(encoder);
