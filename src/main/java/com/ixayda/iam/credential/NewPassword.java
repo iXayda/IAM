@@ -1,14 +1,19 @@
 package com.ixayda.iam.credential;
 
+import java.util.Arrays;
 import java.util.Objects;
 
-public final class NewPassword {
+import javax.security.auth.Destroyable;
+
+public final class NewPassword implements Destroyable, AutoCloseable {
 
 	public static final int MIN_LENGTH = 8;
 
 	public static final int MAX_LENGTH = 256;
 
 	private final char[] value;
+
+	private boolean destroyed;
 
 	public NewPassword(char[] value) {
 		Objects.requireNonNull(value, "New password must not be null");
@@ -21,12 +26,32 @@ public final class NewPassword {
 	/**
 	 * Returns a caller-owned copy that should be cleared immediately after use.
 	 */
-	public char[] copy() {
+	public synchronized char[] copy() {
+		requireNotDestroyed();
 		return this.value.clone();
 	}
 
-	public int length() {
+	public synchronized int length() {
+		requireNotDestroyed();
 		return this.value.length;
+	}
+
+	@Override
+	public synchronized void destroy() {
+		if (!this.destroyed) {
+			Arrays.fill(this.value, '\0');
+			this.destroyed = true;
+		}
+	}
+
+	@Override
+	public synchronized boolean isDestroyed() {
+		return this.destroyed;
+	}
+
+	@Override
+	public void close() {
+		destroy();
 	}
 
 	@Override
@@ -41,6 +66,12 @@ public final class NewPassword {
 			}
 		}
 		return true;
+	}
+
+	private void requireNotDestroyed() {
+		if (this.destroyed) {
+			throw new IllegalStateException("New password has been destroyed");
+		}
 	}
 
 }

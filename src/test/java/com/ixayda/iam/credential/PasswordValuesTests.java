@@ -23,6 +23,12 @@ class PasswordValuesTests {
 		assertThat(password.length()).isEqualTo(28);
 		assertThat(password.toString()).isEqualTo("NewPassword[redacted]");
 		assertThat(password).isNotEqualTo(new NewPassword("correct horse battery staple".toCharArray()));
+
+		password.close();
+		password.close();
+		assertThat(password.isDestroyed()).isTrue();
+		assertThatThrownBy(password::copy).isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(password::length).isInstanceOf(IllegalStateException.class);
 	}
 
 	@Test
@@ -51,6 +57,12 @@ class PasswordValuesTests {
 		assertThat(attempt.length()).isEqualTo(3);
 		assertThat(attempt.toString()).isEqualTo("PasswordAttempt[redacted]");
 		assertThat(attempt).isNotEqualTo(new PasswordAttempt("old".toCharArray()));
+
+		attempt.destroy();
+		attempt.destroy();
+		assertThat(attempt.isDestroyed()).isTrue();
+		assertThatThrownBy(attempt::copy).isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(attempt::length).isInstanceOf(IllegalStateException.class);
 	}
 
 	@Test
