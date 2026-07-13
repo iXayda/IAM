@@ -1,4 +1,4 @@
-package com.ixayda.iam.credential;
+package com.ixayda.iam.user;
 
 import java.util.Objects;
 

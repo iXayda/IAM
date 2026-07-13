@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Transactional organization lifecycle operations with active-tenant enforcement and optimistic concurrency.
 - Tenant-scoped user directory schema with unified login identifier uniqueness.
 - Tenant-scoped external identity mapping schema with explicit provider and subject ownership.
+- Validated external identity mapping model with redacted subject diagnostics.
 - Validated username, email, and phone login identifier rules.
 - Type-independent canonical login keys for tenant-scoped lookup.
 - Immutable user creation requests with unambiguous login identifiers.

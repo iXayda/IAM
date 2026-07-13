@@ -3,6 +3,8 @@ package com.ixayda.iam.credential;
 import java.util.Objects;
 import java.util.Optional;
 
+import com.ixayda.iam.user.ExternalSubjectId;
+
 public final class ExternalCredentialVerification {
 
 	private static final ExternalCredentialVerification REJECTED =

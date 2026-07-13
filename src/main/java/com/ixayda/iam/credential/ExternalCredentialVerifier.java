@@ -1,11 +1,12 @@
 package com.ixayda.iam.credential;
 
 import com.ixayda.iam.tenant.TenantId;
+import com.ixayda.iam.user.ExternalIdentityProviderId;
 import com.ixayda.iam.user.LoginKey;
 
 public interface ExternalCredentialVerifier {
 
-	ExternalCredentialProviderId providerId();
+	ExternalIdentityProviderId providerId();
 
 	/**
 	 * Verifies a password against this provider. Unknown identities, inactive external
