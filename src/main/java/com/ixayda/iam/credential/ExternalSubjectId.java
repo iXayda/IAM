@@ -8,10 +8,10 @@ public record ExternalSubjectId(String value) {
 
 	public ExternalSubjectId {
 		Objects.requireNonNull(value, "External subject ID must not be null");
-		if (value.isBlank() || value.length() > MAX_LENGTH || !value.equals(value.strip())
-				|| value.codePoints().anyMatch(Character::isISOControl)) {
+		if (value.isEmpty() || value.length() > MAX_LENGTH
+				|| !value.chars().allMatch(character -> character >= 0x21 && character <= 0x7e)) {
 			throw new IllegalArgumentException(
-					"External subject ID must contain 1 to 512 non-control characters without surrounding whitespace");
+					"External subject ID must contain 1 to 512 visible ASCII characters");
 		}
 	}
 

@@ -52,7 +52,7 @@ class ExternalCredentialVerifierContractTests {
 
 	@ParameterizedTest
 	@NullSource
-	@ValueSource(strings = { "", " ", " subject", "subject ", "subject\nvalue" })
+	@ValueSource(strings = { "", " ", " subject", "subject ", "subject value", "subject\nvalue", "sübject" })
 	void rejectsInvalidExternalSubjects(String value) {
 		assertThatThrownBy(() -> ExternalSubjectId.from(value))
 			.isInstanceOfAny(NullPointerException.class, IllegalArgumentException.class);
@@ -63,6 +63,12 @@ class ExternalCredentialVerifierContractTests {
 		String value = "subject" + Character.toString(0) + "value";
 
 		assertThatThrownBy(() -> ExternalSubjectId.from(value)).isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void rejectsNonBmpExternalSubjects() {
+		assertThatThrownBy(() -> ExternalSubjectId.from("subject-😀"))
+			.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test

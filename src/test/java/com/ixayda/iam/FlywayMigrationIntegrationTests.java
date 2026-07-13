@@ -50,6 +50,12 @@ class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 	@AfterEach
 	void deleteFixtures() {
 		this.jdbcClient
+			.sql("DELETE FROM user_external_identities WHERE user_id IN (:firstId, :secondId, :thirdId)")
+			.param("firstId", FIRST_USER_ID)
+			.param("secondId", SECOND_USER_ID)
+			.param("thirdId", THIRD_USER_ID)
+			.update();
+		this.jdbcClient
 			.sql("DELETE FROM user_login_identifiers WHERE user_id IN (:firstId, :secondId, :thirdId)")
 			.param("firstId", FIRST_USER_ID)
 			.param("secondId", SECOND_USER_ID)
@@ -73,7 +79,7 @@ class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void createsTheBuiltInTenant() {
-		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success")).isEqualTo(8);
+		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success")).isEqualTo(9);
 		assertThat(count("SELECT count(*) FROM tenants")).isOne();
 		assertThat(this.jdbcClient.sql("SELECT status FROM tenants WHERE slug = 'default'")
 			.query(String.class)
