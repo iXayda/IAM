@@ -11,13 +11,18 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.tenant.TenantId;
+import com.ixayda.iam.user.LoginIdentifier;
+import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserOperations;
+import com.ixayda.iam.user.UserStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +63,7 @@ class DefaultPasswordOperationsTests {
 	void startTransactionContext() {
 		TransactionSynchronizationManager.setActualTransactionActive(true);
 		TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+		when(this.users.findById(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(user(UserStatus.ACTIVE)));
 	}
 
 	@AfterEach
@@ -85,8 +91,39 @@ class DefaultPasswordOperationsTests {
 
 		assertThat(this.operations.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).isFalse();
 
-		verify(this.users).requireActive(TenantId.DEFAULT, USER_ID);
+		verify(this.users).findById(TenantId.DEFAULT, USER_ID);
 		verify(this.users, never()).requireActiveForWrite(any(), any());
+		verify(this.hashing).performDummyMatch(attempt);
+	}
+
+	@Test
+	void performsOneDummyMatchForAnInactiveUser() {
+		PasswordAttempt attempt = new PasswordAttempt("attempt".toCharArray());
+		when(this.users.findById(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(user(UserStatus.DISABLED)));
+
+		assertThat(this.operations.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).isFalse();
+
+		verify(this.hashing).performDummyMatch(attempt);
+		verifyNoInteractions(this.repository);
+	}
+
+	@Test
+	void performsOneDummyMatchForAMissingUser() {
+		PasswordAttempt attempt = new PasswordAttempt("attempt".toCharArray());
+		when(this.users.findById(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.empty());
+
+		assertThat(this.operations.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).isFalse();
+
+		verify(this.hashing).performDummyMatch(attempt);
+		verifyNoInteractions(this.repository);
+	}
+
+	@Test
+	void exposesDummyVerificationWithoutApplyingPasswordPolicy() {
+		PasswordAttempt attempt = new PasswordAttempt("x".toCharArray());
+
+		this.operations.performDummyVerification(attempt);
+
 		verify(this.hashing).performDummyMatch(attempt);
 	}
 
@@ -116,13 +153,30 @@ class DefaultPasswordOperationsTests {
 		assertThat(this.operations.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).isTrue();
 
 		InOrder order = inOrder(this.users, this.repository, this.hashing);
-		order.verify(this.users).requireActive(TenantId.DEFAULT, USER_ID);
+		order.verify(this.users).findById(TenantId.DEFAULT, USER_ID);
 		order.verify(this.repository).findByUser(TenantId.DEFAULT, USER_ID);
 		order.verify(this.hashing).matches(attempt, ENCODED_PASSWORD);
 		order.verify(this.hashing).upgradeEncoding(ENCODED_PASSWORD);
 		order.verify(this.users).requireActiveForWrite(TenantId.DEFAULT, USER_ID);
 		order.verify(this.repository).findByUserForUpdate(TenantId.DEFAULT, USER_ID);
 		verify(this.repository, never()).update(any(), any());
+	}
+
+	@Test
+	void returnsFalseWhenTheUserBecomesInactiveBeforeLocking() {
+		PasswordAttempt attempt = new PasswordAttempt("correct-password".toCharArray());
+		PasswordCredential current = credential(ENCODED_PASSWORD, 0, CREATED_AT);
+		when(this.repository.findByUser(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(current));
+		when(this.hashing.matches(attempt, ENCODED_PASSWORD)).thenReturn(true);
+		when(this.hashing.upgradeEncoding(ENCODED_PASSWORD)).thenReturn(false);
+		when(this.users.requireActiveForWrite(TenantId.DEFAULT, USER_ID))
+			.thenThrow(new UserNotActiveException(TenantId.DEFAULT, USER_ID, UserStatus.DISABLED));
+
+		assertThat(this.operations.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).isFalse();
+
+		verify(this.hashing).matches(attempt, ENCODED_PASSWORD);
+		verify(this.hashing, never()).performDummyMatch(any());
+		verify(this.repository, never()).findByUserForUpdate(any(), any());
 	}
 
 	@Test
@@ -221,6 +275,11 @@ class DefaultPasswordOperationsTests {
 
 	private static PasswordCredential credential(String encodedPassword, long version, Instant updatedAt) {
 		return new PasswordCredential(TenantId.DEFAULT, USER_ID, encodedPassword, version, CREATED_AT, updatedAt);
+	}
+
+	private static User user(UserStatus status) {
+		return new User(USER_ID, TenantId.DEFAULT, List.of(LoginIdentifier.username("password-user")), status, 0,
+				CREATED_AT, CREATED_AT, null);
 	}
 
 	private static void assertCredential(PasswordCredential credential, String encodedPassword, long version,

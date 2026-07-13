@@ -58,7 +58,8 @@ class DefaultTenantOperations implements TenantOperations {
 	}
 
 	@Override
-	@Transactional(propagation = Propagation.MANDATORY)
+	@Transactional(propagation = Propagation.MANDATORY,
+			noRollbackFor = { TenantDisabledException.class, TenantNotFoundException.class })
 	public Tenant requireActiveForWrite(TenantId tenantId) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {

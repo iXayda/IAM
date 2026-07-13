@@ -6,8 +6,13 @@ import java.util.Optional;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.tenant.TenantDisabledException;
 import com.ixayda.iam.tenant.TenantId;
+import com.ixayda.iam.tenant.TenantNotFoundException;
+import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserNotActiveException;
+import com.ixayda.iam.user.UserNotFoundException;
 import com.ixayda.iam.user.UserOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.IllegalTransactionStateException;
@@ -54,10 +59,14 @@ class DefaultPasswordOperations implements PasswordOperations {
 		Objects.requireNonNull(attempt, "Password attempt must not be null");
 		requireReadWriteTransaction();
 
-		this.users.requireActive(tenantId, userId);
+		Optional<User> user = this.users.findById(tenantId, userId);
+		if (user.isEmpty() || !user.orElseThrow().isActive()) {
+			performDummyVerification(attempt);
+			return false;
+		}
 		Optional<PasswordCredential> candidate = this.repository.findByUser(tenantId, userId);
 		if (candidate.isEmpty()) {
-			this.hashing.performDummyMatch(attempt);
+			performDummyVerification(attempt);
 			return false;
 		}
 		if (!this.hashing.matches(attempt, candidate.orElseThrow().encodedPassword())) {
@@ -66,7 +75,13 @@ class DefaultPasswordOperations implements PasswordOperations {
 
 		PasswordCredential matched = candidate.orElseThrow();
 		String preparedUpgrade = prepareUpgrade(matched, attempt);
-		this.users.requireActiveForWrite(tenantId, userId);
+		try {
+			this.users.requireActiveForWrite(tenantId, userId);
+		}
+		catch (TenantDisabledException | TenantNotFoundException | UserNotActiveException
+				| UserNotFoundException ex) {
+			return false;
+		}
 		Optional<PasswordCredential> locked = this.repository.findByUserForUpdate(tenantId, userId);
 		if (locked.isEmpty()) {
 			return false;
@@ -85,6 +100,12 @@ class DefaultPasswordOperations implements PasswordOperations {
 			this.repository.update(latest, latest.replaceWith(encodedPassword, this.timeSource.now()));
 		}
 		return true;
+	}
+
+	@Override
+	public void performDummyVerification(PasswordAttempt attempt) {
+		Objects.requireNonNull(attempt, "Password attempt must not be null");
+		this.hashing.performDummyMatch(attempt);
 	}
 
 	private String prepareUpgrade(PasswordCredential credential, PasswordAttempt attempt) {

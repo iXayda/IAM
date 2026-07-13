@@ -18,4 +18,11 @@ public interface PasswordOperations {
 	 */
 	boolean verifyPassword(TenantId tenantId, UserId userId, PasswordAttempt attempt);
 
+	/**
+	 * Performs dummy password hashing at the currently configured work factor when no
+	 * stored credential may be consulted. The caller retains ownership of
+	 * {@code attempt}.
+	 */
+	void performDummyVerification(PasswordAttempt attempt);
+
 }

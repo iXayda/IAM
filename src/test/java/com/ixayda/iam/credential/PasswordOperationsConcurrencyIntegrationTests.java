@@ -147,6 +147,42 @@ class PasswordOperationsConcurrencyIntegrationTests extends ApplicationIntegrati
 	}
 
 	@Test
+	void returnsFalseWithoutPoisoningTheTransactionWhenUserDisableCommitsFirst() throws Exception {
+		User user = createUser("disable-during-verify");
+		setPassword(user, "correct-password");
+		CountDownLatch userDisabled = new CountDownLatch(1);
+		CountDownLatch releaseDisable = new CountDownLatch(1);
+		CountDownLatch verificationStarted = new CountDownLatch(1);
+		AtomicInteger verificationBackendId = new AtomicInteger();
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<User> disable = executor.submit(() -> transactionTemplate().execute(status -> {
+				User disabled = this.users.disable(TenantId.DEFAULT, user.id());
+				userDisabled.countDown();
+				await(releaseDisable, "Timed out holding the user disable transaction");
+				return disabled;
+			}));
+			Future<Boolean> verification;
+			try {
+				assertThat(userDisabled.await(5, TimeUnit.SECONDS)).isTrue();
+				verification = executor.submit(() -> transactionTemplate().execute(status -> {
+					verificationBackendId.set(backendId());
+					verificationStarted.countDown();
+					return verifyInCurrentTransaction(user, "correct-password");
+				}));
+				assertThat(verificationStarted.await(5, TimeUnit.SECONDS)).isTrue();
+				assertThat(waitUntilBlocked(verificationBackendId.get())).isTrue();
+			}
+			finally {
+				releaseDisable.countDown();
+			}
+
+			assertThat(disable.get(5, TimeUnit.SECONDS).status()).isEqualTo(UserStatus.DISABLED);
+			assertThat(verification.get(5, TimeUnit.SECONDS)).isFalse();
+		}
+	}
+
+	@Test
 	void holdsTheUserGuardUntilTheAuthenticationTransactionCommits() throws Exception {
 		User user = createUser("guard-duration");
 		setPassword(user, "correct-password");

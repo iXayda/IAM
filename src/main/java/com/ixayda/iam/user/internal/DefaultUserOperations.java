@@ -6,6 +6,8 @@ import java.util.Optional;
 import java.util.function.BiFunction;
 
 import com.ixayda.iam.tenant.TenantId;
+import com.ixayda.iam.tenant.TenantDisabledException;
+import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginKey;
@@ -64,7 +66,9 @@ class DefaultUserOperations implements UserOperations {
 	}
 
 	@Override
-	@Transactional(propagation = Propagation.MANDATORY)
+	@Transactional(propagation = Propagation.MANDATORY,
+			noRollbackFor = { TenantDisabledException.class, TenantNotFoundException.class,
+					UserNotActiveException.class, UserNotFoundException.class })
 	public User requireActiveForWrite(TenantId tenantId, UserId userId) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(userId, "User ID must not be null");
