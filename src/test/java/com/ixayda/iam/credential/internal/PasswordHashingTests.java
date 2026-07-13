@@ -41,6 +41,17 @@ class PasswordHashingTests {
 	}
 
 	@Test
+	void performsAndClearsADummyMatch() {
+		CapturingPasswordEncoder encoder = new CapturingPasswordEncoder();
+		PasswordHashing hashing = new PasswordHashing(encoder);
+
+		hashing.performDummyMatch(new PasswordAttempt("attempt".toCharArray()));
+
+		assertThat(encoder.matchedEncodedPassword).isEqualTo("{test}encoded-password-value-1234567890");
+		assertCleared(encoder.captured);
+	}
+
+	@Test
 	void validatesInputsAndDelegatesUpgradeChecks() {
 		CapturingPasswordEncoder encoder = new CapturingPasswordEncoder();
 		PasswordHashing hashing = new PasswordHashing(encoder);
@@ -66,6 +77,8 @@ class PasswordHashingTests {
 
 		private boolean upgradeChecked;
 
+		private String matchedEncodedPassword;
+
 		@Override
 		public String encode(CharSequence rawPassword) {
 			this.captured = rawPassword;
@@ -75,6 +88,7 @@ class PasswordHashingTests {
 		@Override
 		public boolean matches(CharSequence rawPassword, String encodedPassword) {
 			this.captured = rawPassword;
+			this.matchedEncodedPassword = encodedPassword;
 			return true;
 		}
 

@@ -12,10 +12,15 @@ import org.springframework.stereotype.Component;
 @Component
 class PasswordHashing {
 
+	private static final String DUMMY_PASSWORD = "userNotFoundPassword";
+
 	private final PasswordEncoder passwordEncoder;
+
+	private final String dummyEncodedPassword;
 
 	PasswordHashing(PasswordEncoder passwordEncoder) {
 		this.passwordEncoder = passwordEncoder;
+		this.dummyEncodedPassword = passwordEncoder.encode(DUMMY_PASSWORD);
 	}
 
 	String encode(NewPassword password) {
@@ -55,6 +60,10 @@ class PasswordHashing {
 		finally {
 			Arrays.fill(value, '\0');
 		}
+	}
+
+	void performDummyMatch(PasswordAttempt attempt) {
+		matches(attempt, this.dummyEncodedPassword);
 	}
 
 	boolean upgradeEncoding(String encodedPassword) {
