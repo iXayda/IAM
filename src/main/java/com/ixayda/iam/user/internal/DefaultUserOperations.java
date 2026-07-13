@@ -75,6 +75,17 @@ class DefaultUserOperations implements UserOperations {
 	}
 
 	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public User requireActiveForUpdate(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		this.tenants.requireActiveForWrite(tenantId);
+		User user = this.repository.findByIdForUpdate(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		return requireActive(user);
+	}
+
+	@Override
 	@Transactional
 	public User activate(TenantId tenantId, UserId userId) {
 		return changeStatus(tenantId, userId, User::activate);

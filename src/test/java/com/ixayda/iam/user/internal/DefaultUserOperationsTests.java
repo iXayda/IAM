@@ -110,6 +110,18 @@ class DefaultUserOperationsTests {
 		order.verify(this.repository).findByIdForShare(TenantId.DEFAULT, USER_ID);
 	}
 
+	@Test
+	void acquiresTenantAndExclusiveUserGuardsInOrder() {
+		User active = user(UserStatus.ACTIVE, 0, CREATED_AT);
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(active));
+
+		assertThat(this.operations.requireActiveForUpdate(TenantId.DEFAULT, USER_ID)).isEqualTo(active);
+		InOrder order = inOrder(this.tenants, this.repository);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForUpdate(TenantId.DEFAULT, USER_ID);
+	}
+
 	@ParameterizedTest
 	@EnumSource(value = UserStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
 	void rejectsInactiveUsersForWrite(UserStatus status) {

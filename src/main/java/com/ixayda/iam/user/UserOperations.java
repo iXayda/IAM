@@ -34,4 +34,10 @@ public interface UserOperations {
 	 */
 	User requireActiveForWrite(TenantId tenantId, UserId userId);
 
+	/**
+	 * Requires an active user and holds an exclusive row lock for a write that must
+	 * serialize all work coordinated through the same user.
+	 */
+	User requireActiveForUpdate(TenantId tenantId, UserId userId);
+
 }

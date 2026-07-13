@@ -158,6 +158,28 @@ class JdbcUserRepositoryReadIntegrationTests extends ApplicationIntegrationTest 
 		assertThat(locked).contains(user);
 	}
 
+	@Test
+	void requiresAReadWriteTransactionForTheExclusiveUserLock() {
+		User user = user(TenantId.DEFAULT, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.username("exclusively-locked-user")));
+		insert(user);
+
+		assertThatThrownBy(() -> this.repository.findByIdForUpdate(TenantId.DEFAULT, user.id()))
+			.isInstanceOf(IllegalTransactionStateException.class);
+
+		TransactionTemplate readOnly = new TransactionTemplate(this.transactionManager);
+		readOnly.setReadOnly(true);
+		assertThatThrownBy(() -> readOnly
+			.execute(status -> this.repository.findByIdForUpdate(TenantId.DEFAULT, user.id())))
+			.isInstanceOf(IllegalTransactionStateException.class)
+			.hasMessage("User write requires an existing read-write transaction");
+
+		TransactionTemplate readWrite = new TransactionTemplate(this.transactionManager);
+		Optional<User> locked = readWrite
+			.execute(status -> this.repository.findByIdForUpdate(TenantId.DEFAULT, user.id()));
+		assertThat(locked).contains(user);
+	}
+
 	private User user(TenantId tenantId, UserStatus status, List<LoginIdentifier> identifiers) {
 		return new User(UserId.random(), tenantId, identifiers, status, 3, CREATED_AT, UPDATED_AT,
 				CREATED_AT.plusSeconds(15));

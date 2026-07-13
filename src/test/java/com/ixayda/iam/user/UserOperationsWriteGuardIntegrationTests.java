@@ -125,6 +125,41 @@ class UserOperationsWriteGuardIntegrationTests extends ApplicationIntegrationTes
 			.isEqualTo(UserStatus.DISABLED);
 	}
 
+	@Test
+	void serializesExclusiveUserGuards() throws Exception {
+		User user = createUser("exclusive");
+		CountDownLatch firstGuardAcquired = new CountDownLatch(1);
+		CountDownLatch releaseFirstGuard = new CountDownLatch(1);
+		CountDownLatch secondGuardStarted = new CountDownLatch(1);
+		AtomicInteger secondBackendId = new AtomicInteger();
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<User> first = executor.submit(() -> transactionTemplate().execute(status -> {
+				User active = this.users.requireActiveForUpdate(TenantId.DEFAULT, user.id());
+				firstGuardAcquired.countDown();
+				await(releaseFirstGuard, "Timed out holding the exclusive user guard");
+				return active;
+			}));
+			Future<User> second;
+			try {
+				assertThat(firstGuardAcquired.await(5, TimeUnit.SECONDS)).isTrue();
+				second = executor.submit(() -> transactionTemplate().execute(status -> {
+					secondBackendId.set(backendId());
+					secondGuardStarted.countDown();
+					return this.users.requireActiveForUpdate(TenantId.DEFAULT, user.id());
+				}));
+				assertThat(secondGuardStarted.await(5, TimeUnit.SECONDS)).isTrue();
+				assertThat(waitUntilBlocked(secondBackendId.get())).isTrue();
+			}
+			finally {
+				releaseFirstGuard.countDown();
+			}
+
+			assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(user);
+			assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(user);
+		}
+	}
+
 	private User createUser(String purpose) {
 		String suffix = UUID.randomUUID().toString().substring(0, 8);
 		User user = this.users.create(TenantId.DEFAULT,
