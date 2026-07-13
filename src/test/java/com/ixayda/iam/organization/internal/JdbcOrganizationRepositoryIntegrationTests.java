@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
@@ -20,6 +21,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class JdbcOrganizationRepositoryIntegrationTests extends ApplicationIntegrationTest {
 
@@ -35,6 +39,9 @@ class JdbcOrganizationRepositoryIntegrationTests extends ApplicationIntegrationT
 
 	@Autowired
 	private JdbcClient jdbcClient;
+
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	@BeforeEach
 	void createSecondTenant() {
@@ -130,6 +137,26 @@ class JdbcOrganizationRepositoryIntegrationTests extends ApplicationIntegrationT
 
 		assertThatThrownBy(() -> this.repository.updateStatus(current, changed))
 			.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void requiresAReadWriteTransactionForTheSharedOrganizationLock() {
+		Organization organization = organization(TenantId.DEFAULT, "shared-lock", "Shared Lock");
+		this.repository.insert(organization);
+
+		assertThatThrownBy(() -> this.repository.findByIdForShare(TenantId.DEFAULT, organization.id()))
+			.isInstanceOf(IllegalTransactionStateException.class);
+		TransactionTemplate readOnly = new TransactionTemplate(this.transactionManager);
+		readOnly.setReadOnly(true);
+		assertThatThrownBy(() -> readOnly
+			.execute(status -> this.repository.findByIdForShare(TenantId.DEFAULT, organization.id())))
+			.isInstanceOf(IllegalTransactionStateException.class)
+			.hasMessage("Organization write requires an existing read-write transaction");
+
+		TransactionTemplate readWrite = new TransactionTemplate(this.transactionManager);
+		Optional<Organization> locked = readWrite
+			.execute(status -> this.repository.findByIdForShare(TenantId.DEFAULT, organization.id()));
+		assertThat(locked).contains(organization);
 	}
 
 	private Organization organization(TenantId tenantId, String slug, String displayName) {

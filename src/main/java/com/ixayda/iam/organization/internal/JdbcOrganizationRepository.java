@@ -18,6 +18,10 @@ import com.ixayda.iam.tenant.TenantId;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 class JdbcOrganizationRepository {
@@ -66,6 +70,20 @@ class JdbcOrganizationRepository {
 		return this.jdbcClient
 			.sql("SELECT " + COLUMNS
 					+ " FROM organizations WHERE tenant_id = :tenantId AND organization_id = :organizationId")
+			.param("tenantId", tenantId.value())
+			.param("organizationId", organizationId.value())
+			.query(ORGANIZATION_ROW_MAPPER)
+			.optional();
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<Organization> findByIdForShare(TenantId tenantId, OrganizationId organizationId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(organizationId, "Organization ID must not be null");
+		requireWriteTransaction();
+		return this.jdbcClient
+			.sql("SELECT " + COLUMNS
+					+ " FROM organizations WHERE tenant_id = :tenantId AND organization_id = :organizationId FOR SHARE")
 			.param("tenantId", tenantId.value())
 			.param("organizationId", organizationId.value())
 			.query(ORGANIZATION_ROW_MAPPER)
@@ -142,6 +160,13 @@ class JdbcOrganizationRepository {
 			case "disabled" -> OrganizationStatus.DISABLED;
 			default -> throw new IllegalStateException("Unsupported organization status in the database: " + value);
 		};
+	}
+
+	private static void requireWriteTransaction() {
+		if (!TransactionSynchronizationManager.isActualTransactionActive()
+				|| TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+			throw new IllegalTransactionStateException("Organization write requires an existing read-write transaction");
+		}
 	}
 
 }

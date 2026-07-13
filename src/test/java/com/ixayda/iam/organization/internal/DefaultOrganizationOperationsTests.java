@@ -3,6 +3,7 @@ package com.ixayda.iam.organization.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -22,6 +23,7 @@ import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.tenant.TenantStatus;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 class DefaultOrganizationOperationsTests {
 
@@ -73,6 +75,19 @@ class DefaultOrganizationOperationsTests {
 
 		assertThat(this.operations.requireActive(TenantId.DEFAULT, ORGANIZATION_ID)).isEqualTo(active);
 		verify(this.tenants).requireActive(TenantId.DEFAULT);
+	}
+
+	@Test
+	void locksTheTenantBeforeTheOrganizationForACoordinatedWrite() {
+		Organization active = organization(OrganizationStatus.ACTIVE, 0, CREATED_AT);
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForShare(TenantId.DEFAULT, ORGANIZATION_ID)).thenReturn(Optional.of(active));
+
+		assertThat(this.operations.requireActiveForWrite(TenantId.DEFAULT, ORGANIZATION_ID)).isEqualTo(active);
+
+		InOrder order = inOrder(this.tenants, this.repository);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForShare(TenantId.DEFAULT, ORGANIZATION_ID);
 	}
 
 	@Test

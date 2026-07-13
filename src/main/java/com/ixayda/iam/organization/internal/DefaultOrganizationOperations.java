@@ -12,9 +12,12 @@ import com.ixayda.iam.organization.OrganizationId;
 import com.ixayda.iam.organization.OrganizationNotFoundException;
 import com.ixayda.iam.organization.OrganizationOperations;
 import com.ixayda.iam.organization.OrganizationStatus;
+import com.ixayda.iam.tenant.TenantDisabledException;
 import com.ixayda.iam.tenant.TenantId;
+import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -59,11 +62,20 @@ class DefaultOrganizationOperations implements OrganizationOperations {
 	@Override
 	public Organization requireActive(TenantId tenantId, OrganizationId organizationId) {
 		this.tenants.requireActive(tenantId);
-		Organization organization = requireOrganization(tenantId, organizationId);
-		if (!organization.isActive()) {
-			throw new OrganizationDisabledException(tenantId, organization.id());
-		}
-		return organization;
+		return requireActive(requireOrganization(tenantId, organizationId));
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY,
+			noRollbackFor = { TenantDisabledException.class, TenantNotFoundException.class,
+					OrganizationDisabledException.class, OrganizationNotFoundException.class })
+	public Organization requireActiveForWrite(TenantId tenantId, OrganizationId organizationId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(organizationId, "Organization ID must not be null");
+		this.tenants.requireActiveForWrite(tenantId);
+		Organization organization = this.repository.findByIdForShare(tenantId, organizationId)
+			.orElseThrow(() -> new OrganizationNotFoundException(tenantId, organizationId));
+		return requireActive(organization);
 	}
 
 	@Override
@@ -107,6 +119,13 @@ class DefaultOrganizationOperations implements OrganizationOperations {
 		Objects.requireNonNull(organizationId, "Organization ID must not be null");
 		return this.repository.findById(tenantId, organizationId)
 			.orElseThrow(() -> new OrganizationNotFoundException(tenantId, organizationId));
+	}
+
+	private Organization requireActive(Organization organization) {
+		if (!organization.isActive()) {
+			throw new OrganizationDisabledException(organization.tenantId(), organization.id());
+		}
+		return organization;
 	}
 
 }

@@ -18,4 +18,10 @@ public interface OrganizationOperations {
 
 	Organization requireActive(TenantId tenantId, OrganizationId organizationId);
 
+	/**
+	 * Requires an active organization and holds a shared row lock for a write
+	 * coordinated by the caller's existing read-write transaction.
+	 */
+	Organization requireActiveForWrite(TenantId tenantId, OrganizationId organizationId);
+
 }
