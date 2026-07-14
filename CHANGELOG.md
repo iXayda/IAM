@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Spring Boot 4.1 application baseline with Java 21 and GraalVM Native Image support.
 - Health endpoints, Prometheus metrics, OpenTelemetry tracing, and an optional local LGTM stack.
 - PostgreSQL service connections and Flyway-managed schema lifecycle.
+- Redis service connections for local development and integration testing.
 - Tenant-scoped organization schema and database isolation constraints.
 - Tenant-scoped organization membership schema with database-enforced parent ownership.
 - Validated organization membership lifecycle model with soft removal and reactivation.
