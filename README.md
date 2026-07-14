@@ -242,6 +242,18 @@ IAM 管理与自服务接口：
 `src/main/resources/application-local.yaml`。生产环境应通过标准 Spring Boot 配置来源提供
 数据库连接和 OTLP exporter 配置。
 
+### LDAP 外部凭据
+
+LDAP provider 默认关闭。启用时必须配置独立的 provider ID、允许使用该目录的 tenant、
+安全目录地址以及只读查询账号。生产连接仅接受 LDAPS 或 StartTLS。
+
+`iam.credential.external.ldap.subject-attribute` 必须是目录保证全局唯一、不可变且不会分配给
+其他账号的稳定标识。标准 LDAP 默认使用 `entryUUID`；Active Directory 可配合
+`BINARY_BASE64URL` 使用 `objectGUID`。不要使用登录名、邮箱、员工编号或 DN 作为 subject。
+
+目录查询和用户 bind 必须在数据库事务之外执行。验证指标只包含 provider 与结果状态，
+不包含 tenant、登录值、DN、subject 或密码。
+
 ## 测试
 
 运行完整测试：

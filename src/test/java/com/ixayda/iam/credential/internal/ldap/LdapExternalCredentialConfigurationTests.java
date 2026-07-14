@@ -7,8 +7,14 @@ import java.time.Duration;
 
 import javax.naming.InvalidNameException;
 
+import com.ixayda.iam.credential.ExternalCredentialVerificationStatus;
+import com.ixayda.iam.credential.ExternalCredentialVerifier;
+import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.ExternalIdentityProviderId;
+import com.ixayda.iam.user.LoginKey;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.ldap.autoconfigure.LdapAutoConfiguration;
@@ -36,6 +42,7 @@ class LdapExternalCredentialConfigurationTests {
 
 	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
 		.withConfiguration(AutoConfigurations.of(LdapAutoConfiguration.class))
+		.withBean(MeterRegistry.class, SimpleMeterRegistry::new)
 		.withUserConfiguration(LdapExternalCredentialConfiguration.class);
 
 	@Test
@@ -53,6 +60,11 @@ class LdapExternalCredentialConfigurationTests {
 			assertThat(context.getBean(DirContextAuthenticationStrategy.class))
 				.isInstanceOf(SimpleDirContextAuthenticationStrategy.class);
 			assertThat(context.getBean(LdapContextSource.class).isPooled()).isFalse();
+			ExternalCredentialVerifier verifier = context.getBean(ExternalCredentialVerifier.class);
+			try (PasswordAttempt password = new PasswordAttempt(TEST_PASSWORD.toCharArray())) {
+				assertThat(verifier.verify(TenantId.DEFAULT, LoginKey.from("alice"), password).status())
+					.isEqualTo(ExternalCredentialVerificationStatus.UNAVAILABLE);
+			}
 		});
 	}
 
@@ -103,6 +115,7 @@ class LdapExternalCredentialConfigurationTests {
 			.run(context -> {
 				assertThat(context).hasNotFailed();
 				LdapExternalCredentialSettings settings = context.getBean(LdapExternalCredentialSettings.class);
+				LdapProperties properties = context.getBean(LdapProperties.class);
 
 				assertThat(settings.providerId()).isEqualTo(ExternalIdentityProviderId.from("corporate-ad"));
 				assertThat(settings.urls()).containsExactly(URI.create("ldap://directory.example.test:389"));
@@ -113,6 +126,8 @@ class LdapExternalCredentialConfigurationTests {
 				assertThat(settings.transportSecurity()).isEqualTo(LdapTransportSecurity.START_TLS);
 				assertThat(settings.connectTimeout()).isEqualTo(Duration.ofMillis(750));
 				assertThat(settings.readTimeout()).isEqualTo(Duration.ofSeconds(2));
+				assertThat(properties.getBaseEnvironment())
+					.containsEntry("java.naming.ldap.attributes.binary", "objectGUID");
 				assertThat(context.getBean(DirContextAuthenticationStrategy.class))
 					.isInstanceOf(DefaultTlsDirContextAuthenticationStrategy.class);
 				assertThat(context.getBean(LdapContextSource.class).isPooled()).isFalse();
