@@ -22,6 +22,10 @@ spring:
       mode: never
 
 management:
+  health:
+    ldap:
+      # Optional directory outages must not make local authentication unhealthy.
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -33,4 +37,10 @@ management:
   otlp:
     metrics:
       export:
+        enabled: false
+
+iam:
+  credential:
+    external:
+      ldap:
         enabled: false

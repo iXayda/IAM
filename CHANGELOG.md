@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - Tenant-scoped local password setting and verification with adaptive hash upgrades.
 - Atomic local password login with generic failures and fixed-lifetime session issuance.
 - Provider-neutral external credential verification contract with opaque subject identifiers and redacted diagnostics.
+- Disabled-by-default LDAP credential provider configuration with secure transport validation and explicit tenant allowlisting.
 - Non-bearer user session metadata with tenant and user lifecycle-version snapshots.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.
@@ -40,6 +41,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - GraalVM native application startup.
+- GraalVM native images now retain runtime LDAP configuration when the provider is disabled during the build.
 - Concurrent user status commands now converge without an unexpected transaction rollback.
 - Login identifier normalization and database validation for phone formatting and login timestamps.
 - Deterministic login keys for phone-like usernames and printable email identifiers.
