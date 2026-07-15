@@ -7,7 +7,9 @@ import org.springframework.context.annotation.Import;
 
 @AutoConfigureMetrics
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = {
+		"iam.ratelimit.login.key-prefix=iam:test:ratelimit",
+		"iam.ratelimit.login.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" })
 public abstract class ApplicationIntegrationTest {
 
 }

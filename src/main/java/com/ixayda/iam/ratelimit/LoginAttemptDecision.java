@@ -6,22 +6,24 @@ import java.util.Optional;
 
 public final class LoginAttemptDecision {
 
-	private static final LoginAttemptDecision ALLOWED = new LoginAttemptDecision(LoginAttemptStatus.ALLOWED, null);
-
-	private static final LoginAttemptDecision UNAVAILABLE =
-			new LoginAttemptDecision(LoginAttemptStatus.UNAVAILABLE, null);
+	private static final LoginAttemptDecision UNAVAILABLE = new LoginAttemptDecision(LoginAttemptStatus.UNAVAILABLE,
+			null, null);
 
 	private final LoginAttemptStatus status;
 
 	private final Duration retryAfter;
 
-	private LoginAttemptDecision(LoginAttemptStatus status, Duration retryAfter) {
+	private final LoginAttemptLease lease;
+
+	private LoginAttemptDecision(LoginAttemptStatus status, Duration retryAfter, LoginAttemptLease lease) {
 		this.status = status;
 		this.retryAfter = retryAfter;
+		this.lease = lease;
 	}
 
-	public static LoginAttemptDecision allowed() {
-		return ALLOWED;
+	public static LoginAttemptDecision allowed(LoginAttemptLease lease) {
+		return new LoginAttemptDecision(LoginAttemptStatus.ALLOWED, null,
+				Objects.requireNonNull(lease, "Allowed login attempt lease must not be null"));
 	}
 
 	public static LoginAttemptDecision throttled(Duration retryAfter) {
@@ -29,7 +31,7 @@ public final class LoginAttemptDecision {
 		if (retryAfter.isZero() || retryAfter.isNegative()) {
 			throw new IllegalArgumentException("Retry-after duration must be positive");
 		}
-		return new LoginAttemptDecision(LoginAttemptStatus.THROTTLED, retryAfter);
+		return new LoginAttemptDecision(LoginAttemptStatus.THROTTLED, retryAfter, null);
 	}
 
 	public static LoginAttemptDecision unavailable() {
@@ -46,6 +48,10 @@ public final class LoginAttemptDecision {
 
 	public Optional<Duration> retryAfter() {
 		return Optional.ofNullable(this.retryAfter);
+	}
+
+	public Optional<LoginAttemptLease> lease() {
+		return Optional.ofNullable(this.lease);
 	}
 
 	@Override

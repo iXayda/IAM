@@ -6,6 +6,12 @@ spring:
     compose:
       enabled: true
 
+iam:
+  ratelimit:
+    login:
+      # Local-only default. Production must provide a shared 32-byte Base64 secret.
+      key-secret: ${IAM_LOGIN_RATE_LIMIT_KEY_SECRET:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+
 management:
   otlp:
     metrics:

@@ -5,6 +5,9 @@ import java.util.Objects;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.LoginKey;
 
+/**
+ * Tenant-scoped login principal and its canonical trusted ingress source.
+ */
 public record LoginAttemptKey(TenantId tenantId, LoginKey loginKey, LoginAttemptSource source) {
 
 	public LoginAttemptKey {

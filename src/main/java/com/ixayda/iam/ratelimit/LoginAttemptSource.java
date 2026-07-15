@@ -2,6 +2,11 @@ package com.ixayda.iam.ratelimit;
 
 import java.util.Objects;
 
+/**
+ * Opaque source identifier produced by a trusted ingress after proxy-chain
+ * validation and canonicalization. Client-provided forwarding headers must not be
+ * passed through directly.
+ */
 public record LoginAttemptSource(String value) {
 
 	public static final int MAX_LENGTH = 512;
@@ -15,7 +20,7 @@ public record LoginAttemptSource(String value) {
 		}
 	}
 
-	public static LoginAttemptSource from(String value) {
+	public static LoginAttemptSource trusted(String value) {
 		return new LoginAttemptSource(value);
 	}
 

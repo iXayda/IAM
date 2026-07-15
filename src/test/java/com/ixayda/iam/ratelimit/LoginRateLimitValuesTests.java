@@ -13,21 +13,21 @@ class LoginRateLimitValuesTests {
 
 	@Test
 	void validatesAndRedactsLoginAttemptSources() {
-		LoginAttemptSource source = LoginAttemptSource.from("203.0.113.10");
+		LoginAttemptSource source = LoginAttemptSource.trusted("203.0.113.10");
 
 		assertThat(source.value()).isEqualTo("203.0.113.10");
 		assertThat(source).hasToString("LoginAttemptSource[redacted]");
-		assertThatThrownBy(() -> LoginAttemptSource.from(null)).isInstanceOf(NullPointerException.class);
-		assertThatThrownBy(() -> LoginAttemptSource.from("")).isInstanceOf(IllegalArgumentException.class);
-		assertThatThrownBy(() -> LoginAttemptSource.from("source with spaces"))
+		assertThatThrownBy(() -> LoginAttemptSource.trusted(null)).isInstanceOf(NullPointerException.class);
+		assertThatThrownBy(() -> LoginAttemptSource.trusted("")).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> LoginAttemptSource.trusted("source with spaces"))
 			.isInstanceOf(IllegalArgumentException.class);
-		assertThatThrownBy(() -> LoginAttemptSource.from("a".repeat(LoginAttemptSource.MAX_LENGTH + 1)))
+		assertThatThrownBy(() -> LoginAttemptSource.trusted("a".repeat(LoginAttemptSource.MAX_LENGTH + 1)))
 			.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test
 	void validatesAndRedactsLoginAttemptKeys() {
-		LoginAttemptSource source = LoginAttemptSource.from("203.0.113.10");
+		LoginAttemptSource source = LoginAttemptSource.trusted("203.0.113.10");
 		LoginAttemptKey key = new LoginAttemptKey(TenantId.DEFAULT, LoginKey.from("alice"), source);
 
 		assertThat(key).hasToString("LoginAttemptKey[tenantId=" + TenantId.DEFAULT
@@ -42,23 +42,39 @@ class LoginRateLimitValuesTests {
 
 	@Test
 	void representsAllowedThrottledAndUnavailableDecisions() {
-		LoginAttemptDecision allowed = LoginAttemptDecision.allowed();
+		LoginAttemptLease lease = LoginAttemptLease.from("AAAAAAAAAAAAAAAAAAAAAA");
+		LoginAttemptDecision allowed = LoginAttemptDecision.allowed(lease);
 		LoginAttemptDecision throttled = LoginAttemptDecision.throttled(Duration.ofSeconds(30));
 		LoginAttemptDecision unavailable = LoginAttemptDecision.unavailable();
 
 		assertThat(allowed.status()).isEqualTo(LoginAttemptStatus.ALLOWED);
 		assertThat(allowed.isAllowed()).isTrue();
 		assertThat(allowed.retryAfter()).isEmpty();
+		assertThat(allowed.lease()).contains(lease);
 		assertThat(throttled.status()).isEqualTo(LoginAttemptStatus.THROTTLED);
 		assertThat(throttled.isAllowed()).isFalse();
 		assertThat(throttled.retryAfter()).contains(Duration.ofSeconds(30));
+		assertThat(throttled.lease()).isEmpty();
 		assertThat(unavailable.status()).isEqualTo(LoginAttemptStatus.UNAVAILABLE);
 		assertThat(unavailable.retryAfter()).isEmpty();
+		assertThat(unavailable.lease()).isEmpty();
 		assertThat(unavailable).hasToString("LoginAttemptDecision[status=UNAVAILABLE]");
 		assertThatThrownBy(() -> LoginAttemptDecision.throttled(null)).isInstanceOf(NullPointerException.class);
 		assertThatThrownBy(() -> LoginAttemptDecision.throttled(Duration.ZERO))
 			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> LoginAttemptDecision.throttled(Duration.ofMillis(-1)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> LoginAttemptDecision.allowed(null)).isInstanceOf(NullPointerException.class);
+	}
+
+	@Test
+	void validatesAndRedactsLoginAttemptLeases() {
+		LoginAttemptLease lease = LoginAttemptLease.from("AAAAAAAAAAAAAAAAAAAAAA");
+
+		assertThat(lease.value()).isEqualTo("AAAAAAAAAAAAAAAAAAAAAA");
+		assertThat(lease).hasToString("LoginAttemptLease[redacted]");
+		assertThatThrownBy(() -> LoginAttemptLease.from(null)).isInstanceOf(NullPointerException.class);
+		assertThatThrownBy(() -> LoginAttemptLease.from("too-short"))
 			.isInstanceOf(IllegalArgumentException.class);
 	}
 

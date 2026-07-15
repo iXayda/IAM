@@ -20,6 +20,12 @@ spring:
   sql:
     init:
       mode: never
+  data:
+    redis:
+      connect-timeout: 1s
+      repositories:
+        enabled: false
+      timeout: 1s
 
 management:
   health:
@@ -32,6 +38,9 @@ management:
         include: health,info,prometheus
   endpoint:
     health:
+      group:
+        readiness:
+          include: readinessState,db,redis,loginRateLimit
       probes:
         enabled: true
   otlp:
@@ -40,6 +49,9 @@ management:
         enabled: false
 
 iam:
+  ratelimit:
+    login:
+      key-secret: ${IAM_LOGIN_RATE_LIMIT_KEY_SECRET:}
   credential:
     external:
       ldap:

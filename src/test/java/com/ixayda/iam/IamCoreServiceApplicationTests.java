@@ -20,6 +20,7 @@ class IamCoreServiceApplicationTests extends ApplicationIntegrationTest {
 		HttpClient client = HttpClient.newHttpClient();
 
 		assertThat(status(client, "/actuator/health")).isEqualTo(200);
+		assertThat(status(client, "/actuator/health/readiness")).isEqualTo(200);
 		assertThat(status(client, "/actuator/prometheus")).isEqualTo(200);
 	}
 
