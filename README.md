@@ -337,6 +337,18 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ./mvnw -DskipTests -Pnative native:compile
 ```
 
+运行完整发布门禁（需要 Docker、Docker Compose 和 Oracle GraalVM 25.0.3）：
+
+```bash
+export JAVA_HOME=/path/to/graalvm-jdk-25
+export GRAALVM_HOME="$JAVA_HOME"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+./scripts/verify-release
+```
+
+发布配置、备份恢复、回退和生产试点准入要求见 [`RELEASE.md`](RELEASE.md)。
+
 ## 路线图
 
 第一阶段之后，项目继续推进：
