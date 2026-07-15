@@ -11,7 +11,9 @@ import org.springframework.context.annotation.Import;
 		"iam.ratelimit.login.key-prefix=iam:test:ratelimit",
 		"iam.ratelimit.login.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 		"iam.security-state.key-prefix=iam:test:security-state",
-		"iam.security-state.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" })
+		"iam.security-state.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		"management.metrics.tags.environment=test",
+		"management.tracing.sampling.probability=1.0" })
 public abstract class ApplicationIntegrationTest {
 
 }

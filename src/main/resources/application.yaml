@@ -27,6 +27,10 @@ spring:
         enabled: false
       timeout: 1s
 
+logging:
+  pattern:
+    correlation: "[%X{traceId:-},%X{spanId:-}] "
+
 management:
   health:
     ldap:
@@ -42,11 +46,30 @@ management:
         readiness:
           include: readinessState,db,redis,loginRateLimit,securityState
       probes:
+        add-additional-paths: true
         enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 100ms,250ms,500ms,1s,2s
+    tags:
+      application: ${spring.application.name}
+      environment: ${IAM_DEPLOYMENT_ENVIRONMENT:unknown}
+  opentelemetry:
+    resource-attributes:
+      deployment.environment.name: ${IAM_DEPLOYMENT_ENVIRONMENT:unknown}
+      service.namespace: ${IAM_SERVICE_NAMESPACE:ixayda}
   otlp:
     metrics:
       export:
         enabled: false
+  tracing:
+    exemplars:
+      include: sampled-traces
+    sampling:
+      probability: 0.1
 
 iam:
   security-state:
