@@ -3,6 +3,7 @@ package com.ixayda.iam.auth.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -12,133 +13,181 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
 
 import com.ixayda.iam.auth.LocalPasswordLoginResult;
+import com.ixayda.iam.auth.LocalPasswordLoginStatus;
 import com.ixayda.iam.credential.PasswordAttempt;
-import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.ratelimit.LoginAttemptDecision;
+import com.ixayda.iam.ratelimit.LoginAttemptKey;
+import com.ixayda.iam.ratelimit.LoginAttemptLease;
+import com.ixayda.iam.ratelimit.LoginAttemptLimiter;
+import com.ixayda.iam.ratelimit.LoginAttemptSource;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
-import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.tenant.TenantId;
-import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.LoginKey;
-import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserId;
-import com.ixayda.iam.user.UserOperations;
-import com.ixayda.iam.user.UserStatus;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class DefaultLocalPasswordLoginOperationsTests {
 
-	private static final UserId USER_ID = UserId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e62");
-
 	private static final LoginKey LOGIN_KEY = LoginKey.from("alice");
 
-	private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
+	private static final LoginAttemptSource SOURCE = LoginAttemptSource.trusted("203.0.113.8");
 
-	private final UserOperations users = mock(UserOperations.class);
+	private static final LoginAttemptKey ATTEMPT_KEY = new LoginAttemptKey(TenantId.DEFAULT, LOGIN_KEY, SOURCE);
 
-	private final PasswordOperations passwords = mock(PasswordOperations.class);
+	private static final LoginAttemptLease LEASE =
+			LoginAttemptLease.from("0123456789abcdefghijkl");
 
-	private final SessionOperations sessions = mock(SessionOperations.class);
+	private final LoginAttemptLimiter limiter = mock(LoginAttemptLimiter.class);
 
-	private final LocalPasswordLoginProperties properties =
-			new LocalPasswordLoginProperties(Duration.ofHours(8));
+	private final TransactionalLocalPasswordLogin transactionalLogin = mock(TransactionalLocalPasswordLogin.class);
 
 	private final DefaultLocalPasswordLoginOperations operations =
-			new DefaultLocalPasswordLoginOperations(this.users, this.passwords, this.sessions, this.properties);
+			new DefaultLocalPasswordLoginOperations(this.limiter, this.transactionalLogin);
 
 	@Test
-	void performsOneDummyVerificationForAnUnknownLogin() {
-		PasswordAttempt attempt = attempt();
-		when(this.users.findByLogin(TenantId.DEFAULT, LOGIN_KEY)).thenReturn(Optional.empty());
-
-		LocalPasswordLoginResult result = this.operations.login(TenantId.DEFAULT, LOGIN_KEY, attempt);
-
-		assertThat(result.authenticated()).isFalse();
-		verify(this.passwords).performDummyVerification(attempt);
-		verify(this.passwords, never()).verifyPassword(any(), any(), any());
-		verifyNoInteractions(this.sessions);
-	}
-
-	@Test
-	void performsOneDummyVerificationForAnInactiveLogin() {
-		PasswordAttempt attempt = attempt();
-		when(this.users.findByLogin(TenantId.DEFAULT, LOGIN_KEY))
-			.thenReturn(Optional.of(user(UserStatus.DISABLED)));
-
-		LocalPasswordLoginResult result = this.operations.login(TenantId.DEFAULT, LOGIN_KEY, attempt);
-
-		assertThat(result.authenticated()).isFalse();
-		verify(this.passwords).performDummyVerification(attempt);
-		verify(this.passwords, never()).verifyPassword(any(), any(), any());
-		verifyNoInteractions(this.sessions);
-	}
-
-	@Test
-	void returnsTheSameGenericFailureWhenKnownUserVerificationFails() {
-		PasswordAttempt attempt = attempt();
-		when(this.users.findByLogin(TenantId.DEFAULT, LOGIN_KEY)).thenReturn(Optional.of(user(UserStatus.ACTIVE)));
-		when(this.passwords.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).thenReturn(false);
-
-		LocalPasswordLoginResult result = this.operations.login(TenantId.DEFAULT, LOGIN_KEY, attempt);
-
-		assertThat(result).isSameAs(LocalPasswordLoginResult.failure());
-		verify(this.passwords, never()).performDummyVerification(any());
-		verifyNoInteractions(this.sessions);
-	}
-
-	@Test
-	void verifiesAndStartsTheSessionWithinOneCall() {
-		PasswordAttempt attempt = attempt();
-		User user = user(UserStatus.ACTIVE);
+	void recordsSuccessOnlyAfterAuthenticationReturns() {
 		UserSession session = session();
-		when(this.users.findByLogin(TenantId.DEFAULT, LOGIN_KEY)).thenReturn(Optional.of(user));
-		when(this.passwords.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).thenReturn(true);
-		when(this.sessions.start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
-				this.properties.absoluteTtl())).thenReturn(session);
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+				.thenReturn(LocalPasswordLoginResult.success(session));
 
-		LocalPasswordLoginResult result = this.operations.login(TenantId.DEFAULT, LOGIN_KEY, attempt);
+			LocalPasswordLoginResult result =
+					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
 
-		assertThat(result.authenticated()).isTrue();
-		assertThat(result.session()).contains(session);
-		InOrder order = inOrder(this.users, this.passwords, this.sessions);
-		order.verify(this.users).findByLogin(TenantId.DEFAULT, LOGIN_KEY);
-		order.verify(this.passwords).verifyPassword(TenantId.DEFAULT, USER_ID, attempt);
-		order.verify(this.sessions).start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
-				this.properties.absoluteTtl());
-		verify(this.passwords, never()).performDummyVerification(any());
+			assertThat(result.session()).contains(session);
+			InOrder order = inOrder(this.limiter, this.transactionalLogin);
+			order.verify(this.limiter).acquire(ATTEMPT_KEY);
+			order.verify(this.transactionalLogin).authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
+			order.verify(this.limiter).recordSuccess(ATTEMPT_KEY, LEASE);
+		}
 	}
 
 	@Test
-	void rejectsNullInputBeforeTouchingAuthenticationState() {
-		PasswordAttempt attempt = attempt();
+	void preservesTheAttemptAfterRejectedAuthentication() {
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+				.thenReturn(LocalPasswordLoginResult.rejected());
 
-		assertThatThrownBy(() -> this.operations.login(null, LOGIN_KEY, attempt))
-			.isInstanceOf(NullPointerException.class);
-		assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, null, attempt))
-			.isInstanceOf(NullPointerException.class);
-		assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, null))
-			.isInstanceOf(NullPointerException.class);
-		verifyNoInteractions(this.users, this.passwords, this.sessions);
+			LocalPasswordLoginResult result =
+					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
+
+			assertThat(result).isSameAs(LocalPasswordLoginResult.rejected());
+			verify(this.limiter, never()).recordSuccess(ATTEMPT_KEY, LEASE);
+		}
+	}
+
+	@Test
+	void returnsThrottledWithoutAuthenticating() {
+		Duration retryAfter = Duration.ofSeconds(9);
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.throttled(retryAfter));
+
+			LocalPasswordLoginResult result =
+					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
+
+			assertThat(result.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
+			assertThat(result.retryAfter()).contains(retryAfter);
+			verifyNoInteractions(this.transactionalLogin);
+			verify(this.limiter, never()).recordSuccess(any(), any());
+		}
+	}
+
+	@Test
+	void returnsUnavailableWithoutAuthenticating() {
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.unavailable());
+
+			LocalPasswordLoginResult result =
+					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
+
+			assertThat(result).isSameAs(LocalPasswordLoginResult.unavailable());
+			verifyNoInteractions(this.transactionalLogin);
+			verify(this.limiter, never()).recordSuccess(any(), any());
+		}
+	}
+
+	@Test
+	void doesNotRecordSuccessWhenAuthenticationFailsUnexpectedly() {
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+				.thenThrow(new IllegalStateException("authentication transaction failed"));
+
+			assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessage("authentication transaction failed");
+			verify(this.limiter, never()).recordSuccess(ATTEMPT_KEY, LEASE);
+		}
+	}
+
+	@Test
+	void returnsTheCommittedSuccessWhenAcknowledgementFailsUnexpectedly() {
+		UserSession session = session();
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+				.thenReturn(LocalPasswordLoginResult.success(session));
+			doThrow(new IllegalStateException("unexpected reset failure"))
+				.when(this.limiter)
+				.recordSuccess(ATTEMPT_KEY, LEASE);
+
+			LocalPasswordLoginResult result =
+					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
+
+			assertThat(result.session()).contains(session);
+			verify(this.limiter).recordSuccess(ATTEMPT_KEY, LEASE);
+		}
+	}
+
+	@Test
+	void rejectsNullInputBeforeAcquiringAnAttempt() {
+		try (PasswordAttempt attempt = attempt()) {
+			assertThatThrownBy(() -> this.operations.login(null, LOGIN_KEY, SOURCE, attempt))
+				.isInstanceOf(NullPointerException.class);
+			assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, null, SOURCE, attempt))
+				.isInstanceOf(NullPointerException.class);
+			assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, null, attempt))
+				.isInstanceOf(NullPointerException.class);
+			assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, null))
+				.isInstanceOf(NullPointerException.class);
+			verifyNoInteractions(this.limiter, this.transactionalLogin);
+		}
+	}
+
+	@Test
+	void rejectsAnExistingDatabaseTransactionBeforeAcquiringAnAttempt() {
+		try (PasswordAttempt attempt = attempt()) {
+			TransactionSynchronizationManager.setActualTransactionActive(true);
+			try {
+				assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
+					.isInstanceOf(IllegalTransactionStateException.class)
+					.hasMessage("Local password login must not run inside a database transaction");
+			}
+			finally {
+				TransactionSynchronizationManager.setActualTransactionActive(false);
+			}
+			verifyNoInteractions(this.limiter, this.transactionalLogin);
+		}
 	}
 
 	private PasswordAttempt attempt() {
 		return new PasswordAttempt("candidate-password".toCharArray());
 	}
 
-	private User user(UserStatus status) {
-		return new User(USER_ID, TenantId.DEFAULT, List.of(LoginIdentifier.username("alice")), status, 0, NOW, NOW,
-				null);
-	}
-
 	private UserSession session() {
-		return UserSession.start(SessionId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e61"), TenantId.DEFAULT, USER_ID,
-				SessionAuthenticationMethod.PASSWORD, 0, 0, NOW, NOW.plus(Duration.ofHours(8)));
+		Instant now = Instant.parse("2026-01-01T00:00:00Z");
+		return UserSession.start(SessionId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e61"), TenantId.DEFAULT,
+				UserId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e62"), SessionAuthenticationMethod.PASSWORD,
+				0, 0, now, now.plus(Duration.ofHours(8)));
 	}
 
 }

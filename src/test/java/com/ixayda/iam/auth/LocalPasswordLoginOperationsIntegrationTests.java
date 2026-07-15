@@ -1,6 +1,7 @@
 package com.ixayda.iam.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -11,6 +12,7 @@ import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.ratelimit.LoginAttemptSource;
 import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.tenant.CreateTenantRequest;
@@ -27,7 +29,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+@TestPropertySource(properties = "iam.ratelimit.login.principal-limit=2")
 class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	private final List<UserReference> usersToDelete = new ArrayList<>();
@@ -51,6 +58,9 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 
 	@Autowired
 	private JdbcClient jdbcClient;
+
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	@AfterEach
 	void deleteFixtures() {
@@ -115,7 +125,7 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 		LocalPasswordLoginResult mismatchResult =
 				login(TenantId.DEFAULT, loginKey(wrongPassword), "wrong-password");
 
-		assertThat(unknownResult).isSameAs(LocalPasswordLoginResult.failure());
+		assertThat(unknownResult).isSameAs(LocalPasswordLoginResult.rejected());
 		assertThat(inactiveResult).isSameAs(unknownResult);
 		assertThat(missingResult).isSameAs(unknownResult);
 		assertThat(mismatchResult).isSameAs(unknownResult);
@@ -133,14 +143,75 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 
 		LocalPasswordLoginResult result = login(tenant.id(), loginKey(user), "correct-password");
 
-		assertThat(result).isSameAs(LocalPasswordLoginResult.failure());
+		assertThat(result).isSameAs(LocalPasswordLoginResult.rejected());
 		assertThat(sessionCount(tenant.id(), user.id())).isZero();
 	}
 
+	@Test
+	void throttlesBeforeAuthenticatingAfterThePrincipalBudgetIsConsumed() {
+		User user = createUser(TenantId.DEFAULT, "throttled");
+		setPassword(user, "correct-password");
+		LoginAttemptSource source = trustedSource("throttled");
+
+		LocalPasswordLoginResult first = login(TenantId.DEFAULT, loginKey(user), source, "wrong-password");
+		LocalPasswordLoginResult second = login(TenantId.DEFAULT, loginKey(user), source, "wrong-password");
+		LocalPasswordLoginResult third = login(TenantId.DEFAULT, loginKey(user), source, "correct-password");
+
+		assertThat(first).isSameAs(LocalPasswordLoginResult.rejected());
+		assertThat(second).isSameAs(first);
+		assertThat(third.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
+		assertThat(third.retryAfter()).hasValueSatisfying(retryAfter -> assertThat(retryAfter).isPositive());
+		assertThat(sessionCount(TenantId.DEFAULT, user.id())).isZero();
+	}
+
+	@Test
+	void clearsThePrincipalBudgetOnlyAfterACommittedSuccess() {
+		User user = createUser(TenantId.DEFAULT, "rate-reset");
+		setPassword(user, "correct-password");
+		LoginAttemptSource source = trustedSource("rate-reset");
+
+		assertThat(login(TenantId.DEFAULT, loginKey(user), source, "wrong-password"))
+			.isSameAs(LocalPasswordLoginResult.rejected());
+		assertThat(login(TenantId.DEFAULT, loginKey(user), source, "correct-password").authenticated()).isTrue();
+		assertThat(login(TenantId.DEFAULT, loginKey(user), source, "wrong-password"))
+			.isSameAs(LocalPasswordLoginResult.rejected());
+		assertThat(login(TenantId.DEFAULT, loginKey(user), source, "wrong-password"))
+			.isSameAs(LocalPasswordLoginResult.rejected());
+
+		LocalPasswordLoginResult throttled =
+				login(TenantId.DEFAULT, loginKey(user), source, "correct-password");
+
+		assertThat(throttled.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
+		assertThat(sessionCount(TenantId.DEFAULT, user.id())).isOne();
+	}
+
+	@Test
+	void rejectsACallerOwnedDatabaseTransactionBeforeAuthentication() {
+		User user = createUser(TenantId.DEFAULT, "caller-transaction");
+		setPassword(user, "correct-password");
+		LoginAttemptSource source = trustedSource("caller-transaction");
+		TransactionTemplate transaction = new TransactionTemplate(this.transactionManager);
+
+		assertThatThrownBy(() -> transaction.execute(status ->
+				login(TenantId.DEFAULT, loginKey(user), source, "correct-password")))
+			.isInstanceOf(IllegalTransactionStateException.class)
+			.hasMessage("Local password login must not run inside a database transaction");
+		assertThat(sessionCount(TenantId.DEFAULT, user.id())).isZero();
+	}
+
 	private LocalPasswordLoginResult login(TenantId tenantId, LoginKey loginKey, String password) {
+		return login(tenantId, loginKey, trustedSource("integration"), password);
+	}
+
+	private LocalPasswordLoginResult login(TenantId tenantId, LoginKey loginKey, LoginAttemptSource source,
+			String password) {
 		try (PasswordAttempt attempt = new PasswordAttempt(password.toCharArray())) {
-			return this.logins.login(tenantId, loginKey, attempt);
+			return this.logins.login(tenantId, loginKey, source, attempt);
 		}
+	}
+
+	private LoginAttemptSource trustedSource(String purpose) {
+		return LoginAttemptSource.trusted(purpose + "-" + UUID.randomUUID());
 	}
 
 	private User createUser(TenantId tenantId, String purpose) {

@@ -1,4 +1,4 @@
-package com.ixayda.iam.auth;
+package com.ixayda.iam.auth.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
+import com.ixayda.iam.auth.LocalPasswordLoginResult;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
@@ -29,10 +30,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-class LocalPasswordLoginConcurrencyIntegrationTests extends ApplicationIntegrationTest {
+class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends ApplicationIntegrationTest {
 
 	@Autowired
-	private LocalPasswordLoginOperations logins;
+	private TransactionalLocalPasswordLogin login;
 
 	@Autowired
 	private PasswordOperations passwords;
@@ -148,7 +149,7 @@ class LocalPasswordLoginConcurrencyIntegrationTests extends ApplicationIntegrati
 			}
 
 			assertThat(disable.get(5, TimeUnit.SECONDS).status()).isEqualTo(UserStatus.DISABLED);
-			assertThat(login.get(5, TimeUnit.SECONDS)).isSameAs(LocalPasswordLoginResult.failure());
+			assertThat(login.get(5, TimeUnit.SECONDS)).isSameAs(LocalPasswordLoginResult.rejected());
 		}
 
 		assertThat(sessionCount()).isZero();
@@ -168,7 +169,7 @@ class LocalPasswordLoginConcurrencyIntegrationTests extends ApplicationIntegrati
 
 	private LocalPasswordLoginResult loginInCurrentTransaction(String value) {
 		try (PasswordAttempt attempt = new PasswordAttempt(value.toCharArray())) {
-			return this.logins.login(TenantId.DEFAULT, loginKey(), attempt);
+			return this.login.authenticate(TenantId.DEFAULT, loginKey(), attempt);
 		}
 	}
 

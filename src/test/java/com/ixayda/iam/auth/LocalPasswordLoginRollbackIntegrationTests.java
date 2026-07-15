@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.credential.PasswordAttempt;
+import com.ixayda.iam.ratelimit.LoginAttemptSource;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.tenant.TenantId;
@@ -24,8 +25,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+@TestPropertySource(properties = "iam.ratelimit.login.principal-limit=1")
 class LocalPasswordLoginRollbackIntegrationTests extends ApplicationIntegrationTest {
 
 	@Autowired
@@ -66,7 +69,7 @@ class LocalPasswordLoginRollbackIntegrationTests extends ApplicationIntegrationT
 	}
 
 	@Test
-	void rollsBackCredentialUpgradeWhenSessionCreationFails() {
+	void rollsBackCredentialUpgradeAndPreservesTheAttemptWhenSessionCreationFails() {
 		this.user = createUser();
 		String rawPassword = "legacy-password";
 		String legacyHash = "{bcrypt}" + new BCryptPasswordEncoder(4).encode(rawPassword);
@@ -82,8 +85,9 @@ class LocalPasswordLoginRollbackIntegrationTests extends ApplicationIntegrationT
 				eq(SessionAuthenticationMethod.PASSWORD), any()))
 			.thenThrow(new IllegalStateException("simulated session write failure"));
 
+		LoginAttemptSource source = LoginAttemptSource.trusted("rollback-" + UUID.randomUUID());
 		try (PasswordAttempt attempt = new PasswordAttempt(rawPassword.toCharArray())) {
-			assertThatThrownBy(() -> this.logins.login(TenantId.DEFAULT, loginKey(), attempt))
+			assertThatThrownBy(() -> this.logins.login(TenantId.DEFAULT, loginKey(), source, attempt))
 				.isInstanceOf(IllegalStateException.class)
 				.hasMessage("simulated session write failure");
 		}
@@ -91,6 +95,10 @@ class LocalPasswordLoginRollbackIntegrationTests extends ApplicationIntegrationT
 		StoredCredential stored = storedCredential();
 		assertThat(stored.encodedPassword()).isEqualTo(legacyHash);
 		assertThat(stored.version()).isZero();
+		try (PasswordAttempt retry = new PasswordAttempt(rawPassword.toCharArray())) {
+			LocalPasswordLoginResult result = this.logins.login(TenantId.DEFAULT, loginKey(), source, retry);
+			assertThat(result.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
+		}
 	}
 
 	private User createUser() {

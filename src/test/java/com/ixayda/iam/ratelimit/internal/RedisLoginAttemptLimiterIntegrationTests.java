@@ -127,6 +127,22 @@ class RedisLoginAttemptLimiterIntegrationTests extends ApplicationIntegrationTes
 	}
 
 	@Test
+	void sharesThePrincipalBudgetAcrossLimiterInstances() {
+		String prefix = "iam:test:ratelimit:" + UUID.randomUUID().toString().replace("-", "");
+		LoginRateLimitProperties properties = new LoginRateLimitProperties(2, Duration.ofMinutes(1), 100,
+				Duration.ofMinutes(1), KEY_SECRET, prefix);
+		LoginAttemptLimiter first = new RedisLoginAttemptLimiter(this.redis, this.acquireScript, this.clearScript,
+				properties, new SimpleMeterRegistry());
+		LoginAttemptLimiter second = new RedisLoginAttemptLimiter(this.redis, this.acquireScript, this.clearScript,
+				properties, new SimpleMeterRegistry());
+		LoginAttemptKey key = key("shared-instances", uniqueSource());
+
+		assertThat(first.acquire(key).status()).isEqualTo(LoginAttemptStatus.ALLOWED);
+		assertThat(second.acquire(key).status()).isEqualTo(LoginAttemptStatus.ALLOWED);
+		assertThat(first.acquire(key).status()).isEqualTo(LoginAttemptStatus.THROTTLED);
+	}
+
+	@Test
 	void resetsThePrincipalBudgetWithoutResettingTheSourceBudget() {
 		LoginAttemptLimiter scopedLimiter = limiter(1, Duration.ofMinutes(1), 2, Duration.ofMinutes(1));
 		String source = uniqueSource();

@@ -37,6 +37,7 @@ All notable changes to this project will be documented in this file.
 - Disabled-by-default LDAP credential provider configuration with secure transport validation and explicit tenant allowlisting.
 - LDAP external credential verification with unique directory lookup, user bind authentication, and outcome metrics.
 - Redis-backed atomic login-attempt limits with privacy-preserving keys and bounded failure handling.
+- Redis login-attempt enforcement for local password authentication with explicit throttled and unavailable outcomes.
 - Non-bearer user session metadata with tenant and user lifecycle-version snapshots.
 - Transactional tenant lifecycle operations with optimistic concurrency and a protected built-in default tenant.
 - Validated tenant domain model and lifecycle contract.

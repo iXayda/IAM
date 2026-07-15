@@ -3,6 +3,7 @@ package com.ixayda.iam.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Duration;
 import java.time.Instant;
 
 import com.ixayda.iam.session.SessionAuthenticationMethod;
@@ -15,21 +16,52 @@ import org.junit.jupiter.api.Test;
 class LocalPasswordLoginResultTests {
 
 	@Test
-	void exposesOnlySuccessOrFailureWithoutDiagnosticIdentityData() {
+	void exposesAuthenticatedAndRejectedOutcomesWithoutIdentityData() {
 		UserSession session = session();
-		LocalPasswordLoginResult success = LocalPasswordLoginResult.success(session);
-		LocalPasswordLoginResult failure = LocalPasswordLoginResult.failure();
+		LocalPasswordLoginResult authenticated = LocalPasswordLoginResult.success(session);
+		LocalPasswordLoginResult rejected = LocalPasswordLoginResult.rejected();
 
-		assertThat(success.authenticated()).isTrue();
-		assertThat(success.session()).contains(session);
-		assertThat(success.toString()).isEqualTo("LocalPasswordLoginResult[authenticated=true]")
+		assertThat(authenticated.status()).isEqualTo(LocalPasswordLoginStatus.AUTHENTICATED);
+		assertThat(authenticated.authenticated()).isTrue();
+		assertThat(authenticated.session()).contains(session);
+		assertThat(authenticated.retryAfter()).isEmpty();
+		assertThat(authenticated.toString()).isEqualTo("LocalPasswordLoginResult[status=AUTHENTICATED]")
 			.doesNotContain(session.id().toString(), session.userId().toString());
-		assertThat(failure.authenticated()).isFalse();
-		assertThat(failure.session()).isEmpty();
-		assertThat(failure.toString()).isEqualTo("LocalPasswordLoginResult[authenticated=false]");
-		assertThat(LocalPasswordLoginResult.failure()).isSameAs(failure);
+		assertThat(rejected.status()).isEqualTo(LocalPasswordLoginStatus.REJECTED);
+		assertThat(rejected.authenticated()).isFalse();
+		assertThat(rejected.session()).isEmpty();
+		assertThat(rejected.retryAfter()).isEmpty();
+		assertThat(LocalPasswordLoginResult.rejected()).isSameAs(rejected);
+	}
+
+	@Test
+	void exposesThrottledAndUnavailableOutcomesWithoutRateLimitDetailsInDiagnostics() {
+		Duration retryAfter = Duration.ofSeconds(17);
+		LocalPasswordLoginResult throttled = LocalPasswordLoginResult.throttled(retryAfter);
+		LocalPasswordLoginResult unavailable = LocalPasswordLoginResult.unavailable();
+
+		assertThat(throttled.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
+		assertThat(throttled.authenticated()).isFalse();
+		assertThat(throttled.session()).isEmpty();
+		assertThat(throttled.retryAfter()).contains(retryAfter);
+		assertThat(throttled.toString()).isEqualTo("LocalPasswordLoginResult[status=THROTTLED]")
+			.doesNotContain("17");
+		assertThat(unavailable.status()).isEqualTo(LocalPasswordLoginStatus.UNAVAILABLE);
+		assertThat(unavailable.session()).isEmpty();
+		assertThat(unavailable.retryAfter()).isEmpty();
+		assertThat(LocalPasswordLoginResult.unavailable()).isSameAs(unavailable);
+	}
+
+	@Test
+	void rejectsInvalidFactoryArguments() {
 		assertThatThrownBy(() -> LocalPasswordLoginResult.success(null))
 			.isInstanceOf(NullPointerException.class);
+		assertThatThrownBy(() -> LocalPasswordLoginResult.throttled(null))
+			.isInstanceOf(NullPointerException.class);
+		assertThatThrownBy(() -> LocalPasswordLoginResult.throttled(Duration.ZERO))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> LocalPasswordLoginResult.throttled(Duration.ofSeconds(-1)))
+			.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	private UserSession session() {

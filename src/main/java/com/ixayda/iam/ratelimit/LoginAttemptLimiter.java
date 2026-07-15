@@ -11,7 +11,7 @@ public interface LoginAttemptLimiter {
 	/**
 	 * Acknowledges an allowed attempt only after its authentication transaction has
 	 * committed. A stale lease is ignored so an earlier success cannot clear later
-	 * attempts.
+	 * attempts. Operational reset failures must not escape to the caller.
 	 */
 	void recordSuccess(LoginAttemptKey key, LoginAttemptLease lease);
 

@@ -120,7 +120,7 @@ IAM 不负责：
 - 租户隔离的用户目录、统一登录标识和事务化生命周期操作
 - 用户软删除标识保留、乐观并发收敛和租户写入保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
-- Redis 原子登录尝试限流、隐私保护键空间和多实例共享计数
+- 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
 - GraalVM Native Image 构建与启动验证
 - JUnit、Spring Boot Test 和 Testcontainers 测试基线
 
@@ -269,6 +269,10 @@ Base64 secret。该 secret 用于 HMAC-SHA256 键派生，Redis key 不包含原
 认证；不得降级为放行或普通凭据失败。限流获取与成功后的 principal 计数清理必须在数据库事务
 之外执行，成功清理不会重置 source 预算。成功清理使用一次性 lease；较早成功的请求不能清除
 在其之后到达的尝试。
+
+本地密码登录结果区分 `AUTHENTICATED`、通用凭据拒绝 `REJECTED`、带重试时间的 `THROTTLED` 和
+依赖故障 `UNAVAILABLE`。只有认证事务提交成功后才清理 principal 计数；调用方不得在已有数据库
+事务中发起登录。
 
 生产 Redis 必须位于受保护网络中，启用传输加密与认证，并为应用账号配置满足脚本执行和键操作
 所需的最小权限 ACL。HMAC 只避免在 key 中暴露原始标识，不能替代 Redis 的访问控制、传输保护、
