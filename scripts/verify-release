@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly REQUIRED_JAVA_VERSION="25.0.3"
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly NATIVE_BINARY="${ROOT_DIR}/target/iam-core-service"
+readonly COMPOSE_PROJECT="iam-release-$$"
+
+compose_command=()
+app_pid=""
+app_port=""
+app_log=""
+metrics_file=""
+
+log() {
+	printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
+}
+
+fail() {
+	log "ERROR: $*" >&2
+	exit 1
+}
+
+require_command() {
+	command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"
+}
+
+detect_compose() {
+	if docker compose version >/dev/null 2>&1; then
+		compose_command=(docker compose)
+	elif command -v docker-compose >/dev/null 2>&1; then
+		compose_command=(docker-compose)
+	else
+		fail "Docker Compose is unavailable"
+	fi
+	"${compose_command[@]}" up --help 2>&1 | grep -q -- '--wait' \
+		|| fail "Docker Compose must support 'up --wait'"
+}
+
+compose() {
+	"${compose_command[@]}" --project-name "${COMPOSE_PROJECT}" \
+		--file "${ROOT_DIR}/compose.yaml" "$@"
+}
+
+configure_docker_host() {
+	if [[ -z "${DOCKER_HOST:-}" ]]; then
+		local detected_host
+		detected_host="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+		if [[ -n "${detected_host}" ]]; then
+			export DOCKER_HOST="${detected_host}"
+		fi
+	fi
+	if [[ "$(uname -s)" == "Darwin" && "${DOCKER_HOST:-}" == unix://* \
+			&& "${DOCKER_HOST}" != "unix:///var/run/docker.sock" ]]; then
+		export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
+	fi
+}
+
+cleanup() {
+	local status=$?
+	local attempt
+	trap - EXIT
+	if ((${#compose_command[@]} > 0)); then
+		compose unpause postgres redis >/dev/null 2>&1 || true
+	fi
+	if [[ -n "${app_pid}" ]] && kill -0 "${app_pid}" >/dev/null 2>&1; then
+		kill -TERM "${app_pid}" >/dev/null 2>&1 || true
+		for ((attempt = 1; attempt <= 40; attempt++)); do
+			kill -0 "${app_pid}" >/dev/null 2>&1 || break
+			sleep 0.25
+		done
+		if kill -0 "${app_pid}" >/dev/null 2>&1; then
+			kill -KILL "${app_pid}" >/dev/null 2>&1 || true
+		fi
+		wait "${app_pid}" >/dev/null 2>&1 || true
+	fi
+	if ((${#compose_command[@]} > 0)); then
+		compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+	fi
+	if ((status != 0)) && [[ -n "${app_log}" && -s "${app_log}" ]]; then
+		log "Native application log (last 120 lines):" >&2
+		tail -n 120 "${app_log}" >&2
+	fi
+	[[ -z "${app_log}" ]] || rm -f "${app_log}"
+	[[ -z "${metrics_file}" ]] || rm -f "${metrics_file}"
+	exit "${status}"
+}
+
+wait_for_status() {
+	local path=$1
+	local expected=$2
+	local timeout_seconds=${3:-60}
+	local deadline=$((SECONDS + timeout_seconds))
+	local status=""
+	while ((SECONDS <= deadline)); do
+		if [[ -n "${app_pid}" ]] && ! kill -0 "${app_pid}" >/dev/null 2>&1; then
+			return 1
+		fi
+		status="$(curl --silent --connect-timeout 1 --max-time 5 --output /dev/null --write-out '%{http_code}' \
+			"http://127.0.0.1:${app_port}${path}" 2>/dev/null || true)"
+		if [[ "${status}" == "${expected}" ]]; then
+			return 0
+		fi
+		((SECONDS >= deadline)) && break
+		sleep 1
+	done
+	log "Expected ${path} to return ${expected} within ${timeout_seconds}s, last status was ${status:-unreachable}" >&2
+	return 1
+}
+
+wait_for_health_component() {
+	local component=$1
+	local expected=$2
+	local timeout_seconds=${3:-15}
+	local deadline=$((SECONDS + timeout_seconds))
+	local body=""
+	while ((SECONDS <= deadline)); do
+		body="$(curl --silent --connect-timeout 1 --max-time 5 \
+			"http://127.0.0.1:${app_port}/actuator/health/readiness/${component}" 2>/dev/null || true)"
+		if [[ "${body}" == *"\"status\":\"${expected}\""* ]]; then
+			return 0
+		fi
+		((SECONDS >= deadline)) && break
+		sleep 1
+	done
+	log "Expected health component ${component} to report ${expected} within ${timeout_seconds}s" >&2
+	log "Last readiness response: ${body:-unreachable}" >&2
+	return 1
+}
+
+successful_migration_count() {
+	compose exec -T postgres psql --username "${db_username}" --dbname "${db_name}" \
+		--tuples-only --no-align \
+		--command 'SELECT count(*) FROM flyway_schema_history WHERE success'
+}
+
+start_app() {
+	local configured=$1
+	local login_secret_value=""
+	local security_state_secret_value=""
+	if [[ "${configured}" == "true" ]]; then
+		login_secret_value="${login_secret}"
+		security_state_secret_value="${security_state_secret}"
+	fi
+
+	: >"${app_log}"
+	app_port=""
+	env \
+		SERVER_ADDRESS=127.0.0.1 \
+		SERVER_PORT=0 \
+		SERVER_SHUTDOWN=graceful \
+		SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE=10s \
+		SPRING_DOCKER_COMPOSE_ENABLED=false \
+		SPRING_DATASOURCE_URL="jdbc:postgresql://127.0.0.1:${postgres_port}/${db_name}" \
+		SPRING_DATASOURCE_USERNAME="${db_username}" \
+		SPRING_DATASOURCE_PASSWORD="${db_password}" \
+		SPRING_DATA_REDIS_HOST=127.0.0.1 \
+		SPRING_DATA_REDIS_PORT="${redis_port}" \
+		IAM_LOGIN_RATE_LIMIT_KEY_SECRET="${login_secret_value}" \
+		IAM_SECURITY_STATE_KEY_SECRET="${security_state_secret_value}" \
+		IAM_DEPLOYMENT_ENVIRONMENT=release-check \
+		MANAGEMENT_ENDPOINT_HEALTH_SHOW_COMPONENTS=always \
+		MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always \
+		MANAGEMENT_TRACING_EXPORT_ENABLED=false \
+		MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED=false \
+		"${NATIVE_BINARY}" >"${app_log}" 2>&1 &
+	app_pid=$!
+
+	local attempt
+	for ((attempt = 1; attempt <= 60; attempt++)); do
+		if ! kill -0 "${app_pid}" >/dev/null 2>&1; then
+			fail "Native application exited during startup"
+		fi
+		app_port="$(sed -n 's/.*Tomcat started on port \([0-9][0-9]*\).*/\1/p' "${app_log}" | tail -n 1)"
+		if [[ "${app_port}" =~ ^[0-9]+$ ]]; then
+			return 0
+		fi
+		sleep 1
+	done
+	fail "Timed out waiting for the native application port"
+}
+
+stop_app() {
+	local pid="${app_pid}"
+	local attempt
+	kill -TERM "${pid}"
+	for ((attempt = 1; attempt <= 40; attempt++)); do
+		if ! kill -0 "${pid}" >/dev/null 2>&1; then
+			break
+		fi
+		sleep 0.25
+	done
+	if kill -0 "${pid}" >/dev/null 2>&1; then
+		kill -KILL "${pid}" >/dev/null 2>&1 || true
+		wait "${pid}" >/dev/null 2>&1 || true
+		app_pid=""
+		fail "Native application did not stop within ten seconds"
+	fi
+	wait "${pid}" >/dev/null 2>&1 || true
+	app_pid=""
+	grep -q 'Graceful shutdown complete' "${app_log}" || fail "Graceful shutdown was not observed"
+}
+
+trap cleanup EXIT
+app_log="$(mktemp "${TMPDIR:-/tmp}/iam-release-app.XXXXXX")"
+metrics_file="$(mktemp "${TMPDIR:-/tmp}/iam-release-metrics.XXXXXX")"
+cd "${ROOT_DIR}"
+
+require_command curl
+require_command docker
+require_command openssl
+[[ -x "${ROOT_DIR}/mvnw" ]] || fail "Maven Wrapper is not executable"
+
+smoke_only=false
+if [[ "${1:-}" == "--smoke-only" ]]; then
+	smoke_only=true
+	shift
+fi
+(($# == 0)) || fail "Usage: scripts/verify-release [--smoke-only]"
+
+if [[ "${smoke_only}" == "false" ]]; then
+	[[ -n "${JAVA_HOME:-}" ]] || fail "JAVA_HOME must point to Oracle GraalVM ${REQUIRED_JAVA_VERSION}"
+	[[ -x "${JAVA_HOME}/bin/native-image" ]] || fail "native-image is unavailable under JAVA_HOME"
+	java_version="$(${JAVA_HOME}/bin/java -version 2>&1)"
+	[[ "${java_version}" == *"${REQUIRED_JAVA_VERSION}"* ]] \
+		|| fail "Oracle GraalVM ${REQUIRED_JAVA_VERSION} is required"
+	export GRAALVM_HOME="${JAVA_HOME}"
+	export PATH="${JAVA_HOME}/bin:${PATH}"
+fi
+
+detect_compose
+configure_docker_host
+docker info >/dev/null
+
+if [[ "${smoke_only}" == "false" ]]; then
+	log "Running JVM tests and Flyway migration verification"
+	./mvnw --batch-mode --no-transfer-progress clean verify
+
+	log "Running Prometheus alert rule tests"
+	docker run --rm --pull=always \
+		--entrypoint /otel-lgtm/prometheus/promtool \
+		--workdir /rules \
+		-v "${ROOT_DIR}/observability/prometheus:/rules:ro" \
+		grafana/otel-lgtm:latest \
+		test rules iam-alerts.test.yaml
+
+	log "Building the GraalVM native executable"
+	./mvnw --batch-mode --no-transfer-progress -DskipTests -Pnative native:compile
+else
+	log "Skipping build stages and reusing the existing native executable"
+fi
+[[ -x "${NATIVE_BINARY}" ]] || fail "Native executable was not created"
+
+log "Pulling latest PostgreSQL and Redis images"
+compose pull postgres redis
+log "Starting disposable PostgreSQL and Redis services"
+compose up -d --wait postgres redis
+postgres_endpoint="$(compose port postgres 5432)"
+redis_endpoint="$(compose port redis 6379)"
+postgres_port="${postgres_endpoint##*:}"
+redis_port="${redis_endpoint##*:}"
+[[ "${postgres_port}" =~ ^[0-9]+$ ]] || fail "Unable to resolve the PostgreSQL port"
+[[ "${redis_port}" =~ ^[0-9]+$ ]] || fail "Unable to resolve the Redis port"
+
+db_name="${IAM_DB_NAME:-iam}"
+db_username="${IAM_DB_USERNAME:-iam}"
+db_password="${IAM_DB_PASSWORD:-iam-local}"
+login_secret="$(openssl rand -base64 32)"
+security_state_secret="$(openssl rand -base64 32)"
+while [[ "${security_state_secret}" == "${login_secret}" ]]; do
+	security_state_secret="$(openssl rand -base64 32)"
+done
+
+log "Checking fresh native startup, migrations, probes, and metrics"
+start_app true
+wait_for_status /livez 200 || fail "Liveness probe did not become healthy"
+wait_for_status /readyz 200 || fail "Readiness probe did not become healthy"
+migration_files=(src/main/resources/db/migration/V*.sql)
+migration_count="$(successful_migration_count)"
+[[ "${migration_count}" == "${#migration_files[@]}" ]] \
+	|| fail "Expected ${#migration_files[@]} successful migrations, found ${migration_count}"
+curl --fail --silent --show-error --max-time 5 \
+	"http://127.0.0.1:${app_port}/actuator/prometheus" >"${metrics_file}"
+grep -q 'http_server_requests_seconds_bucket' "${metrics_file}" || fail "HTTP latency buckets are missing"
+grep -q 'application="iam-core-service"' "${metrics_file}" || fail "Application metric tag is missing"
+grep -q 'environment="release-check"' "${metrics_file}" || fail "Environment metric tag is missing"
+
+log "Checking Redis outage and recovery"
+compose pause redis
+wait_for_status /readyz 503 30 || fail "Readiness stayed healthy while Redis was unavailable"
+wait_for_health_component redis DOWN || fail "Redis health component did not report the outage"
+wait_for_status /livez 200 || fail "Redis outage affected liveness"
+compose unpause redis
+wait_for_status /readyz 200 30 || fail "Readiness did not recover after Redis"
+
+log "Checking PostgreSQL outage and recovery"
+compose pause postgres
+wait_for_status /readyz 503 30 || fail "Readiness stayed healthy while PostgreSQL was unavailable"
+wait_for_health_component db DOWN || fail "Database health component did not report the outage"
+wait_for_status /livez 200 || fail "PostgreSQL outage affected liveness"
+compose unpause postgres
+wait_for_status /readyz 200 30 || fail "Readiness did not recover after PostgreSQL"
+stop_app
+
+log "Checking fail-closed startup without security secrets"
+start_app false
+wait_for_status /livez 200 || fail "Misconfigured application did not stay live"
+wait_for_status /readyz 503 || fail "Misconfigured application became ready"
+wait_for_health_component loginRateLimit DOWN \
+	|| fail "Login rate-limit health did not report the missing secret"
+wait_for_health_component securityState DOWN \
+	|| fail "Security-state health did not report the missing secret"
+stop_app
+
+log "Checking restart and migration idempotency"
+start_app true
+wait_for_status /readyz 200 || fail "Restarted application did not become ready"
+restart_migration_count="$(successful_migration_count)"
+[[ "${restart_migration_count}" == "${migration_count}" ]] \
+	|| fail "Restart unexpectedly changed Flyway schema history"
+stop_app
+
+log "Resolved mutable test image identities"
+verified_images=(postgres:latest redis:latest)
+if [[ "${smoke_only}" == "false" ]]; then
+	verified_images+=(grafana/otel-lgtm:latest)
+fi
+docker image inspect --format '{{.Id}} {{json .RepoDigests}}' "${verified_images[@]}"
+log "Release verification passed"

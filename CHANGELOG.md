@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Automated release verification for tests, Native Image, schema state, probes, dependency recovery, and graceful shutdown.
 - Spring Boot 4.1 application baseline with Java 21 and GraalVM Native Image support.
 - Health and root probe endpoints, tagged HTTP latency histograms, trace-correlated logs, sampled exemplars, and an optional local LGTM stack.
 - Prometheus alerts for availability, HTTP errors and latency, Redis-backed security dependencies, and login throttling surges.
@@ -55,4 +56,5 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Bound local observability, PostgreSQL, and Redis ports to the loopback interface.
 - Suppressed PostgreSQL server error details that may contain bound login identifiers.
