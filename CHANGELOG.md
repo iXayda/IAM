@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- GitHub Actions release verification and Linux Native artifacts.
 - Automated release verification for tests, Native Image, schema state, probes, dependency recovery, and graceful shutdown.
 - Spring Boot 4.1 application baseline with Java 21 and GraalVM Native Image support.
 - Health and root probe endpoints, tagged HTTP latency histograms, trace-correlated logs, sampled exemplars, and an optional local LGTM stack.

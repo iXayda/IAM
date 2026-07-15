@@ -1,0 +1,67 @@
+name: Verify release
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  release-verification:
+    name: Release verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Oracle GraalVM
+        uses: graalvm/setup-graalvm@0def53c0fd8534bc13416c9469f5be45265824fd # v1.6.3
+        with:
+          java-version: '25.0.3'
+          distribution: graalvm
+          github-token: ${{ github.token }}
+          cache: maven
+          check-for-updates: 'false'
+          native-image-job-reports: 'true'
+
+      - name: Run release verification
+        run: ./scripts/verify-release
+
+      - name: Package native executable
+        run: |
+          mkdir -p target/release
+          cd target
+          sha256sum iam-core-service > iam-core-service.sha256
+          tar -czf release/iam-core-service-linux-${{ runner.arch }}.tar.gz \
+            iam-core-service iam-core-service.sha256
+
+      - name: Upload native executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: iam-core-service-linux-${{ runner.arch }}-${{ github.sha }}
+          path: target/release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-reports-${{ github.run_id }}
+          path: target/surefire-reports/**
+          if-no-files-found: ignore
+          retention-days: 14
