@@ -3,8 +3,12 @@ spring:
     name: iam-core-service
   datasource:
     hikari:
+      connection-timeout: 3000
       data-source-properties:
+        connectTimeout: 3
         logServerErrorDetail: false
+        socketTimeout: 3
+      validation-timeout: 1000
   docker:
     compose:
       enabled: false

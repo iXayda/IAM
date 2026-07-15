@@ -46,6 +46,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Database health checks now use bounded connection, validation, and socket waits.
 - GraalVM native application startup.
 - GraalVM native images now retain runtime LDAP configuration when the provider is disabled during the build.
 - Concurrent user status commands now converge without an unexpected transaction rollback.

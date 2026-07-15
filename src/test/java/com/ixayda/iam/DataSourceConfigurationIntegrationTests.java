@@ -20,4 +20,14 @@ class DataSourceConfigurationIntegrationTests extends ApplicationIntegrationTest
 		assertThat(hikariDataSource.getDataSourceProperties().getProperty("logServerErrorDetail")).isEqualTo("false");
 	}
 
+	@Test
+	void boundsDatabaseConnectionAndHealthCheckWaits() throws Exception {
+		HikariDataSource hikariDataSource = this.dataSource.unwrap(HikariDataSource.class);
+
+		assertThat(hikariDataSource.getConnectionTimeout()).isEqualTo(3_000);
+		assertThat(hikariDataSource.getValidationTimeout()).isEqualTo(1_000);
+		assertThat(hikariDataSource.getDataSourceProperties().getProperty("connectTimeout")).isEqualTo("3");
+		assertThat(hikariDataSource.getDataSourceProperties().getProperty("socketTimeout")).isEqualTo("3");
+	}
+
 }
