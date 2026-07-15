@@ -1,0 +1,125 @@
+rule_files:
+  - iam-alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: IamInstanceUnavailable
+        exp_alerts:
+          - exp_labels:
+              component: runtime
+              job: iam-core-service
+              service: iam-core-service
+              severity: critical
+            exp_annotations:
+              summary: IAM instance is unavailable
+              description: Prometheus cannot scrape an IAM target or no IAM target is registered.
+
+  - interval: 1m
+    input_series:
+      - series: 'iam_auth_login_rate_limit_decisions_total{application="iam-core-service",environment="production",status="unavailable"}'
+        values: '0+60x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: IamLoginRateLimitUnavailable
+        exp_alerts:
+          - exp_labels:
+              component: login-rate-limit
+              environment: production
+              service: iam-core-service
+              severity: critical
+            exp_annotations:
+              summary: IAM login rate limiting is unavailable
+              description: Redis-backed login rate-limit decisions or resets have failed during the last five minutes.
+
+  - interval: 1m
+    input_series:
+      - series: 'iam_security_state_consumptions_total{application="iam-core-service",environment="production",status="unavailable"}'
+        values: '0+60x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: IamSecurityStateUnavailable
+        exp_alerts:
+          - exp_labels:
+              component: security-state
+              environment: production
+              service: iam-core-service
+              severity: critical
+            exp_annotations:
+              summary: IAM one-time security state is unavailable
+              description: Redis-backed security-state issue or consume operations have failed during the last five minutes.
+
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{application="iam-core-service",environment="production",status="200"}'
+        values: '0+60x20'
+      - series: 'http_server_requests_seconds_count{application="iam-core-service",environment="production",status="500"}'
+        values: '0+60x20'
+      - series: 'http_server_requests_seconds_count{application="iam-core-service",environment="staging",status="200"}'
+        values: '0+6000x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IamHttp5xxRateHigh
+        exp_alerts:
+          - exp_labels:
+              component: http
+              environment: production
+              service: iam-core-service
+              severity: warning
+            exp_annotations:
+              summary: IAM HTTP 5xx rate is high
+              description: More than five percent of IAM HTTP requests have returned 5xx responses for ten minutes.
+
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{application="iam-core-service",environment="production",status="500"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IamHttp5xxRateHigh
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_bucket{application="iam-core-service",environment="production",le="1.0"}'
+        values: '0+0x20'
+      - series: 'http_server_requests_seconds_bucket{application="iam-core-service",environment="production",le="2.0"}'
+        values: '0+60x20'
+      - series: 'http_server_requests_seconds_bucket{application="iam-core-service",environment="production",le="+Inf"}'
+        values: '0+60x20'
+      - series: 'http_server_requests_seconds_count{application="iam-core-service",environment="production"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IamHttpP95LatencyHigh
+        exp_alerts:
+          - exp_labels:
+              component: http
+              environment: production
+              service: iam-core-service
+              severity: warning
+            exp_annotations:
+              summary: IAM HTTP p95 latency is high
+              description: IAM HTTP p95 latency has exceeded one second for ten minutes.
+
+  - interval: 1m
+    input_series:
+      - series: 'iam_auth_login_rate_limit_decisions_total{application="iam-core-service",environment="production",status="allowed"}'
+        values: '0+60x15'
+      - series: 'iam_auth_login_rate_limit_decisions_total{application="iam-core-service",environment="production",status="throttled"}'
+        values: '0+60x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IamLoginThrottlingSurge
+        exp_alerts:
+          - exp_labels:
+              component: login-rate-limit
+              environment: production
+              service: iam-core-service
+              severity: warning
+            exp_annotations:
+              summary: IAM login throttling has surged
+              description: More than twenty percent of login rate-limit decisions have been throttled for five minutes.

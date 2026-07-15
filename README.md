@@ -245,6 +245,29 @@ IAM 管理与自服务接口：
 `src/main/resources/application-local.yaml`。生产环境应通过标准 Spring Boot 配置来源提供
 数据库连接和 OTLP exporter 配置。
 
+### 可观测性
+
+应用在主端口提供 `/livez` 和 `/readyz`，Prometheus 指标统一包含 `application` 与
+`environment` 标签。生产环境通过 `IAM_DEPLOYMENT_ENVIRONMENT` 和
+`IAM_SERVICE_NAMESPACE` 设置部署环境与 OpenTelemetry service namespace；默认 trace 采样率为
+10%，`local` profile 为 100%。
+
+基础 Prometheus 告警规则位于 `observability/prometheus/iam-alerts.yaml`。规则假定 scrape job 名为
+`iam-core-service`，生产部署应将该文件加载到 Prometheus 或兼容 ruler，并根据实际流量调整阈值和
+告警路由。应用指标按 `environment` 分组；全局 target 缺失规则无法推断多环境中的单环境目标清单，
+集中式 ruler 需要额外维护按环境的预期目标规则。本地 LGTM 只用于开发和验证，不作为生产告警平台。
+
+使用 `grafana/otel-lgtm:latest` 内置的 `promtool` 校验规则及其单元测试：
+
+```bash
+docker run --rm \
+  --entrypoint /otel-lgtm/prometheus/promtool \
+  --workdir /rules \
+  -v "$PWD/observability/prometheus:/rules:ro" \
+  grafana/otel-lgtm:latest \
+  test rules iam-alerts.test.yaml
+```
+
 ### LDAP 外部凭据
 
 LDAP provider 默认关闭。启用时必须配置独立的 provider ID、允许使用该目录的 tenant、

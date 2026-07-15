@@ -1,0 +1,128 @@
+groups:
+  - name: iam.availability
+    rules:
+      - alert: IamInstanceUnavailable
+        expr: up{job="iam-core-service"} == 0 or absent(up{job="iam-core-service"})
+        for: 2m
+        labels:
+          component: runtime
+          service: iam-core-service
+          severity: critical
+        annotations:
+          summary: IAM instance is unavailable
+          description: Prometheus cannot scrape an IAM target or no IAM target is registered.
+
+      - alert: IamLoginRateLimitUnavailable
+        expr: |
+          (
+            sum by (environment) (
+              rate(iam_auth_login_rate_limit_decisions_total{application="iam-core-service",status="unavailable"}[5m])
+            ) > 0
+          )
+          or
+          (
+            sum by (environment) (
+              rate(iam_auth_login_rate_limit_resets_total{application="iam-core-service",status="unavailable"}[5m])
+            ) > 0
+          )
+        for: 2m
+        labels:
+          component: login-rate-limit
+          service: iam-core-service
+          severity: critical
+        annotations:
+          summary: IAM login rate limiting is unavailable
+          description: Redis-backed login rate-limit decisions or resets have failed during the last five minutes.
+
+      - alert: IamSecurityStateUnavailable
+        expr: |
+          (
+            sum by (environment) (
+              rate(iam_security_state_issues_total{application="iam-core-service",status="unavailable"}[5m])
+            ) > 0
+          )
+          or
+          (
+            sum by (environment) (
+              rate(iam_security_state_consumptions_total{application="iam-core-service",status="unavailable"}[5m])
+            ) > 0
+          )
+        for: 2m
+        labels:
+          component: security-state
+          service: iam-core-service
+          severity: critical
+        annotations:
+          summary: IAM one-time security state is unavailable
+          description: Redis-backed security-state issue or consume operations have failed during the last five minutes.
+
+  - name: iam.http
+    rules:
+      - alert: IamHttp5xxRateHigh
+        expr: |
+          (
+            sum by (environment) (
+              rate(http_server_requests_seconds_count{application="iam-core-service",status=~"5.."}[5m])
+            )
+            /
+            clamp_min(
+              sum by (environment) (rate(http_server_requests_seconds_count{application="iam-core-service"}[5m])),
+              0.001
+            )
+          ) > 0.05
+          and
+          sum by (environment) (rate(http_server_requests_seconds_count{application="iam-core-service"}[5m])) > 0.1
+        for: 10m
+        labels:
+          component: http
+          service: iam-core-service
+          severity: warning
+        annotations:
+          summary: IAM HTTP 5xx rate is high
+          description: More than five percent of IAM HTTP requests have returned 5xx responses for ten minutes.
+
+      - alert: IamHttpP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (environment, le) (
+              rate(http_server_requests_seconds_bucket{application="iam-core-service"}[5m])
+            )
+          ) > 1
+          and
+          sum by (environment) (rate(http_server_requests_seconds_count{application="iam-core-service"}[5m])) > 0.1
+        for: 10m
+        labels:
+          component: http
+          service: iam-core-service
+          severity: warning
+        annotations:
+          summary: IAM HTTP p95 latency is high
+          description: IAM HTTP p95 latency has exceeded one second for ten minutes.
+
+      - alert: IamLoginThrottlingSurge
+        expr: |
+          (
+            sum by (environment) (
+              rate(iam_auth_login_rate_limit_decisions_total{application="iam-core-service",status="throttled"}[5m])
+            )
+            /
+            clamp_min(
+              sum by (environment) (
+                rate(iam_auth_login_rate_limit_decisions_total{application="iam-core-service"}[5m])
+              ),
+              0.001
+            )
+          ) > 0.20
+          and
+          sum by (environment) (
+            rate(iam_auth_login_rate_limit_decisions_total{application="iam-core-service",status="throttled"}[5m])
+          ) > 0.1
+        for: 5m
+        labels:
+          component: login-rate-limit
+          service: iam-core-service
+          severity: warning
+        annotations:
+          summary: IAM login throttling has surged
+          description: More than twenty percent of login rate-limit decisions have been throttled for five minutes.
