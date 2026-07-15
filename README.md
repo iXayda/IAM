@@ -121,6 +121,7 @@ IAM 不负责：
 - 用户软删除标识保留、乐观并发收敛和租户写入保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
+- Redis 一次性安全状态、租户与用途绑定、原子消费和自动过期
 - GraalVM Native Image 构建与启动验证
 - JUnit、Spring Boot Test 和 Testcontainers 测试基线
 
@@ -185,6 +186,7 @@ IAM 当前采用模块化单体架构。
 | `policy` | ABAC / ReBAC / FGA 策略扩展点 |
 | `security` | Spring Security 与 JWT 校验 |
 | `ratelimit` | 登录限速 |
+| `securitystate` | MFA challenge 与一次性短期安全状态 |
 | `config` | 类型化运行配置 |
 
 ## 设计原则
@@ -277,6 +279,22 @@ Base64 secret。该 secret 用于 HMAC-SHA256 键派生，Redis key 不包含原
 生产 Redis 必须位于受保护网络中，启用传输加密与认证，并为应用账号配置满足脚本执行和键操作
 所需的最小权限 ACL。HMAC 只避免在 key 中暴露原始标识，不能替代 Redis 的访问控制、传输保护、
 高可用和备份策略。
+
+### 一次性安全状态
+
+MFA challenge 和高风险确认等短期流程使用 tenant、purpose 和内部 opaque binding 绑定的一次性
+token。token 为 256-bit 随机 bearer secret；Redis key 通过 HMAC-SHA256 派生，value 只保存版本
+标记，不保存任意 payload、登录标识或联系方式。缺失、过期、重放和绑定不匹配统一返回
+`REJECTED`，Redis 或配置不可用返回 `UNAVAILABLE`。
+
+生产环境必须通过 `IAM_SECURITY_STATE_KEY_SECRET` 为所有实例提供同一份独立的至少 32 字节
+Base64 secret。`iam.security-state.maximum-ttl` 默认限制为 15 分钟，且不得配置超过 24 小时。
+签发使用原子 `SET NX` 与 TTL，消费使用原子 `GETDEL`；两者都不得在数据库事务中调用。生产
+Redis 必须为 6.2 或更高版本，应用 ACL 至少允许受限 key 前缀上的 `SET` 和 `GETDEL`。
+
+同一 binding 可同时存在多个相互独立的 token，以支持多设备或多标签页流程；调用方必须限制签发
+频率和并发数量。消费采用 at-most-once 语义：`GETDEL` 成功后如果响应丢失或后续受保护操作失败，
+必须重新签发 challenge，不得恢复或重复使用原 token。
 
 ## 测试
 

@@ -7,6 +7,9 @@ spring:
       enabled: true
 
 iam:
+  security-state:
+    # Local-only default. Production must provide a dedicated shared Base64 secret.
+    key-secret: ${IAM_SECURITY_STATE_KEY_SECRET:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
   ratelimit:
     login:
       # Local-only default. Production must provide a shared 32-byte Base64 secret.

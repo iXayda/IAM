@@ -9,7 +9,9 @@ import org.springframework.context.annotation.Import;
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = {
 		"iam.ratelimit.login.key-prefix=iam:test:ratelimit",
-		"iam.ratelimit.login.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" })
+		"iam.ratelimit.login.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		"iam.security-state.key-prefix=iam:test:security-state",
+		"iam.security-state.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" })
 public abstract class ApplicationIntegrationTest {
 
 }

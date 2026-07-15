@@ -40,7 +40,7 @@ management:
     health:
       group:
         readiness:
-          include: readinessState,db,redis,loginRateLimit
+          include: readinessState,db,redis,loginRateLimit,securityState
       probes:
         enabled: true
   otlp:
@@ -49,6 +49,8 @@ management:
         enabled: false
 
 iam:
+  security-state:
+    key-secret: ${IAM_SECURITY_STATE_KEY_SECRET:}
   ratelimit:
     login:
       key-secret: ${IAM_LOGIN_RATE_LIMIT_KEY_SECRET:}
