@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Import;
 @AutoConfigureMetrics
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = {
+		"iam.authorization.token-protection.active-key-id=test-v1",
+		"iam.authorization.token-protection.keys.test-v1=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 		"iam.ratelimit.login.key-prefix=iam:test:ratelimit",
 		"iam.ratelimit.login.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 		"iam.security-state.key-prefix=iam:test:security-state",

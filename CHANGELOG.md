@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Tenant-scoped OAuth client persistence with global client identifiers, one-time secret issuance, encoded secret storage, and optimistic lifecycle updates.
 - Spring Security Authorization Server client mapping with active-tenant filtering and safe secret-hash upgrades.
 - Tenant-bound OAuth authorization, protected token, and consent persistence schema.
+- JDBC-backed OAuth authorization and consent services with encrypted tokens, tenant-aware owner checks, and optimistic state transitions.
 - GitHub Actions release verification and Linux Native artifacts.
 - Production configuration, backup, rollback, and pilot acceptance guidance.
 - Automated release verification for tests, Native Image, schema state, probes, dependency recovery, and graceful shutdown.
