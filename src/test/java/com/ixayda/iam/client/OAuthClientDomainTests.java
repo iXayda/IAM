@@ -69,6 +69,7 @@ class OAuthClientDomainTests {
 			"http://127.0.0.1:49152/callback", "http://[::1]:49152/callback",
 			"http://localhost/callback", "https://user@client.example.test/callback",
 			"https://client.example.test/callback#fragment", "https://*.example.test/callback",
+			"https://client.example.test/回调",
 			"https://client.example.test/a/../callback", "https://client.example.test:0/callback",
 			"https://client.example.test:65536/callback", "https://client.example.test:/callback" })
 	void rejectsUnsafeRedirectUris(String value) {
@@ -200,6 +201,9 @@ class OAuthClientDomainTests {
 			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(61)))
 			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMillis(30_500), Duration.ofMinutes(5)))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("whole number of seconds");
 	}
 
 	@Test

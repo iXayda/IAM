@@ -10,7 +10,7 @@ public record ClientRedirectUri(String value) {
 	public ClientRedirectUri {
 		Objects.requireNonNull(value, "Client redirect URI must not be null");
 		if (value.isEmpty() || value.length() > MAX_LENGTH || !value.equals(value.strip())
-				|| value.indexOf('*') >= 0) {
+				|| !value.chars().allMatch(ClientRedirectUri::isUriCharacter) || value.indexOf('*') >= 0) {
 			throw invalidUri();
 		}
 
@@ -40,14 +40,18 @@ public record ClientRedirectUri(String value) {
 		}
 	}
 
+	private static boolean isUriCharacter(int character) {
+		return character >= 0x21 && character <= 0x7e;
+	}
+
 	private static IllegalArgumentException invalidUri() {
 		return new IllegalArgumentException(
-				"Client redirect URI must be an absolute HTTPS URI of at most 2048 characters without user info, fragments, wildcards, invalid ports, or dot segments");
+				"Client redirect URI must be an absolute ASCII HTTPS URI of at most 2048 characters without user info, fragments, wildcards, invalid ports, or dot segments");
 	}
 
 	private static IllegalArgumentException invalidUri(IllegalArgumentException cause) {
 		return new IllegalArgumentException(
-				"Client redirect URI must be an absolute HTTPS URI of at most 2048 characters without user info, fragments, wildcards, invalid ports, or dot segments",
+				"Client redirect URI must be an absolute ASCII HTTPS URI of at most 2048 characters without user info, fragments, wildcards, invalid ports, or dot segments",
 				cause);
 	}
 

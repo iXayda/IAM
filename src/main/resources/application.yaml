@@ -76,6 +76,8 @@ management:
       probability: 0.1
 
 iam:
+  client:
+    secret-lifetime: ${IAM_CLIENT_SECRET_LIFETIME:90d}
   security-state:
     key-secret: ${IAM_SECURITY_STATE_KEY_SECRET:}
   ratelimit:

@@ -30,10 +30,10 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalData(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(6);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(7);
 
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(9);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(10);
 			assertThat(count(jdbc, schema, "tenants")).isEqualTo(2);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(identifier(jdbc, schema)).isEqualTo("Alice@example.com|alice@example.com");

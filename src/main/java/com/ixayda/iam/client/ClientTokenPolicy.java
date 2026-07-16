@@ -27,8 +27,9 @@ public record ClientTokenPolicy(Duration authorizationCodeTtl, Duration accessTo
 
 	private static Duration validateTtl(Duration value, Duration minimum, Duration maximum, String name) {
 		Objects.requireNonNull(value, name + " must not be null");
-		if (value.compareTo(minimum) < 0 || value.compareTo(maximum) > 0) {
-			throw new IllegalArgumentException(name + " must be between " + minimum + " and " + maximum);
+		if (value.getNano() != 0 || value.compareTo(minimum) < 0 || value.compareTo(maximum) > 0) {
+			throw new IllegalArgumentException(
+					name + " must be a whole number of seconds between " + minimum + " and " + maximum);
 		}
 		return value;
 	}
