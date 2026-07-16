@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Tenant-owned web OAuth client constraints for identifiers, HTTPS callbacks, scopes, secrets, and token lifetimes.
 - GitHub Actions release verification and Linux Native artifacts.
 - Production configuration, backup, rollback, and pilot acceptance guidance.
 - Automated release verification for tests, Native Image, schema state, probes, dependency recovery, and graceful shutdown.
