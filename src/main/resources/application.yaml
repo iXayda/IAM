@@ -80,6 +80,12 @@ iam:
     persistence:
       pending-authorization-ttl: ${IAM_AUTHORIZATION_PENDING_TTL:10m}
       token-retention: ${IAM_AUTHORIZATION_TOKEN_RETENTION:24h}
+    server:
+      issuer: ${IAM_AUTHORIZATION_ISSUER:}
+    signing-key-protection:
+      active-key-id: ${IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID:}
+      keys:
+        v1: ${IAM_AUTHORIZATION_SIGNING_KEY_V1:}
     token-protection:
       active-key-id: ${IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID:}
       keys:

@@ -12,8 +12,8 @@
 - Redis 登录限流和一次性安全状态；
 - 健康探针、Prometheus 指标、OpenTelemetry 和告警规则。
 
-本地密码登录等能力当前通过进程内接口提供。仓库尚未提供 OAuth 2.0/OIDC、JWT、SCIM、Admin
-RBAC、完整 MFA 或审计的 HTTP 入口，因此当前试点不得宣称这些协议和外部工作流已经可用。新增 HTTP
+本地密码登录等能力当前通过进程内接口提供。仓库尚未提供 OAuth 2.0/OIDC、SCIM、Admin RBAC、
+完整 MFA 或审计的 HTTP 入口，因此当前试点不得宣称这些协议和外部工作流已经可用。新增 HTTP
 adapter 后必须补充协议一致性、安全性和端到端验收。
 
 `compose.yaml` 和 `local` profile 只用于开发与发布验证，不是生产部署清单。
@@ -54,15 +54,22 @@ GitHub Actions 在 pull request、`master` push、手动触发和每周定时任
 | PostgreSQL | TLS 验证、最小权限运行账号、独立 migrator 账号、备份和高可用 |
 | Redis | Redis 6.2+、TLS、认证、受限 key-prefix ACL 和高可用 |
 | 环境标签 | `IAM_DEPLOYMENT_ENVIRONMENT` 和 `IAM_SERVICE_NAMESPACE` |
+| Authorization issuer | `IAM_AUTHORIZATION_ISSUER`，稳定的环境专用 HTTPS URL |
+| Token 加密 key | `IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID` 和对应的 32 字节 Base64 key |
+| Signing key 加密 key | `IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID` 和对应的独立 32 字节 Base64 key |
 | 登录限流 secret | `IAM_LOGIN_RATE_LIMIT_KEY_SECRET`，独立的 32 字节以上 Base64 secret |
 | 安全状态 secret | `IAM_SECURITY_STATE_KEY_SECRET`，独立的 32 字节以上 Base64 secret |
 | 遥测 | 环境对应的 OTLP endpoint、采样率、指标出口和资源标签 |
 
-两份 HMAC secret 必须由 secret manager 注入，彼此不同，并在同一环境的所有实例、滚动重启和应用
-回退期间保持稳定。不得使用 `application-local.yaml` 中的本地值。
+上述加密 key 和 HMAC secret 必须由 secret manager 注入，彼此不同，并在同一环境的所有实例、滚动
+重启和应用回退期间保持稳定。当前版本尚未提供保护 key 重加密命令，被数据库密文引用的旧 key 必须
+保留；不得使用 `application-local.yaml` 中的本地值。
 
 PostgreSQL 运行账号不得拥有创建数据库、超级用户或修改历史 Flyway migration 的权限。生产迁移应由
 单一 migrator 使用独立账号执行，成功后再扩容普通应用实例。
+
+签名密钥元数据 attestation 不检测整条历史合法记录的回放。数据库恢复后必须将 active `kid` 与数据库外
+的部署记录核对；在引入数据库外的不可回退信任锚之前，不得启用 signing key 在线轮换。
 
 Redis ACL 至少允许应用 key 前缀所需的连接、脚本、`SET` 和 `GETDEL` 操作。验证环境使用官方
 `latest` 镜像发现兼容性变化；生产环境应使用通过验收并记录的版本或 digest，不应依赖本地缓存中的

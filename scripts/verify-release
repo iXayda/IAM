@@ -157,6 +157,11 @@ start_app() {
 		SPRING_DATASOURCE_PASSWORD="${db_password}" \
 		SPRING_DATA_REDIS_HOST=127.0.0.1 \
 		SPRING_DATA_REDIS_PORT="${redis_port}" \
+		IAM_AUTHORIZATION_ISSUER=https://issuer.release-check.invalid \
+		IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID=v1 \
+		IAM_AUTHORIZATION_SIGNING_KEY_V1="${authorization_signing_key_secret}" \
+		IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID=v1 \
+		IAM_AUTHORIZATION_TOKEN_KEY_V1="${authorization_token_secret}" \
 		IAM_LOGIN_RATE_LIMIT_KEY_SECRET="${login_secret_value}" \
 		IAM_SECURITY_STATE_KEY_SECRET="${security_state_secret_value}" \
 		IAM_DEPLOYMENT_ENVIRONMENT=release-check \
@@ -246,7 +251,8 @@ if [[ "${smoke_only}" == "false" ]]; then
 		test rules iam-alerts.test.yaml
 
 	log "Building the GraalVM native executable"
-	./mvnw --batch-mode --no-transfer-progress -DskipTests -Pnative native:compile
+	IAM_AUTHORIZATION_ISSUER=https://issuer.release-check.invalid \
+		./mvnw --batch-mode --no-transfer-progress -DskipTests -Pnative native:compile
 else
 	log "Skipping build stages and reusing the existing native executable"
 fi
@@ -271,6 +277,14 @@ security_state_secret="$(openssl rand -base64 32)"
 while [[ "${security_state_secret}" == "${login_secret}" ]]; do
 	security_state_secret="$(openssl rand -base64 32)"
 done
+authorization_token_secret="$(openssl rand -base64 32)"
+authorization_signing_key_secret="$(openssl rand -base64 32)"
+
+active_signing_kid() {
+	compose exec -T postgres psql --username "${db_username}" --dbname "${db_name}" \
+		--tuples-only --no-align \
+		--command "SELECT kid FROM oauth_signing_keys WHERE status = 'active'"
+}
 
 log "Checking fresh native startup, migrations, probes, and metrics"
 start_app true
@@ -280,6 +294,8 @@ migration_files=(src/main/resources/db/migration/V*.sql)
 migration_count="$(successful_migration_count)"
 [[ "${migration_count}" == "${#migration_files[@]}" ]] \
 	|| fail "Expected ${#migration_files[@]} successful migrations, found ${migration_count}"
+signing_kid="$(active_signing_kid)"
+[[ "${signing_kid}" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "Persistent signing key was not initialized"
 curl --fail --silent --show-error --max-time 5 \
 	"http://127.0.0.1:${app_port}/actuator/prometheus" >"${metrics_file}"
 grep -q 'http_server_requests_seconds_bucket' "${metrics_file}" || fail "HTTP latency buckets are missing"
@@ -316,6 +332,9 @@ stop_app
 log "Checking restart and migration idempotency"
 start_app true
 wait_for_status /readyz 200 || fail "Restarted application did not become ready"
+restart_signing_kid="$(active_signing_kid)"
+[[ "${restart_signing_kid}" == "${signing_kid}" ]] \
+	|| fail "Authorization signing key changed across restart"
 restart_migration_count="$(successful_migration_count)"
 [[ "${restart_migration_count}" == "${migration_count}" ]] \
 	|| fail "Restart unexpectedly changed Flyway schema history"

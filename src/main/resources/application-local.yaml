@@ -7,6 +7,19 @@ spring:
       enabled: true
 
 iam:
+  authorization:
+    server:
+      issuer: ${IAM_AUTHORIZATION_ISSUER:http://127.0.0.1:8080}
+    signing-key-protection:
+      # Local-only default. Production must provide a dedicated shared Base64 key.
+      active-key-id: v1
+      keys:
+        v1: ${IAM_AUTHORIZATION_SIGNING_KEY_V1:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=}
+    token-protection:
+      # Local-only default. Production must provide a different shared Base64 key.
+      active-key-id: v1
+      keys:
+        v1: ${IAM_AUTHORIZATION_TOKEN_KEY_V1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
   security-state:
     # Local-only default. Production must provide a dedicated shared Base64 secret.
     key-secret: ${IAM_SECURITY_STATE_KEY_SECRET:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}

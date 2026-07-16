@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Spring Security Authorization Server client mapping with active-tenant filtering and safe secret-hash upgrades.
 - Tenant-bound OAuth authorization, protected token, and consent persistence schema.
 - JDBC-backed OAuth authorization and consent services with encrypted tokens, tenant-aware owner checks, and optimistic state transitions.
+- Fixed authorization-server issuer and persistent RSA-3072 signing keys with encrypted private material and restart-stable key IDs.
 - GitHub Actions release verification and Linux Native artifacts.
 - Production configuration, backup, rollback, and pilot acceptance guidance.
 - Automated release verification for tests, Native Image, schema state, probes, dependency recovery, and graceful shutdown.
@@ -53,7 +54,6 @@ All notable changes to this project will be documented in this file.
 - Validated tenant domain model and lifecycle contract.
 
 ### Fixed
-
 - Database health checks now use bounded connection, validation, and socket waits.
 - GraalVM native application startup.
 - GraalVM native images now retain runtime LDAP configuration when the provider is disabled during the build.
