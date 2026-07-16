@@ -132,6 +132,44 @@ class JdbcOAuthClientRepository {
 		return assemble(row);
 	}
 
+	Optional<StoredOAuthClient> findActiveById(ClientId clientId) {
+		Objects.requireNonNull(clientId, "Client ID must not be null");
+		Optional<ClientRow> row = this.jdbcClient.sql("SELECT " + CLIENT_COLUMNS + """
+				 FROM oauth_clients
+				 WHERE client_id = :clientId
+				   AND status = 'active'
+				   AND EXISTS (
+				       SELECT 1
+				       FROM tenants
+				       WHERE tenants.tenant_id = oauth_clients.tenant_id
+				         AND tenants.status = 'active'
+				   )
+				""")
+			.param("clientId", clientId.value())
+			.query(CLIENT_ROW_MAPPER)
+			.optional();
+		return assemble(row);
+	}
+
+	Optional<StoredOAuthClient> findActiveByIdentifier(ClientIdentifier identifier) {
+		Objects.requireNonNull(identifier, "Client identifier must not be null");
+		Optional<ClientRow> row = this.jdbcClient.sql("SELECT " + CLIENT_COLUMNS + """
+				 FROM oauth_clients
+				 WHERE client_identifier = :identifier
+				   AND status = 'active'
+				   AND EXISTS (
+				       SELECT 1
+				       FROM tenants
+				       WHERE tenants.tenant_id = oauth_clients.tenant_id
+				         AND tenants.status = 'active'
+				   )
+				""")
+			.param("identifier", identifier.value())
+			.query(CLIENT_ROW_MAPPER)
+			.optional();
+		return assemble(row);
+	}
+
 	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<StoredOAuthClient> findByIdForShare(TenantId tenantId, ClientId clientId) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
@@ -189,6 +227,33 @@ class JdbcOAuthClientRepository {
 			throw new IllegalStateException("Updating an OAuth client affected an unexpected number of rows: " + affected);
 		}
 		return changed;
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	boolean upgradeEncodedSecret(ClientId clientId, String expectedEncoding, String replacementEncoding) {
+		Objects.requireNonNull(clientId, "Client ID must not be null");
+		validateEncodedSecret(expectedEncoding, "Expected client secret encoding");
+		validateEncodedSecret(replacementEncoding, "Replacement client secret encoding");
+		requireWriteTransaction();
+		if (expectedEncoding.equals(replacementEncoding)) {
+			return true;
+		}
+
+		int affected = this.jdbcClient.sql("""
+				UPDATE oauth_clients
+				SET encoded_client_secret = :replacementEncoding
+				WHERE client_id = :clientId
+				  AND encoded_client_secret = :expectedEncoding
+				""")
+			.param("replacementEncoding", replacementEncoding)
+			.param("clientId", clientId.value())
+			.param("expectedEncoding", expectedEncoding)
+			.update();
+		if (affected > 1) {
+			throw new IllegalStateException(
+					"Upgrading an OAuth client secret affected an unexpected number of rows: " + affected);
+		}
+		return affected == 1;
 	}
 
 	private void insertRedirectUri(OAuthClient client, ClientRedirectUri uri) {
@@ -290,6 +355,14 @@ class JdbcOAuthClientRepository {
 	private static void requireSingleInsert(String resource, int affected) {
 		if (affected != 1) {
 			throw new IllegalStateException("Creating a " + resource + " affected an unexpected number of rows: " + affected);
+		}
+	}
+
+	private static void validateEncodedSecret(String encodedSecret, String name) {
+		Objects.requireNonNull(encodedSecret, name + " must not be null");
+		if (encodedSecret.length() < 32 || encodedSecret.length() > 1024
+				|| encodedSecret.regionMatches(true, 0, "{noop}", 0, 6)) {
+			throw new IllegalArgumentException(name + " must be a supported one-way encoding");
 		}
 	}
 

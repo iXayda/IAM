@@ -31,6 +31,7 @@ class IamCoreServiceApplicationTests extends ApplicationIntegrationTest {
 		assertThat(status(client, "/livez")).isEqualTo(200);
 		assertThat(status(client, "/readyz")).isEqualTo(200);
 		assertThat(status(client, "/actuator/prometheus")).isEqualTo(200);
+		assertThat(status(client, "/not-found")).isEqualTo(403);
 	}
 
 	@Test

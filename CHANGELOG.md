@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - Tenant-owned web OAuth client constraints for identifiers, HTTPS callbacks, scopes, secrets, and token lifetimes.
 - Tenant-scoped OAuth client persistence with global client identifiers, one-time secret issuance, encoded secret storage, and optimistic lifecycle updates.
+- Spring Security Authorization Server client mapping with active-tenant filtering and safe secret-hash upgrades.
 - GitHub Actions release verification and Linux Native artifacts.
 - Production configuration, backup, rollback, and pilot acceptance guidance.
 - Automated release verification for tests, Native Image, schema state, probes, dependency recovery, and graceful shutdown.
@@ -60,5 +61,6 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Deny unmatched application requests while keeping health probes and Prometheus metrics explicitly accessible.
 - Bound local observability, PostgreSQL, and Redis ports to the loopback interface.
 - Suppressed PostgreSQL server error details that may contain bound login identifiers.
