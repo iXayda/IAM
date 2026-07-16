@@ -76,6 +76,14 @@ management:
       probability: 0.1
 
 iam:
+  authorization:
+    persistence:
+      pending-authorization-ttl: ${IAM_AUTHORIZATION_PENDING_TTL:10m}
+      token-retention: ${IAM_AUTHORIZATION_TOKEN_RETENTION:24h}
+    token-protection:
+      active-key-id: ${IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID:}
+      keys:
+        v1: ${IAM_AUTHORIZATION_TOKEN_KEY_V1:}
   client:
     secret-lifetime: ${IAM_CLIENT_SECRET_LIFETIME:90d}
   security-state:
