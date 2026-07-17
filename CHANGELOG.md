@@ -64,6 +64,7 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Reject unsupported, repeated, or empty authorization request parameters before client and redirect processing.
 - Deny unmatched application requests while keeping health probes and Prometheus metrics explicitly accessible.
 - Bound local observability, PostgreSQL, and Redis ports to the loopback interface.
 - Suppressed PostgreSQL server error details that may contain bound login identifiers.

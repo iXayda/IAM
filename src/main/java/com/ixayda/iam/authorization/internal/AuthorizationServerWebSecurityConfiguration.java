@@ -23,6 +23,8 @@ class AuthorizationServerWebSecurityConfiguration {
 	SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) {
 		http.oauth2AuthorizationServer((authorizationServer) -> {
 			http.securityMatcher(authorizationServer.getEndpointsMatcher());
+			authorizationServer.authorizationEndpoint((authorizationEndpoint) -> authorizationEndpoint
+				.authorizationRequestConverter(new AllowlistedAuthorizationRequestConverter()));
 			authorizationServer.oidc(withDefaults());
 		});
 		http.authorizeHttpRequests((authorize) -> authorize.anyRequest().authenticated());

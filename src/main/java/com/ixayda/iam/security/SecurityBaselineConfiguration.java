@@ -1,5 +1,7 @@
 package com.ixayda.iam.security;
 
+import jakarta.servlet.DispatcherType;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -14,6 +16,8 @@ class SecurityBaselineConfiguration {
 	@Order(Ordered.LOWEST_PRECEDENCE)
 	SecurityFilterChain applicationSecurityFilterChain(HttpSecurity http) throws Exception {
 		http.authorizeHttpRequests((requests) -> requests
+			.dispatcherTypeMatchers(DispatcherType.ERROR)
+			.permitAll()
 			.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/prometheus", "/livez", "/readyz")
 			.permitAll()
 			.anyRequest()
