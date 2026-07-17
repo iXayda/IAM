@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationConsentAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
@@ -19,6 +20,7 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
@@ -28,11 +30,15 @@ class AuthorizationServerWebSecurityConfiguration {
 	@Bean
 	@Order(Ordered.HIGHEST_PRECEDENCE)
 	SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http,
-			HttpSessionRequestCache authorizationRequestCache, PlatformTransactionManager transactionManager) {
+			HttpSessionRequestCache authorizationRequestCache, PlatformTransactionManager transactionManager,
+			AuthorizationServerSettings settings) {
 		http.oauth2AuthorizationServer((authorizationServer) -> {
 			http.securityMatcher(authorizationServer.getEndpointsMatcher());
 			authorizationServer.authorizationEndpoint((authorizationEndpoint) -> authorizationEndpoint
 				.authorizationRequestConverter(new AllowlistedAuthorizationRequestConverter())
+				.consentPage(UriComponentsBuilder.fromUriString(settings.getIssuer())
+					.path(AuthorizationConsentController.CONSENT_PATH)
+					.toUriString())
 				.authenticationProviders((providers) -> configureConsentTransaction(providers, transactionManager)));
 			authorizationServer.oidc(withDefaults());
 		});

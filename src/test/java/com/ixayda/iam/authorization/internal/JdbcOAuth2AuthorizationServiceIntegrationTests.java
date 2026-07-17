@@ -44,7 +44,6 @@ import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.endpoint.OidcParameterNames;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat;
@@ -67,7 +66,7 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 			Instant.now().truncatedTo(ChronoUnit.MICROS).minusSeconds(60);
 
 	@Autowired
-	private OAuth2AuthorizationService authorizations;
+	private JdbcOAuth2AuthorizationService authorizations;
 
 	@Autowired
 	private JdbcClient jdbcClient;
@@ -256,6 +255,35 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 	}
 
 	@Test
+	void coordinatesApprovalAndDenialWithoutReportingOrResurrectingStaleState() {
+		UUID approvalWinnerId = UUID.randomUUID();
+		this.authorizations.save(pendingAuthorization(approvalWinnerId, "approval-winner-state"));
+		OAuth2Authorization staleDenial = this.authorizations.findByToken("approval-winner-state",
+				new OAuth2TokenType(OAuth2ParameterNames.STATE));
+		OAuth2Authorization approval = this.authorizations.findByToken("approval-winner-state",
+				new OAuth2TokenType(OAuth2ParameterNames.STATE));
+		this.authorizations.save(approve(approval, "approval-winner-code"));
+
+		assertThat(this.authorizations.removeIfCurrent(staleDenial)).isFalse();
+		assertThat(this.authorizations.findByToken("approval-winner-code",
+				new OAuth2TokenType(OAuth2ParameterNames.CODE))).isNotNull();
+
+		UUID denialWinnerId = UUID.randomUUID();
+		this.authorizations.save(pendingAuthorization(denialWinnerId, "denial-winner-state"));
+		OAuth2Authorization denial = this.authorizations.findByToken("denial-winner-state",
+				new OAuth2TokenType(OAuth2ParameterNames.STATE));
+		OAuth2Authorization staleApproval = this.authorizations.findByToken("denial-winner-state",
+				new OAuth2TokenType(OAuth2ParameterNames.STATE));
+
+		assertThat(this.authorizations.removeIfCurrent(denial)).isTrue();
+		assertThatThrownBy(() -> this.authorizations.save(approve(staleApproval, "denial-winner-code")))
+			.isInstanceOf(OAuth2AuthenticationException.class)
+			.satisfies(exception -> assertThat(((OAuth2AuthenticationException) exception).getError().getErrorCode())
+				.isEqualTo("invalid_grant"));
+		assertThat(this.authorizations.findById(denialWinnerId.toString())).isNull();
+	}
+
+	@Test
 	void resavesPendingAuthorizationWithoutExtendingItsLifetime() {
 		UUID authorizationId = UUID.randomUUID();
 		this.authorizations.save(pendingAuthorization(authorizationId, "idempotent-state"));
@@ -371,6 +399,16 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 		return baseAuthorization(authorizationId)
 			.authorizedScopes(Set.of("openid", "api.read"))
 			.token(code)
+			.build();
+	}
+
+	private static OAuth2Authorization approve(OAuth2Authorization pending, String codeValue) {
+		Instant issuedAt = Instant.now();
+		OAuth2AuthorizationCode code = new OAuth2AuthorizationCode(codeValue, issuedAt, issuedAt.plusSeconds(300));
+		return OAuth2Authorization.from(pending)
+			.authorizedScopes(Set.of("openid", "api.read"))
+			.token(code)
+			.attributes(attributes -> attributes.remove(OAuth2ParameterNames.STATE))
 			.build();
 	}
 

@@ -95,22 +95,28 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	@Override
 	@Transactional
 	public void remove(OAuth2Authorization authorization) {
+		removeIfCurrent(authorization);
+	}
+
+	@Transactional
+	public boolean removeIfCurrent(OAuth2Authorization authorization) {
 		AuthorizationSnapshot snapshot = this.mapper.toSnapshot(authorization);
 		StoredAuthorization current = lock(snapshot.authorizationId());
 		if (current == null) {
-			return;
+			return false;
 		}
 		long expectedVersion = snapshot.expectedVersion() == null ? 0 : snapshot.expectedVersion();
 		if (current.version() != expectedVersion || !hasSameImmutableState(current, snapshot)) {
-			return;
+			return false;
 		}
-		this.jdbcClient.sql("""
+		int affected = this.jdbcClient.sql("""
 				DELETE FROM oauth_authorizations
 				WHERE authorization_id = :authorizationId AND version = :version
 				""")
 			.param("authorizationId", snapshot.authorizationId())
 			.param("version", expectedVersion)
 			.update();
+		return affected == 1;
 	}
 
 	@Override

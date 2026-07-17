@@ -177,8 +177,15 @@ continuation="$(header_value Location "${headers}")"
 [[ "${continuation}" == "${issuer}/oauth2/authorize?"* ]] || fail "Login did not return to the fixed issuer"
 continuation="${continuation#${issuer}}"
 
+status="$(curl --silent --show-error --max-time 10 --cookie "${cookies}" --cookie-jar "${cookies}" \
+	--header 'Accept: text/html' --output /dev/null --dump-header "${headers}" --write-out '%{http_code}' \
+	"${base_url}${continuation}")"
+[[ "${status}" == "302" ]] || fail "Authorization continuation returned HTTP ${status}"
+consent_location="$(header_value Location "${headers}")"
+[[ "${consent_location}" == "${issuer}/oauth2/consent?"* ]] || fail "Authorization did not use the fixed issuer consent page"
+consent_location="${consent_location#${issuer}}"
 curl --fail --silent --show-error --max-time 10 --cookie "${cookies}" --cookie-jar "${cookies}" \
-	--header 'Accept: text/html' --output "${body}" "${base_url}${continuation}"
+	--header 'Accept: text/html' --output "${body}" "${base_url}${consent_location}"
 consent_state="$(html_input_value state "${body}")"
 [[ -n "${consent_state}" && "${consent_state}" != "${client_state}" ]] \
 	|| fail "Consent page did not contain an independent server state"

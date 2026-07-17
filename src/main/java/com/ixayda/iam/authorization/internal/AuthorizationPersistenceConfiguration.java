@@ -19,7 +19,6 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 
 @Configuration(proxyBeanMethods = false)
@@ -95,7 +94,7 @@ class AuthorizationPersistenceConfiguration {
 	}
 
 	@Bean
-	OAuth2AuthorizationService oauth2AuthorizationService(JdbcClient jdbcClient, AuthorizationSnapshotMapper mapper,
+	JdbcOAuth2AuthorizationService oauth2AuthorizationService(JdbcClient jdbcClient, AuthorizationSnapshotMapper mapper,
 			AuthorizationTokenCipher tokenCipher, AuthorizationPersistenceProperties properties) {
 		return new JdbcOAuth2AuthorizationService(jdbcClient, mapper, tokenCipher, properties);
 	}

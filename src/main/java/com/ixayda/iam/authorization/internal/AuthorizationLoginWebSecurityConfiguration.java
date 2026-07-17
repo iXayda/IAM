@@ -29,8 +29,12 @@ class AuthorizationLoginWebSecurityConfiguration {
 	SecurityFilterChain authorizationLoginSecurityFilterChain(HttpSecurity http,
 			HttpSessionRequestCache authorizationRequestCache, AuthorizationLoginDetailsSource detailsSource,
 			LocalPasswordLoginOperations logins, AuthorizationServerSettings authorizationServerSettings) {
-		http.securityMatcher("/login");
-		http.authorizeHttpRequests((authorize) -> authorize.anyRequest().permitAll());
+		http.securityMatcher("/login", AuthorizationConsentController.CONSENT_PATH,
+			AuthorizationConsentController.DENIAL_PATH);
+		http.authorizeHttpRequests((authorize) -> authorize.requestMatchers("/login")
+			.permitAll()
+			.anyRequest()
+			.authenticated());
 		http.authenticationProvider(new AuthorizationLocalPasswordAuthenticationProvider(logins));
 		http.requestCache((requestCache) -> requestCache.requestCache(authorizationRequestCache));
 		http.formLogin((formLogin) -> formLogin.authenticationDetailsSource(detailsSource)

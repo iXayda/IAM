@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.net.URI;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -83,6 +84,8 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	private static final String ISSUER = "https://issuer.example.test";
 
 	private static final Pattern CONSENT_STATE = Pattern.compile("name=\"state\" value=\"([^\"]+)\"");
+
+	private static final Pattern CSRF_TOKEN = Pattern.compile("name=\"_csrf\" value=\"([^\"]+)\"");
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -276,10 +279,31 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 
 		MvcResult consentPage = this.mockMvc
 			.perform(get(authorizationContinuation).session(authenticatedSession).accept(MediaType.TEXT_HTML))
+			.andExpect(status().isFound())
+			.andExpect(header().string("Location", startsWith(ISSUER + AuthorizationConsentController.CONSENT_PATH + "?")))
+			.andReturn();
+		URI consentUri = URI.create(consentPage.getResponse().getHeader("Location"));
+		URI tamperedConsentUri = UriComponentsBuilder.fromUriString(ISSUER + AuthorizationConsentController.CONSENT_PATH)
+			.replaceQueryParam(OAuth2ParameterNames.SCOPE, "openid email")
+			.queryParam(OAuth2ParameterNames.CLIENT_ID,
+					queryParameter(consentUri, OAuth2ParameterNames.CLIENT_ID))
+			.queryParam(OAuth2ParameterNames.STATE, URLDecoder.decode(
+					queryParameter(consentUri, OAuth2ParameterNames.STATE), StandardCharsets.UTF_8))
+			.build()
+			.encode()
+			.toUri();
+		assertThat(queryParameter(tamperedConsentUri, OAuth2ParameterNames.STATE))
+			.isEqualTo(queryParameter(consentUri, OAuth2ParameterNames.STATE));
+		assertThat(queryParameter(tamperedConsentUri, OAuth2ParameterNames.CLIENT_ID))
+			.isEqualTo(queryParameter(consentUri, OAuth2ParameterNames.CLIENT_ID));
+		this.mockMvc.perform(get(tamperedConsentUri).session(authenticatedSession).accept(MediaType.TEXT_HTML))
+			.andExpect(status().isBadRequest());
+		consentPage = this.mockMvc.perform(get(consentUri).session(authenticatedSession).accept(MediaType.TEXT_HTML))
 			.andExpect(status().isOk())
 			.andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
-			.andExpect(content().string(containsString("Consent required")))
+			.andExpect(content().string(containsString("Authorize access")))
 			.andExpect(content().string(containsString("name=\"scope\" value=\"profile\"")))
+			.andExpect(header().string("Content-Security-Policy", containsString("form-action 'self'")))
 			.andReturn();
 		String consentState = consentState(consentPage.getResponse().getContentAsString());
 
@@ -354,6 +378,124 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		assertThat(tokenInvalidated(client, "id_token")).isFalse();
 		assertThat(tokenCount(client)).isEqualTo(3);
 		assertThat(authorizationRevision(client)).isEqualTo(revisionWithCode + 2);
+	}
+
+	@Test
+	void escapesUntrustedScopeValuesOnTheConsentPage() throws Exception {
+		String untrustedScope = "read</label><script>alert(1)</script>";
+		UserFixture user = createUser(TenantId.DEFAULT, "consent-escaping");
+		OAuthClient client = createClient(TenantId.DEFAULT, "consent-escaping",
+				Set.of(new ClientScope("openid"), new ClientScope(untrustedScope)));
+		MockHttpSession session = beginAuthorization(client, "openid " + untrustedScope, "escape-state",
+				"A".repeat(43), null);
+		MvcResult login = this.mockMvc
+			.perform(post("/login").session(session).with(csrf()).param("username", user.username())
+				.param("password", PASSWORD))
+			.andExpect(status().isFound())
+			.andReturn();
+		MockHttpSession authenticatedSession = (MockHttpSession) login.getRequest().getSession(false);
+		URI continuation = URI.create(login.getResponse().getHeader("Location"));
+		MvcResult consentRedirect = this.mockMvc
+			.perform(get(continuation).session(authenticatedSession).accept(MediaType.TEXT_HTML))
+			.andExpect(status().isFound())
+			.andReturn();
+		String page = this.mockMvc
+			.perform(get(URI.create(consentRedirect.getResponse().getHeader("Location"))).session(authenticatedSession)
+				.accept(MediaType.TEXT_HTML))
+			.andExpect(status().isOk())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+
+		assertThat(page).contains("read&lt;/label&gt;&lt;script&gt;alert(1)&lt;/script&gt;")
+			.doesNotContain(untrustedScope, "<script>");
+	}
+
+	@Test
+	void deniesAdditionalScopesWithoutRevokingExistingConsent() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "consent-denial");
+		OAuthClient client = createClient(TenantId.DEFAULT, "consent-denial",
+				Set.of(new ClientScope("openid"), new ClientScope("profile"), new ClientScope("email")));
+		MockHttpSession firstLoginSession = beginAuthorization(client, "openid profile", "approved-state",
+				"A".repeat(43), null);
+		MvcResult firstLogin = this.mockMvc
+			.perform(post("/login").session(firstLoginSession).with(csrf()).param("username", user.username())
+				.param("password", PASSWORD))
+			.andExpect(status().isFound())
+			.andReturn();
+		MockHttpSession firstAuthenticatedSession = (MockHttpSession) firstLogin.getRequest().getSession(false);
+		MvcResult firstConsentRedirect = this.mockMvc
+			.perform(get(URI.create(firstLogin.getResponse().getHeader("Location"))).session(firstAuthenticatedSession)
+				.accept(MediaType.TEXT_HTML))
+			.andExpect(status().isFound())
+			.andReturn();
+		String firstConsentPage = this.mockMvc
+			.perform(get(URI.create(firstConsentRedirect.getResponse().getHeader("Location")))
+				.session(firstAuthenticatedSession)
+				.accept(MediaType.TEXT_HTML))
+			.andExpect(status().isOk())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		this.mockMvc
+			.perform(post("/oauth2/authorize").session(firstAuthenticatedSession)
+				.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+				.param(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+				.param(OAuth2ParameterNames.STATE, consentState(firstConsentPage))
+				.param(OAuth2ParameterNames.SCOPE, "profile"))
+			.andExpect(status().isFound())
+			.andExpect(header().string("Location", startsWith(REDIRECT_URI + "?")));
+		assertThat(consentAuthorities(client)).containsExactlyInAnyOrder("SCOPE_openid", "SCOPE_profile");
+		assertThat(authorizationCount(client)).isOne();
+
+		String deniedClientState = "denied-state-" + suffix();
+		MockHttpSession secondLoginSession = beginAuthorization(client, "openid profile email", deniedClientState,
+				"B".repeat(43), null);
+		MvcResult secondLogin = this.mockMvc
+			.perform(post("/login").session(secondLoginSession).with(csrf()).param("username", user.username())
+				.param("password", PASSWORD))
+			.andExpect(status().isFound())
+			.andReturn();
+		MockHttpSession secondAuthenticatedSession = (MockHttpSession) secondLogin.getRequest().getSession(false);
+		MvcResult secondConsentRedirect = this.mockMvc
+			.perform(get(URI.create(secondLogin.getResponse().getHeader("Location"))).session(secondAuthenticatedSession)
+				.accept(MediaType.TEXT_HTML))
+			.andExpect(status().isFound())
+			.andReturn();
+		String secondConsentPage = this.mockMvc
+			.perform(get(URI.create(secondConsentRedirect.getResponse().getHeader("Location")))
+				.session(secondAuthenticatedSession)
+				.accept(MediaType.TEXT_HTML))
+			.andExpect(status().isOk())
+			.andExpect(content().string(containsString("Already approved")))
+			.andExpect(content().string(containsString("name=\"scope\" value=\"email\"")))
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		assertThat(authorizationCount(client)).isEqualTo(2);
+		String secondConsentState = consentState(secondConsentPage);
+		this.mockMvc
+			.perform(post(AuthorizationConsentController.DENIAL_PATH).session(secondAuthenticatedSession)
+				.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+				.param(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+				.param(OAuth2ParameterNames.STATE, secondConsentState))
+			.andExpect(status().isForbidden());
+		assertThat(authorizationCount(client)).isEqualTo(2);
+
+		MvcResult denial = this.mockMvc
+			.perform(post(AuthorizationConsentController.DENIAL_PATH).session(secondAuthenticatedSession)
+				.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+				.param(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+				.param(OAuth2ParameterNames.STATE, secondConsentState)
+				.param("_csrf", csrfToken(secondConsentPage)))
+			.andExpect(status().isFound())
+			.andExpect(header().string("Location", startsWith(REDIRECT_URI + "?")))
+			.andReturn();
+		URI denialRedirect = URI.create(denial.getResponse().getHeader("Location"));
+		assertThat(queryParameter(denialRedirect, OAuth2ParameterNames.ERROR)).isEqualTo("access_denied");
+		assertThat(queryParameter(denialRedirect, OAuth2ParameterNames.STATE)).isEqualTo(deniedClientState);
+		assertThat(authorizationCount(client)).isOne();
+		assertThat(consentAuthorities(client)).containsExactlyInAnyOrder("SCOPE_openid", "SCOPE_profile");
 	}
 
 	private MockHttpSession beginAuthorization(OAuthClient client) throws Exception {
@@ -465,6 +607,10 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		return count("SELECT count(*) FROM oauth_authorization_tokens WHERE client_id = :clientId", client);
 	}
 
+	private int authorizationCount(OAuthClient client) {
+		return count("SELECT count(*) FROM oauth_authorizations WHERE client_id = :clientId", client);
+	}
+
 	private int count(String query, OAuthClient client) {
 		return this.jdbcClient.sql(query)
 			.param("clientId", client.id().value())
@@ -508,6 +654,12 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	private static String consentState(String page) {
 		Matcher matcher = CONSENT_STATE.matcher(page);
 		assertThat(matcher.find()).as("consent state field").isTrue();
+		return matcher.group(1);
+	}
+
+	private static String csrfToken(String page) {
+		Matcher matcher = CSRF_TOKEN.matcher(page);
+		assertThat(matcher.find()).as("CSRF token field").isTrue();
 		return matcher.group(1);
 	}
 
