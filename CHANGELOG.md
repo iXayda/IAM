@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Explicit OAuth 2.0 and OpenID Connect endpoint security with public provider metadata and JWK discovery.
 - Tenant-owned web OAuth client constraints for identifiers, HTTPS callbacks, scopes, secrets, and token lifetimes.
 - Tenant-scoped OAuth client persistence with global client identifiers, one-time secret issuance, encoded secret storage, and optimistic lifecycle updates.
 - Spring Security Authorization Server client mapping with active-tenant filtering and safe secret-hash upgrades.
