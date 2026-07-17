@@ -1,3 +1,3 @@
 @org.springframework.modulith.ApplicationModule(displayName = "OAuth authorizations",
-		allowedDependencies = { "client", "session", "tenant", "user" })
+		allowedDependencies = { "auth", "client", "credential", "ratelimit", "session", "tenant", "user" })
 package com.ixayda.iam.authorization;
