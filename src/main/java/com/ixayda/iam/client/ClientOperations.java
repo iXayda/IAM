@@ -12,6 +12,8 @@ public interface ClientOperations {
 
 	Optional<OAuthClient> findByIdentifier(ClientIdentifier identifier);
 
+	Optional<OAuthClient> findActiveByIdentifier(ClientIdentifier identifier);
+
 	OAuthClient requireActive(TenantId tenantId, ClientId clientId);
 
 	OAuthClient requireActiveForWrite(TenantId tenantId, ClientId clientId);

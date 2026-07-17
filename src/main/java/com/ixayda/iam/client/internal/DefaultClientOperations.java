@@ -79,6 +79,12 @@ class DefaultClientOperations implements ClientOperations {
 
 	@Override
 	@Transactional(readOnly = true)
+	public Optional<OAuthClient> findActiveByIdentifier(ClientIdentifier identifier) {
+		return this.repository.findActiveByIdentifier(identifier).map(StoredOAuthClient::client);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
 	public OAuthClient requireActive(TenantId tenantId, ClientId clientId) {
 		this.tenants.requireActive(tenantId);
 		return requireActive(requireClient(tenantId, clientId));

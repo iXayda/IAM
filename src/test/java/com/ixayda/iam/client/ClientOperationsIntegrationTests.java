@@ -112,6 +112,7 @@ class ClientOperationsIntegrationTests extends ApplicationIntegrationTest {
 				confidentialClient.secretMetadata().expiresAt())).isEqualTo(Duration.ofDays(90));
 		assertThat(this.clients.findById(TenantId.DEFAULT, publicClient.id())).contains(publicClient);
 		assertThat(this.clients.findByIdentifier(confidentialClient.identifier())).contains(confidentialClient);
+		assertThat(this.clients.findActiveByIdentifier(confidentialClient.identifier())).contains(confidentialClient);
 	}
 
 	@Test
@@ -138,6 +139,7 @@ class ClientOperationsIntegrationTests extends ApplicationIntegrationTest {
 		OAuthClient disabled = this.clients.disable(TenantId.DEFAULT, created.id());
 		assertThat(disabled.status()).isEqualTo(ClientStatus.DISABLED);
 		assertThat(disabled.version()).isOne();
+		assertThat(this.clients.findActiveByIdentifier(disabled.identifier())).isEmpty();
 		assertThat(this.clients.disable(TenantId.DEFAULT, created.id())).isEqualTo(disabled);
 		assertThatThrownBy(() -> this.clients.requireActive(TenantId.DEFAULT, created.id()))
 			.isInstanceOf(ClientDisabledException.class);
