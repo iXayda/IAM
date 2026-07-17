@@ -29,6 +29,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
+import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.FactorGrantedAuthority;
@@ -50,7 +51,7 @@ class AuthorizationLocalPasswordAuthenticationProviderTests {
 			.thenReturn(LocalPasswordLoginResult.success(session));
 
 		UsernamePasswordAuthenticationToken request = request("Alice", "candidate-password");
-		Authentication authenticated = this.provider.authenticate(request);
+		Authentication authenticated = new ProviderManager(this.provider).authenticate(request);
 
 		assertThat(authenticated).isInstanceOf(AuthorizationUserAuthentication.class);
 		AuthorizationPrincipal principal = (AuthorizationPrincipal) authenticated.getPrincipal();
@@ -58,7 +59,9 @@ class AuthorizationLocalPasswordAuthenticationProviderTests {
 		assertThat(principal.userId()).isEqualTo(session.userId());
 		assertThat(principal.sessionId()).isEqualTo(session.id());
 		assertThat(authenticated.getCredentials()).isNull();
+		assertThat(authenticated.getDetails()).isNull();
 		assertThat(request.getCredentials()).isNull();
+		assertThat(request.getDetails()).isNull();
 		assertThat(authenticated.getAuthorities()).singleElement().isInstanceOfSatisfying(
 				FactorGrantedAuthority.class, (factor) -> {
 					assertThat(factor.getAuthority()).isEqualTo(FactorGrantedAuthority.PASSWORD_AUTHORITY);
@@ -95,6 +98,7 @@ class AuthorizationLocalPasswordAuthenticationProviderTests {
 
 		assertThatThrownBy(() -> this.provider.authenticate(request)).isSameAs(failure);
 		assertThat(request.getCredentials()).isNull();
+		assertThat(request.getDetails()).isNull();
 		ArgumentCaptor<PasswordAttempt> attempt = ArgumentCaptor.forClass(PasswordAttempt.class);
 		verify(this.logins).login(org.mockito.ArgumentMatchers.eq(TenantId.DEFAULT),
 				org.mockito.ArgumentMatchers.eq(LoginKey.from("alice")), org.mockito.ArgumentMatchers.eq(SOURCE),

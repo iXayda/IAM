@@ -13,6 +13,7 @@ import com.ixayda.iam.session.SessionStatus;
 import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.LoginKey;
+import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -72,6 +73,9 @@ final class AuthorizationLocalPasswordAuthenticationProvider implements Authenti
 			}
 			if (authentication instanceof CredentialsContainer credentials) {
 				credentials.eraseCredentials();
+			}
+			if (authentication instanceof AbstractAuthenticationToken token) {
+				token.setDetails(null);
 			}
 		}
 	}
