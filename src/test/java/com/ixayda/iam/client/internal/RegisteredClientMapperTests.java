@@ -66,12 +66,30 @@ class RegisteredClientMapperTests {
 		assertThat(registeredClient.getTokenSettings().getAuthorizationCodeTimeToLive())
 			.isEqualTo(Duration.ofMinutes(4));
 		assertThat(registeredClient.getTokenSettings().getAccessTokenTimeToLive()).isEqualTo(Duration.ofMinutes(7));
+		assertThat(registeredClient.getTokenSettings().getRefreshTokenTimeToLive()).isEqualTo(Duration.ofHours(1));
 		assertThat(registeredClient.getTokenSettings().getAccessTokenFormat())
 			.isEqualTo(OAuth2TokenFormat.SELF_CONTAINED);
 		assertThat(registeredClient.getTokenSettings().isReuseRefreshTokens()).isFalse();
 		assertThat(registeredClient.getTokenSettings().getIdTokenSignatureAlgorithm())
 			.isEqualTo(SignatureAlgorithm.RS256);
 		assertThat(registeredClient.toString()).doesNotContain(encodedSecret);
+	}
+
+	@Test
+	void addsTheRefreshGrantOnlyForAnExplicitlyEnabledConfidentialClient() {
+		ClientSecretMetadata secretMetadata =
+				new ClientSecretMetadata(CREATED_AT, CREATED_AT.plus(Duration.ofDays(90)));
+		OAuthClient client = client(ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				secretMetadata, new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true,
+						Duration.ofHours(2)));
+
+		RegisteredClient registeredClient =
+				this.mapper.toRegisteredClient(new StoredOAuthClient(client, "{bcrypt}" + "a".repeat(60)));
+
+		assertThat(registeredClient.getAuthorizationGrantTypes())
+			.containsExactlyInAnyOrder(AuthorizationGrantType.AUTHORIZATION_CODE, AuthorizationGrantType.REFRESH_TOKEN);
+		assertThat(registeredClient.getTokenSettings().getRefreshTokenTimeToLive()).isEqualTo(Duration.ofHours(2));
+		assertThat(registeredClient.getTokenSettings().isReuseRefreshTokens()).isFalse();
 	}
 
 	@Test
@@ -90,11 +108,16 @@ class RegisteredClientMapperTests {
 
 	private static OAuthClient client(ClientType type, ClientAuthenticationMethod authenticationMethod,
 			ClientSecretMetadata secretMetadata) {
+		return client(type, authenticationMethod, secretMetadata,
+				new ClientTokenPolicy(Duration.ofMinutes(4), Duration.ofMinutes(7)));
+	}
+
+	private static OAuthClient client(ClientType type, ClientAuthenticationMethod authenticationMethod,
+			ClientSecretMetadata secretMetadata, ClientTokenPolicy tokenPolicy) {
 		return new OAuthClient(ClientId.random(), TenantId.DEFAULT, new ClientIdentifier("registered-client"),
 				"Registered Client", type, authenticationMethod, ClientStatus.ACTIVE, secretMetadata,
 				Set.of(REDIRECT_URI), Set.of(new ClientRedirectUri("https://client.example.test/logout")),
-				Set.of(new ClientScope("openid"), new ClientScope("api.read")),
-				new ClientTokenPolicy(Duration.ofMinutes(4), Duration.ofMinutes(7)), 0, CREATED_AT, CREATED_AT);
+				Set.of(new ClientScope("openid"), new ClientScope("api.read")), tokenPolicy, 0, CREATED_AT, CREATED_AT);
 	}
 
 }

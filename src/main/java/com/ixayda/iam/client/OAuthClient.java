@@ -33,7 +33,7 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 				MAX_REDIRECT_URI_COUNT);
 		scopes = requiredCopy(scopes, "Client scopes", MAX_SCOPE_COUNT);
 		validateScopes(postLogoutRedirectUris, scopes);
-		requireTokenPolicy(tokenPolicy);
+		validateTokenPolicy(type, tokenPolicy);
 		Objects.requireNonNull(createdAt, "Client creation time must not be null");
 		Objects.requireNonNull(updatedAt, "Client update time must not be null");
 		if (version < 0) {
@@ -69,7 +69,7 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 	}
 
 	public boolean supportsRefreshTokens() {
-		return false;
+		return this.tokenPolicy.refreshTokensEnabled();
 	}
 
 	public boolean requiresConsent() {
@@ -137,6 +137,13 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 
 	static ClientTokenPolicy requireTokenPolicy(ClientTokenPolicy tokenPolicy) {
 		return Objects.requireNonNull(tokenPolicy, "Client token policy must not be null");
+	}
+
+	static void validateTokenPolicy(ClientType type, ClientTokenPolicy tokenPolicy) {
+		requireTokenPolicy(tokenPolicy);
+		if (tokenPolicy.refreshTokensEnabled() && type != ClientType.CONFIDENTIAL) {
+			throw new IllegalArgumentException("Refresh tokens require a confidential client");
+		}
 	}
 
 	static <T> Set<T> requiredCopy(Set<T> values, String name, int maximumSize) {

@@ -15,7 +15,7 @@ public record CreateClientRequest(ClientIdentifier identifier, String displayNam
 				"Client post-logout redirect URIs", OAuthClient.MAX_REDIRECT_URI_COUNT);
 		scopes = OAuthClient.requiredCopy(scopes, "Client scopes", OAuthClient.MAX_SCOPE_COUNT);
 		OAuthClient.validateScopes(postLogoutRedirectUris, scopes);
-		OAuthClient.requireTokenPolicy(tokenPolicy);
+		OAuthClient.validateTokenPolicy(type, tokenPolicy);
 	}
 
 }

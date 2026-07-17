@@ -42,10 +42,14 @@ class RegisteredClientMapper {
 			.tokenSettings(TokenSettings.builder()
 				.authorizationCodeTimeToLive(client.tokenPolicy().authorizationCodeTtl())
 				.accessTokenTimeToLive(client.tokenPolicy().accessTokenTtl())
+				.refreshTokenTimeToLive(client.tokenPolicy().refreshTokenTtl())
 				.accessTokenFormat(OAuth2TokenFormat.SELF_CONTAINED)
 				.reuseRefreshTokens(false)
 				.idTokenSignatureAlgorithm(SignatureAlgorithm.RS256)
 				.build());
+		if (client.supportsRefreshTokens()) {
+			builder.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
+		}
 
 		client.redirectUris().stream().map(ClientRedirectUri::value).forEach(builder::redirectUri);
 		client.postLogoutRedirectUris().stream().map(ClientRedirectUri::value)

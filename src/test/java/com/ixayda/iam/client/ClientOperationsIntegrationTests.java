@@ -82,7 +82,9 @@ class ClientOperationsIntegrationTests extends ApplicationIntegrationTest {
 		IssuedClientSecret issuedSecret;
 		OAuthClient confidentialClient;
 		try (ClientRegistration registration = this.clients.create(TenantId.DEFAULT,
-				request("operations-confidential", ClientType.CONFIDENTIAL))) {
+				request("operations-confidential", ClientType.CONFIDENTIAL,
+						new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true,
+								Duration.ofHours(2))))) {
 			confidentialClient = registration.client();
 			this.clientsToDelete.add(confidentialClient.id());
 			issuedSecret = registration.clientSecret().orElseThrow();
@@ -110,6 +112,16 @@ class ClientOperationsIntegrationTests extends ApplicationIntegrationTest {
 		assertThat(confidentialClient.secretMetadata()).isNotNull();
 		assertThat(Duration.between(confidentialClient.secretMetadata().issuedAt(),
 				confidentialClient.secretMetadata().expiresAt())).isEqualTo(Duration.ofDays(90));
+		assertThat(confidentialClient.supportsRefreshTokens()).isTrue();
+		assertThat(confidentialClient.tokenPolicy().refreshTokenTtl()).isEqualTo(Duration.ofHours(2));
+		assertThat(this.jdbcClient.sql("""
+				SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
+				FROM oauth_clients
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", confidentialClient.id().value())
+			.query(String.class)
+			.single()).isEqualTo("true|7200");
 		assertThat(this.clients.findById(TenantId.DEFAULT, publicClient.id())).contains(publicClient);
 		assertThat(this.clients.findByIdentifier(confidentialClient.identifier())).contains(confidentialClient);
 		assertThat(this.clients.findActiveByIdentifier(confidentialClient.identifier())).contains(confidentialClient);
@@ -225,11 +237,15 @@ class ClientOperationsIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	private static CreateClientRequest request(String identifier, ClientType type) {
+		return request(identifier, type, ClientTokenPolicy.secureDefaults());
+	}
+
+	private static CreateClientRequest request(String identifier, ClientType type, ClientTokenPolicy tokenPolicy) {
 		ClientAuthenticationMethod authenticationMethod = type == ClientType.PUBLIC
 				? ClientAuthenticationMethod.NONE : ClientAuthenticationMethod.CLIENT_SECRET_BASIC;
 		return new CreateClientRequest(new ClientIdentifier(identifier), "OAuth Client", type, authenticationMethod,
 				Set.of(REDIRECT_URI), Set.of(POST_LOGOUT_REDIRECT_URI),
-				Set.of(new ClientScope("openid"), new ClientScope("api.read")), ClientTokenPolicy.secureDefaults());
+				Set.of(new ClientScope("openid"), new ClientScope("api.read")), tokenPolicy);
 	}
 
 }

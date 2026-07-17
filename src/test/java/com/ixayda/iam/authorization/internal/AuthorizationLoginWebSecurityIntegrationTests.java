@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.authenticated;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -19,10 +20,16 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -42,6 +49,8 @@ import com.ixayda.iam.client.CreateClientRequest;
 import com.ixayda.iam.client.OAuthClient;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.session.SessionId;
+import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.tenant.CreateTenantRequest;
 import com.ixayda.iam.tenant.Tenant;
 import com.ixayda.iam.tenant.TenantId;
@@ -103,6 +112,9 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 
 	@Autowired
 	private PasswordOperations passwords;
+
+	@Autowired
+	private SessionOperations sessions;
 
 	@Autowired
 	private TenantOperations tenants;
@@ -381,6 +393,203 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	}
 
 	@Test
+	void refreshesTokensForAnExplicitlyEnabledConfidentialClient() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "refresh-token");
+		try (ConfidentialClientFixture client = createRefreshClient(TenantId.DEFAULT, "refresh-token");
+				ConfidentialClientFixture otherClient = createRefreshClient(TenantId.DEFAULT, "wrong-refresh-client")) {
+			AuthorizationCodeFixture authorizationCode = authorize(user, client.client(), "openid profile");
+			JsonNode initial = exchangeAuthorizationCode(client, authorizationCode);
+			String initialAccessToken = initial.get("access_token").stringValue();
+			String initialRefreshToken = initial.get("refresh_token").stringValue();
+			String initialIdToken = initial.get("id_token").stringValue();
+			assertThat(scopes(initial)).containsExactlyInAnyOrder("openid", "profile");
+			assertThat(tokenCount(client.client())).isEqualTo(4);
+			assertThat(tokenInvalidated(client.client(), "authorization_code")).isTrue();
+			assertThat(tokenInvalidated(client.client(), "access_token")).isFalse();
+			assertThat(tokenInvalidated(client.client(), "refresh_token")).isFalse();
+			assertThat(tokenInvalidated(client.client(), "id_token")).isFalse();
+
+			long revisionBeforeRefresh = authorizationRevision(client.client());
+			UUID accessTokenId = tokenId(client.client(), "access_token");
+			UUID refreshTokenId = tokenId(client.client(), "refresh_token");
+			UUID idTokenId = tokenId(client.client(), "id_token");
+
+			MvcResult invalidScope = this.mockMvc
+				.perform(refreshRequest(client, initialRefreshToken, "openid email"))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(invalidScope, "invalid_scope");
+			MvcResult wrongClient = this.mockMvc
+				.perform(refreshRequest(otherClient, initialRefreshToken, "openid"))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(wrongClient, "invalid_grant");
+			assertThat(authorizationRevision(client.client())).isEqualTo(revisionBeforeRefresh);
+			assertThat(tokenId(client.client(), "access_token")).isEqualTo(accessTokenId);
+			assertThat(tokenId(client.client(), "refresh_token")).isEqualTo(refreshTokenId);
+			assertThat(tokenId(client.client(), "id_token")).isEqualTo(idTokenId);
+
+			MvcResult refresh = this.mockMvc.perform(refreshRequest(client, initialRefreshToken, "openid"))
+				.andExpect(status().isOk())
+				.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+				.andReturn();
+			JsonNode rotated = JSON.readTree(refresh.getResponse().getContentAsString());
+			String rotatedAccessToken = rotated.get("access_token").stringValue();
+			String rotatedRefreshToken = rotated.get("refresh_token").stringValue();
+			String rotatedIdToken = rotated.get("id_token").stringValue();
+			assertThat(rotatedAccessToken).isNotEqualTo(initialAccessToken);
+			assertThat(rotatedRefreshToken).isNotEqualTo(initialRefreshToken);
+			assertThat(rotatedIdToken).isNotEqualTo(initialIdToken);
+			assertThat(scopes(rotated)).containsExactly("openid");
+			assertThat(this.jwtDecoder.decode(rotatedAccessToken).getClaimAsStringList("scope"))
+				.containsExactly("openid");
+			assertThat(tokenId(client.client(), "access_token")).isNotEqualTo(accessTokenId);
+			assertThat(tokenId(client.client(), "refresh_token")).isNotEqualTo(refreshTokenId);
+			assertThat(tokenId(client.client(), "id_token")).isNotEqualTo(idTokenId);
+			assertThat(tokenCount(client.client())).isEqualTo(4);
+			assertThat(accessTokenScopeCount(client.client())).isOne();
+			assertThat(authorizationRevision(client.client())).isEqualTo(revisionBeforeRefresh + 1);
+
+			long revisionAfterRefresh = authorizationRevision(client.client());
+			UUID rotatedAccessTokenId = tokenId(client.client(), "access_token");
+			UUID rotatedRefreshTokenId = tokenId(client.client(), "refresh_token");
+			UUID rotatedIdTokenId = tokenId(client.client(), "id_token");
+			MvcResult replay = this.mockMvc.perform(refreshRequest(client, initialRefreshToken, "openid"))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(replay, "invalid_grant");
+			assertThat(authorizationRevision(client.client())).isEqualTo(revisionAfterRefresh);
+			assertThat(tokenId(client.client(), "access_token")).isEqualTo(rotatedAccessTokenId);
+			assertThat(tokenId(client.client(), "refresh_token")).isEqualTo(rotatedRefreshTokenId);
+			assertThat(tokenId(client.client(), "id_token")).isEqualTo(rotatedIdTokenId);
+
+			MvcResult continuedRefresh = this.mockMvc.perform(refreshRequest(client, rotatedRefreshToken, null))
+				.andExpect(status().isOk())
+				.andReturn();
+			JsonNode continued = JSON.readTree(continuedRefresh.getResponse().getContentAsString());
+			assertThat(continued.get("access_token").stringValue()).isNotEqualTo(rotatedAccessToken);
+			assertThat(continued.get("refresh_token").stringValue()).isNotEqualTo(rotatedRefreshToken);
+			assertThat(continued.get("id_token").stringValue()).isNotEqualTo(rotatedIdToken);
+			assertThat(scopes(continued)).containsExactlyInAnyOrder("openid", "profile");
+			assertThat(authorizationRevision(client.client())).isEqualTo(revisionAfterRefresh + 1);
+		}
+	}
+
+	@Test
+	void allowsOnlyOneConcurrentRefreshRotation() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "concurrent-refresh");
+		try (ConfidentialClientFixture client = createRefreshClient(TenantId.DEFAULT, "concurrent-refresh")) {
+			AuthorizationCodeFixture authorizationCode = authorize(user, client.client(), "openid profile");
+			String refreshToken = exchangeAuthorizationCode(client, authorizationCode).get("refresh_token").stringValue();
+			long revision = authorizationRevision(client.client());
+			UUID accessTokenId = tokenId(client.client(), "access_token");
+			UUID refreshTokenId = tokenId(client.client(), "refresh_token");
+			UUID idTokenId = tokenId(client.client(), "id_token");
+			CountDownLatch ready = new CountDownLatch(2);
+			CountDownLatch start = new CountDownLatch(1);
+			List<Future<MvcResult>> pending = new ArrayList<>();
+			List<MvcResult> results = new ArrayList<>();
+
+			try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+				for (int index = 0; index < 2; index++) {
+					pending.add(executor.submit(() -> {
+						ready.countDown();
+						start.await();
+						return this.mockMvc.perform(refreshRequest(client, refreshToken, "openid")).andReturn();
+					}));
+				}
+				boolean bothReady;
+				try {
+					bothReady = ready.await(5, TimeUnit.SECONDS);
+				}
+				finally {
+					start.countDown();
+				}
+				assertThat(bothReady).isTrue();
+				for (Future<MvcResult> result : pending) {
+					results.add(result.get(15, TimeUnit.SECONDS));
+				}
+			}
+			assertThat(results).extracting(result -> result.getResponse().getStatus())
+				.containsExactlyInAnyOrder(200, 400);
+			MvcResult rejected = results.stream()
+				.filter(result -> result.getResponse().getStatus() == 400)
+				.findFirst()
+				.orElseThrow();
+			assertOAuthError(rejected, "invalid_grant");
+			assertThat(authorizationRevision(client.client())).isEqualTo(revision + 1);
+			assertThat(tokenId(client.client(), "access_token")).isNotEqualTo(accessTokenId);
+			assertThat(tokenId(client.client(), "refresh_token")).isNotEqualTo(refreshTokenId);
+			assertThat(tokenId(client.client(), "id_token")).isNotEqualTo(idTokenId);
+			assertThat(tokenCount(client.client())).isEqualTo(4);
+		}
+	}
+
+	@Test
+	void rejectsRefreshAfterTheAuthorizationSessionIsRevoked() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "revoked-refresh-session");
+		try (ConfidentialClientFixture client = createRefreshClient(TenantId.DEFAULT, "revoked-refresh-session")) {
+			AuthorizationCodeFixture authorizationCode = authorize(user, client.client(), "openid profile");
+			String refreshToken = exchangeAuthorizationCode(client, authorizationCode).get("refresh_token").stringValue();
+			long revision = authorizationRevision(client.client());
+			SessionId sessionId = new SessionId(this.jdbcClient.sql("""
+					SELECT session_id
+					FROM oauth_authorizations
+					WHERE client_id = :clientId
+					""")
+				.param("clientId", client.client().id().value())
+				.query(UUID.class)
+				.single());
+
+			this.sessions.revoke(TenantId.DEFAULT, sessionId);
+
+			MvcResult rejected = this.mockMvc.perform(refreshRequest(client, refreshToken, "openid"))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(rejected, "invalid_grant");
+			assertThat(authorizationRevision(client.client())).isEqualTo(revision);
+		}
+	}
+
+	@Test
+	void rejectsInvalidatedAndExpiredRefreshTokens() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "inactive-refresh");
+		try (ConfidentialClientFixture client = createRefreshClient(TenantId.DEFAULT, "inactive-refresh")) {
+			AuthorizationCodeFixture authorizationCode = authorize(user, client.client(), "openid profile");
+			String refreshToken = exchangeAuthorizationCode(client, authorizationCode).get("refresh_token").stringValue();
+			long revision = authorizationRevision(client.client());
+			UUID refreshTokenId = tokenId(client.client(), "refresh_token");
+
+			this.jdbcClient.sql("""
+					UPDATE oauth_authorization_tokens
+					SET invalidated_at = now(), updated_at = now(), version = version + 1
+					WHERE token_id = :tokenId
+					""")
+				.param("tokenId", refreshTokenId)
+				.update();
+			MvcResult invalidated = this.mockMvc.perform(refreshRequest(client, refreshToken, null))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(invalidated, "invalid_grant");
+
+			this.jdbcClient.sql("""
+					UPDATE oauth_authorization_tokens
+					SET invalidated_at = NULL, expires_at = issued_at + interval '1 microsecond',
+					    updated_at = now(), version = version + 1
+					WHERE token_id = :tokenId
+					""")
+				.param("tokenId", refreshTokenId)
+				.update();
+			MvcResult expired = this.mockMvc.perform(refreshRequest(client, refreshToken, null))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(expired, "invalid_grant");
+			assertThat(authorizationRevision(client.client())).isEqualTo(revision);
+			assertThat(tokenId(client.client(), "refresh_token")).isEqualTo(refreshTokenId);
+		}
+	}
+
+	@Test
 	void escapesUntrustedScopeValuesOnTheConsentPage() throws Exception {
 		String untrustedScope = "read</label><script>alert(1)</script>";
 		UserFixture user = createUser(TenantId.DEFAULT, "consent-escaping");
@@ -551,6 +760,70 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		}
 	}
 
+	private ConfidentialClientFixture createRefreshClient(TenantId tenantId, String purpose) {
+		String identifier = "login-" + purpose + "-" + suffix();
+		CreateClientRequest request = new CreateClientRequest(new ClientIdentifier(identifier),
+				"Authorization Refresh Client", ClientType.CONFIDENTIAL,
+				ClientAuthenticationMethod.CLIENT_SECRET_BASIC, Set.of(new ClientRedirectUri(REDIRECT_URI)), Set.of(),
+				Set.of(new ClientScope("openid"), new ClientScope("profile")),
+				ClientTokenPolicy.refreshEnabledDefaults());
+		try (ClientRegistration registration = this.clients.create(tenantId, request)) {
+			this.clientsToDelete.add(registration.client().id());
+			return new ConfidentialClientFixture(registration.client(), registration.clientSecret().orElseThrow().copy());
+		}
+	}
+
+	private AuthorizationCodeFixture authorize(UserFixture user, OAuthClient client, String scopes) throws Exception {
+		String verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+		String challenge = pkceChallenge(verifier);
+		String state = "refresh-state-" + suffix();
+		MockHttpSession loginSession = beginAuthorization(client, scopes, state, challenge, "refresh-nonce-" + suffix());
+		MvcResult login = this.mockMvc
+			.perform(post("/login").session(loginSession).with(csrf()).param("username", user.username())
+				.param("password", PASSWORD))
+			.andExpect(status().isFound())
+			.andExpect(authenticated())
+			.andReturn();
+		MockHttpSession authenticatedSession = (MockHttpSession) login.getRequest().getSession(false);
+		MvcResult consentRedirect = this.mockMvc
+			.perform(get(URI.create(login.getResponse().getHeader("Location"))).session(authenticatedSession)
+				.accept(MediaType.TEXT_HTML))
+			.andExpect(status().isFound())
+			.andReturn();
+		URI consentUri = URI.create(consentRedirect.getResponse().getHeader("Location"));
+		MvcResult consentPage = this.mockMvc.perform(get(consentUri).session(authenticatedSession).accept(MediaType.TEXT_HTML))
+			.andExpect(status().isOk())
+			.andReturn();
+		MvcResult consent = this.mockMvc
+			.perform(post("/oauth2/authorize").session(authenticatedSession)
+				.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+				.param(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+				.param(OAuth2ParameterNames.STATE,
+						consentState(consentPage.getResponse().getContentAsString()))
+				.param(OAuth2ParameterNames.SCOPE, "profile"))
+			.andExpect(status().isFound())
+			.andExpect(header().string("Location", startsWith(REDIRECT_URI + "?")))
+			.andReturn();
+		URI clientRedirect = URI.create(consent.getResponse().getHeader("Location"));
+		assertThat(queryParameter(clientRedirect, OAuth2ParameterNames.STATE)).isEqualTo(state);
+		return new AuthorizationCodeFixture(queryParameter(clientRedirect, OAuth2ParameterNames.CODE), verifier);
+	}
+
+	private JsonNode exchangeAuthorizationCode(ConfidentialClientFixture client,
+			AuthorizationCodeFixture authorizationCode) throws Exception {
+		MvcResult result = this.mockMvc.perform(authorizationCodeTokenRequest(client, authorizationCode))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+			.andReturn();
+		JsonNode response = JSON.readTree(result.getResponse().getContentAsString());
+		assertThat(response.get("token_type").stringValue()).isEqualTo("Bearer");
+		assertThat(response.get("expires_in").longValue()).isPositive();
+		assertThat(response.hasNonNull("access_token")).isTrue();
+		assertThat(response.hasNonNull("refresh_token")).isTrue();
+		assertThat(response.hasNonNull("id_token")).isTrue();
+		return response;
+	}
+
 	private UserFixture createUser(TenantId tenantId, String purpose) {
 		String username = "login-" + purpose + "-" + suffix();
 		User user = this.users.create(tenantId,
@@ -607,6 +880,18 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		return count("SELECT count(*) FROM oauth_authorization_tokens WHERE client_id = :clientId", client);
 	}
 
+	private UUID tokenId(OAuthClient client, String tokenType) {
+		return this.jdbcClient.sql("""
+				SELECT token_id
+				FROM oauth_authorization_tokens
+				WHERE client_id = :clientId AND token_type = :tokenType
+				""")
+			.param("clientId", client.id().value())
+			.param("tokenType", tokenType)
+			.query(UUID.class)
+			.single();
+	}
+
 	private int authorizationCount(OAuthClient client) {
 		return count("SELECT count(*) FROM oauth_authorizations WHERE client_id = :clientId", client);
 	}
@@ -646,6 +931,35 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			.param(PkceParameterNames.CODE_VERIFIER, verifier);
 	}
 
+	private static MockHttpServletRequestBuilder authorizationCodeTokenRequest(ConfidentialClientFixture client,
+			AuthorizationCodeFixture authorizationCode) {
+		return post("/oauth2/token").with(httpBasic(client.client().identifier().value(), client.secretValue()))
+			.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+			.param(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.AUTHORIZATION_CODE.getValue())
+			.param(OAuth2ParameterNames.CODE, authorizationCode.code())
+			.param(OAuth2ParameterNames.REDIRECT_URI, REDIRECT_URI)
+			.param(PkceParameterNames.CODE_VERIFIER, authorizationCode.verifier());
+	}
+
+	private static MockHttpServletRequestBuilder refreshRequest(ConfidentialClientFixture client, String refreshToken,
+			String scope) {
+		MockHttpServletRequestBuilder request = post("/oauth2/token")
+			.with(httpBasic(client.client().identifier().value(), client.secretValue()))
+			.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+			.param(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.REFRESH_TOKEN.getValue())
+			.param(OAuth2ParameterNames.REFRESH_TOKEN, refreshToken);
+		return scope == null ? request : request.param(OAuth2ParameterNames.SCOPE, scope);
+	}
+
+	private static Set<String> scopes(JsonNode response) {
+		return Set.copyOf(List.of(response.get("scope").stringValue().split(" ")));
+	}
+
+	private static void assertOAuthError(MvcResult result, String expected) throws Exception {
+		assertThat(JSON.readTree(result.getResponse().getContentAsString()).get("error").stringValue())
+			.isEqualTo(expected);
+	}
+
 	private static String pkceChallenge(String verifier) throws Exception {
 		byte[] digest = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII));
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
@@ -677,6 +991,22 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	}
 
 	private record UserReference(TenantId tenantId, UserId userId) {
+	}
+
+	private record AuthorizationCodeFixture(String code, String verifier) {
+	}
+
+	private record ConfidentialClientFixture(OAuthClient client, char[] clientSecret) implements AutoCloseable {
+
+		private String secretValue() {
+			return new String(this.clientSecret);
+		}
+
+		@Override
+		public void close() {
+			Arrays.fill(this.clientSecret, '\0');
+		}
+
 	}
 
 }

@@ -9,6 +9,8 @@ readonly CLIENT_IDENTIFIER="release-check-client"
 readonly USERNAME="release-check-user"
 readonly PASSWORD="password"
 readonly ENCODED_PASSWORD='{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG'
+readonly CLIENT_SECRET="password"
+readonly ENCODED_CLIENT_SECRET="${ENCODED_PASSWORD}"
 readonly REDIRECT_URI="https://client.release-check.invalid/callback"
 readonly CODE_VERIFIER="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"
 
@@ -97,6 +99,7 @@ seed_fixture() {
 	database --set=user_id="${USER_ID}" --set=client_id="${CLIENT_ID}" \
 		--set=tenant_id="${TENANT_ID}" --set=username="${USERNAME}" \
 		--set=encoded_password="${ENCODED_PASSWORD}" --set=client_identifier="${CLIENT_IDENTIFIER}" \
+		--set=encoded_client_secret="${ENCODED_CLIENT_SECRET}" \
 		--set=redirect_uri="${REDIRECT_URI}" >/dev/null <<'SQL'
 BEGIN;
 INSERT INTO users (user_id, tenant_id)
@@ -108,9 +111,13 @@ VALUES
 INSERT INTO user_password_credentials (tenant_id, user_id, encoded_password)
 VALUES (:'tenant_id', :'user_id', :'encoded_password');
 INSERT INTO oauth_clients
-    (client_id, tenant_id, client_identifier, display_name, client_type, authentication_method)
+	    (client_id, tenant_id, client_identifier, display_name, client_type, authentication_method,
+	     encoded_client_secret, client_secret_issued_at, client_secret_expires_at,
+	     refresh_tokens_enabled, refresh_token_ttl_seconds)
 VALUES
-    (:'client_id', :'tenant_id', :'client_identifier', 'Release Check Client', 'public', 'none');
+	    (:'client_id', :'tenant_id', :'client_identifier', 'Release Check Client',
+	     'confidential', 'client_secret_basic', :'encoded_client_secret', now(), now() + interval '90 days',
+	     TRUE, 3600);
 INSERT INTO oauth_client_redirect_uris (tenant_id, client_id, redirect_uri)
 VALUES (:'tenant_id', :'client_id', :'redirect_uri');
 INSERT INTO oauth_client_scopes (tenant_id, client_id, scope)
@@ -132,6 +139,7 @@ cookies="${work_dir}/cookies"
 headers="${work_dir}/headers"
 body="${work_dir}/body"
 token_response="${work_dir}/token-response.json"
+refresh_response="${work_dir}/refresh-response.json"
 userinfo="${work_dir}/userinfo.json"
 id_payload="${work_dir}/id-token.json"
 client_state="release-check-state"
@@ -139,7 +147,7 @@ nonce="release-check-nonce"
 code_challenge="$(printf '%s' "${CODE_VERIFIER}" | openssl dgst -sha256 -binary \
 	| openssl base64 -A | tr '+/' '-_' | tr -d '=')"
 
-log "Seeding disposable user and public client"
+log "Seeding disposable user and confidential client"
 seed_fixture
 
 log "Checking provider metadata and JWK publication"
@@ -205,8 +213,8 @@ returned_state="$(query_parameter "${client_redirect}" state)"
 
 log "Checking PKCE failure does not consume the code"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
-	--request POST --data-urlencode 'grant_type=authorization_code' \
-	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "code=${code}" \
+	--user "${CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST --data-urlencode 'grant_type=authorization_code' \
+	--data-urlencode "code=${code}" \
 	--data-urlencode "redirect_uri=${REDIRECT_URI}" --data-urlencode "code_verifier=wrong-${CODE_VERIFIER}" \
 	"${base_url}/oauth2/token")"
 [[ "${status}" == "400" ]] && jq -e '.error == "invalid_grant"' "${body}" >/dev/null \
@@ -214,14 +222,15 @@ status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-ou
 
 log "Exchanging the code with the correct verifier"
 status="$(curl --silent --show-error --max-time 10 --output "${token_response}" --write-out '%{http_code}' \
-	--request POST --data-urlencode 'grant_type=authorization_code' \
-	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "code=${code}" \
+	--user "${CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST --data-urlencode 'grant_type=authorization_code' \
+	--data-urlencode "code=${code}" \
 	--data-urlencode "redirect_uri=${REDIRECT_URI}" --data-urlencode "code_verifier=${CODE_VERIFIER}" \
 	"${base_url}/oauth2/token")"
 [[ "${status}" == "200" ]] || fail "Token exchange returned HTTP ${status}"
-jq -e '.token_type == "Bearer" and .expires_in > 0 and (.scope | split(" ") | sort == ["openid", "profile"]) and (.refresh_token | not)' \
+jq -e '.token_type == "Bearer" and .expires_in > 0 and (.scope | split(" ") | sort == ["openid", "profile"]) and (.refresh_token | type == "string" and length > 0)' \
 	"${token_response}" >/dev/null || fail "Token response is invalid"
 access_token="$(jq -er '.access_token' "${token_response}")"
+refresh_token="$(jq -er '.refresh_token' "${token_response}")"
 id_token="$(jq -er '.id_token' "${token_response}")"
 decode_jwt_payload "${id_token}" >"${id_payload}" || fail "ID token payload is not valid base64url"
 jq -e --arg issuer "${issuer}" --arg subject "${USER_ID}" --arg audience "${CLIENT_IDENTIFIER}" \
@@ -234,22 +243,63 @@ status="$(curl --silent --show-error --max-time 10 --output "${userinfo}" --writ
 [[ "${status}" == "200" ]] && jq -e --arg subject "${USER_ID}" '.sub == $subject' "${userinfo}" >/dev/null \
 	|| fail "Issued access token was not accepted by UserInfo"
 
-log "Replaying the code and checking access-token invalidation"
+log "Rotating access, refresh, and ID tokens with reduced scope"
+status="$(curl --silent --show-error --max-time 10 --output "${refresh_response}" --write-out '%{http_code}' \
+	--user "${CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST --data-urlencode 'grant_type=refresh_token' \
+	--data-urlencode "refresh_token=${refresh_token}" --data-urlencode 'scope=openid' \
+	"${base_url}/oauth2/token")"
+[[ "${status}" == "200" ]] || fail "Refresh Token exchange returned HTTP ${status}"
+jq -e '.token_type == "Bearer" and .expires_in > 0 and .scope == "openid" and (.refresh_token | type == "string" and length > 0)' \
+	"${refresh_response}" >/dev/null || fail "Refresh Token response is invalid"
+rotated_access_token="$(jq -er '.access_token' "${refresh_response}")"
+rotated_refresh_token="$(jq -er '.refresh_token' "${refresh_response}")"
+rotated_id_token="$(jq -er '.id_token' "${refresh_response}")"
+[[ "${rotated_access_token}" != "${access_token}" && "${rotated_refresh_token}" != "${refresh_token}" \
+	&& "${rotated_id_token}" != "${id_token}" ]] || fail "Refresh Token exchange did not rotate every renewable token"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
-	--request POST --data-urlencode 'grant_type=authorization_code' \
-	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "code=${code}" \
+	--header "Authorization: Bearer ${rotated_access_token}" "${base_url}/userinfo")"
+[[ "${status}" == "200" ]] || fail "Rotated access token was not accepted by UserInfo"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header "Authorization: Bearer ${access_token}" "${base_url}/userinfo")"
+[[ "${status}" == "401" ]] || fail "Rotated access token left the previous access token active"
+
+log "Rejecting the rotated Refresh Token"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--user "${CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST --data-urlencode 'grant_type=refresh_token' \
+	--data-urlencode "refresh_token=${refresh_token}" "${base_url}/oauth2/token")"
+[[ "${status}" == "400" ]] && jq -e '.error == "invalid_grant"' "${body}" >/dev/null \
+	|| fail "Rotated Refresh Token was not rejected"
+
+log "Continuing rotation with the current Refresh Token"
+status="$(curl --silent --show-error --max-time 10 --output "${refresh_response}" --write-out '%{http_code}' \
+	--user "${CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST --data-urlencode 'grant_type=refresh_token' \
+	--data-urlencode "refresh_token=${rotated_refresh_token}" "${base_url}/oauth2/token")"
+[[ "${status}" == "200" ]] || fail "Current Refresh Token was not accepted"
+jq -e '.token_type == "Bearer" and (.scope | split(" ") | sort == ["openid", "profile"]) and (.refresh_token | type == "string" and length > 0)' \
+	"${refresh_response}" >/dev/null || fail "Continued Refresh Token response is invalid"
+current_access_token="$(jq -er '.access_token' "${refresh_response}")"
+current_refresh_token="$(jq -er '.refresh_token' "${refresh_response}")"
+current_id_token="$(jq -er '.id_token' "${refresh_response}")"
+[[ "${current_access_token}" != "${rotated_access_token}" \
+	&& "${current_refresh_token}" != "${rotated_refresh_token}" \
+	&& "${current_id_token}" != "${rotated_id_token}" ]] || fail "Continued Refresh Token exchange did not rotate every renewable token"
+
+log "Replaying the code and checking current token invalidation"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--user "${CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST --data-urlencode 'grant_type=authorization_code' \
+	--data-urlencode "code=${code}" \
 	--data-urlencode "redirect_uri=${REDIRECT_URI}" --data-urlencode "code_verifier=${CODE_VERIFIER}" \
 	"${base_url}/oauth2/token")"
 [[ "${status}" == "400" ]] && jq -e '.error == "invalid_grant"' "${body}" >/dev/null \
 	|| fail "Authorization code replay was not rejected"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
-	--header "Authorization: Bearer ${access_token}" "${base_url}/userinfo")"
-[[ "${status}" == "401" ]] || fail "Replayed authorization left the access token active"
+	--header "Authorization: Bearer ${current_access_token}" "${base_url}/userinfo")"
+[[ "${status}" == "401" ]] || fail "Replayed authorization left the current access token active"
 
 token_state="$(database --tuples-only --no-align --command "
 	SELECT string_agg(token_type || ':' || (invalidated_at IS NOT NULL)::text, ',' ORDER BY token_type)
 	FROM oauth_authorization_tokens WHERE client_id = '${CLIENT_ID}'")"
-[[ "${token_state}" == "access_token:true,authorization_code:true,id_token:false" ]] \
+[[ "${token_state}" == "access_token:true,authorization_code:true,id_token:false,refresh_token:true" ]] \
 	|| fail "Persisted token state is invalid: ${token_state}"
 consent_count="$(database --tuples-only --no-align --command \
 	"SELECT count(*) FROM oauth_authorization_consent_authorities WHERE client_id = '${CLIENT_ID}'")"
@@ -259,4 +309,4 @@ password_encoding="$(database --tuples-only --no-align --command \
 [[ "${password_encoding}" == "{pbkdf2@SpringSecurity_v5_8}" ]] \
 	|| fail "Legacy password hash was not upgraded during native authentication"
 
-log "Authorization Code + PKCE + OIDC flow passed"
+log "Authorization Code + PKCE + OIDC + Refresh Token flow passed"

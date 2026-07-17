@@ -136,6 +136,29 @@ class OAuthClientDomainTests {
 	}
 
 	@Test
+	void allowsOnlyConfidentialClientsToEnableRefreshTokensExplicitly() {
+		ClientTokenPolicy refreshPolicy = ClientTokenPolicy.refreshEnabledDefaults();
+		CreateClientRequest request = new CreateClientRequest(new ClientIdentifier("refresh-client"), "Refresh Client",
+				ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC, Set.of(REDIRECT_URI), Set.of(),
+				Set.of(OPENID), refreshPolicy);
+
+		OAuthClient client = OAuthClient.create(CLIENT_ID, TenantId.DEFAULT, request, SECRET_METADATA, CREATED_AT);
+
+		assertThat(client.supportsRefreshTokens()).isTrue();
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("public-refresh-client"),
+				"Public Refresh Client", ClientType.PUBLIC, ClientAuthenticationMethod.NONE, Set.of(REDIRECT_URI), Set.of(),
+				Set.of(OPENID), refreshPolicy))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("confidential client");
+		assertThatThrownBy(() -> new OAuthClient(CLIENT_ID, TenantId.DEFAULT,
+				new ClientIdentifier("stored-public-refresh-client"), "Stored Public Refresh Client", ClientType.PUBLIC,
+				ClientAuthenticationMethod.NONE, ClientStatus.ACTIVE, null, Set.of(REDIRECT_URI), Set.of(), Set.of(OPENID),
+				refreshPolicy, 0, CREATED_AT, CREATED_AT))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("confidential client");
+	}
+
+	@Test
 	void rejectsInvalidSecretLifetimes() {
 		assertThatThrownBy(() -> new ClientSecretMetadata(CREATED_AT, CREATED_AT))
 			.isInstanceOf(IllegalArgumentException.class);
@@ -151,7 +174,7 @@ class OAuthClientDomainTests {
 	}
 
 	@Test
-	void rejectsRefreshScopeUntilRefreshTokensAreSupported() {
+	void rejectsOfflineAccessScope() {
 		assertThatThrownBy(() -> request(ClientType.PUBLIC, ClientAuthenticationMethod.NONE,
 				Set.of(OPENID, new ClientScope("offline_access")), Set.of()))
 			.isInstanceOf(IllegalArgumentException.class);
@@ -190,9 +213,13 @@ class OAuthClientDomainTests {
 	}
 
 	@Test
-	void boundsAuthorizationCodeAndAccessTokenLifetimes() {
+	void boundsTokenLifetimesAndUsesSecureRefreshDefaults() {
 		assertThat(ClientTokenPolicy.secureDefaults().authorizationCodeTtl()).isEqualTo(Duration.ofMinutes(5));
 		assertThat(ClientTokenPolicy.secureDefaults().accessTokenTtl()).isEqualTo(Duration.ofMinutes(5));
+		assertThat(ClientTokenPolicy.secureDefaults().refreshTokensEnabled()).isFalse();
+		assertThat(ClientTokenPolicy.secureDefaults().refreshTokenTtl()).isEqualTo(Duration.ofHours(1));
+		assertThat(ClientTokenPolicy.refreshEnabledDefaults().refreshTokensEnabled()).isTrue();
+		assertThat(ClientTokenPolicy.refreshEnabledDefaults().refreshTokenTtl()).isEqualTo(Duration.ofHours(1));
 		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ZERO, Duration.ofMinutes(5)))
 			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofSeconds(29), Duration.ofMinutes(5)))
@@ -204,6 +231,26 @@ class OAuthClientDomainTests {
 		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMillis(30_500), Duration.ofMinutes(5)))
 			.isInstanceOf(IllegalArgumentException.class)
 			.hasMessageContaining("whole number of seconds");
+		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true, null))
+			.isInstanceOf(NullPointerException.class);
+		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true,
+				Duration.ofMillis(300_500)))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("whole number of seconds");
+		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true,
+				Duration.ofSeconds(299)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true,
+				Duration.ofDays(30).plusSeconds(1)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true,
+				Duration.ofMinutes(5)))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("longer than the access token TTL");
+		assertThat(new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(1), true, Duration.ofMinutes(5))
+			.refreshTokenTtl()).isEqualTo(Duration.ofMinutes(5));
+		assertThat(new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true, Duration.ofDays(30))
+			.refreshTokenTtl()).isEqualTo(Duration.ofDays(30));
 	}
 
 	@Test

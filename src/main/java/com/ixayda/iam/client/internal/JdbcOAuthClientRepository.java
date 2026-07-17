@@ -42,7 +42,8 @@ class JdbcOAuthClientRepository {
 			client_id, tenant_id, client_identifier, display_name, client_type,
 			authentication_method, status, encoded_client_secret, client_secret_issued_at,
 			client_secret_expires_at, authorization_code_ttl_seconds,
-			access_token_ttl_seconds, version, created_at, updated_at
+			access_token_ttl_seconds, refresh_tokens_enabled, refresh_token_ttl_seconds,
+			version, created_at, updated_at
 			""";
 
 	private static final RowMapper<ClientRow> CLIENT_ROW_MAPPER = JdbcOAuthClientRepository::mapClientRow;
@@ -64,12 +65,14 @@ class JdbcOAuthClientRepository {
 				     authentication_method, status, encoded_client_secret,
 				     client_secret_issued_at, client_secret_expires_at,
 				     authorization_code_ttl_seconds, access_token_ttl_seconds,
+				     refresh_tokens_enabled, refresh_token_ttl_seconds,
 				     version, created_at, updated_at)
 				VALUES
 				    (:clientId, :tenantId, :identifier, :displayName, :clientType,
 				     :authenticationMethod, :status, :encodedSecret,
 				     CAST(:secretIssuedAt AS timestamptz), CAST(:secretExpiresAt AS timestamptz),
-				     :authorizationCodeTtl, :accessTokenTtl, :version, :createdAt, :updatedAt)
+				     :authorizationCodeTtl, :accessTokenTtl, :refreshTokensEnabled, :refreshTokenTtl,
+				     :version, :createdAt, :updatedAt)
 				ON CONFLICT ON CONSTRAINT oauth_clients_client_identifier_key DO NOTHING
 				""")
 			.param("clientId", client.id().value())
@@ -84,6 +87,8 @@ class JdbcOAuthClientRepository {
 			.param("secretExpiresAt", databaseValue(client.secretMetadata(), ClientSecretMetadata::expiresAt))
 			.param("authorizationCodeTtl", Math.toIntExact(client.tokenPolicy().authorizationCodeTtl().toSeconds()))
 			.param("accessTokenTtl", Math.toIntExact(client.tokenPolicy().accessTokenTtl().toSeconds()))
+			.param("refreshTokensEnabled", client.tokenPolicy().refreshTokensEnabled())
+			.param("refreshTokenTtl", Math.toIntExact(client.tokenPolicy().refreshTokenTtl().toSeconds()))
 			.param("version", client.version())
 			.param("createdAt", databaseValue(client.createdAt()))
 			.param("updatedAt", databaseValue(client.updatedAt()))
@@ -347,7 +352,9 @@ class JdbcOAuthClientRepository {
 				authenticationMethod(resultSet.getString("authentication_method")),
 				clientStatus(resultSet.getString("status")), metadata, resultSet.getString("encoded_client_secret"),
 				new ClientTokenPolicy(Duration.ofSeconds(resultSet.getInt("authorization_code_ttl_seconds")),
-						Duration.ofSeconds(resultSet.getInt("access_token_ttl_seconds"))),
+						Duration.ofSeconds(resultSet.getInt("access_token_ttl_seconds")),
+						resultSet.getBoolean("refresh_tokens_enabled"),
+						Duration.ofSeconds(resultSet.getInt("refresh_token_ttl_seconds"))),
 				resultSet.getLong("version"), resultSet.getObject("created_at", OffsetDateTime.class).toInstant(),
 				resultSet.getObject("updated_at", OffsetDateTime.class).toInstant());
 	}

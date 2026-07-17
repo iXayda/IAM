@@ -303,7 +303,7 @@ grep -q 'http_server_requests_seconds_bucket' "${metrics_file}" || fail "HTTP la
 grep -q 'application="iam-core-service"' "${metrics_file}" || fail "Application metric tag is missing"
 grep -q 'environment="release-check"' "${metrics_file}" || fail "Environment metric tag is missing"
 
-log "Checking native Authorization Code, PKCE, and OpenID Connect flow"
+log "Checking native Authorization Code, PKCE, OpenID Connect, and Refresh Token flow"
 postgres_container="$(compose ps --quiet postgres)"
 [[ -n "${postgres_container}" ]] || fail "Unable to resolve the PostgreSQL container"
 IAM_VERIFY_BASE_URL="http://127.0.0.1:${app_port}" \
