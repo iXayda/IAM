@@ -15,10 +15,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
@@ -54,12 +59,19 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.endpoint.PkceParameterNames;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.web.WebAttributes;
 import org.springframework.security.web.savedrequest.SavedRequest;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 @AutoConfigureMockMvc
 class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrationTest {
@@ -67,6 +79,12 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	private static final String REDIRECT_URI = "https://client.example.test/callback";
 
 	private static final String PASSWORD = "correct-password";
+
+	private static final String ISSUER = "https://issuer.example.test";
+
+	private static final Pattern CONSENT_STATE = Pattern.compile("name=\"state\" value=\"([^\"]+)\"");
+
+	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private final List<ClientId> clientsToDelete = new ArrayList<>();
 
@@ -91,6 +109,9 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 
 	@Autowired
 	private JdbcClient jdbcClient;
+
+	@Autowired
+	private JwtDecoder jwtDecoder;
 
 	@AfterEach
 	void deleteFixtures() {
@@ -233,24 +254,135 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		assertThat(sessionCount(user.user())).isOne();
 	}
 
+	@Test
+	void completesTheOpenIdAuthorizationCodeFlowAndEnforcesPkceAndCodeSingleUse() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "authorization-code");
+		OAuthClient client = createClient(TenantId.DEFAULT, "authorization-code",
+				Set.of(new ClientScope("openid"), new ClientScope("profile")));
+		String verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+		String challenge = pkceChallenge(verifier);
+		String nonce = "nonce-" + suffix();
+		String clientState = "client-state-" + suffix();
+		MockHttpSession loginSession = beginAuthorization(client, "openid profile", clientState, challenge, nonce);
+
+		MvcResult loginResult = this.mockMvc
+			.perform(post("/login").session(loginSession).with(csrf()).param("username", user.username())
+				.param("password", PASSWORD))
+			.andExpect(status().isFound())
+			.andExpect(authenticated())
+			.andReturn();
+		MockHttpSession authenticatedSession = (MockHttpSession) loginResult.getRequest().getSession(false);
+		URI authorizationContinuation = URI.create(loginResult.getResponse().getHeader("Location"));
+
+		MvcResult consentPage = this.mockMvc
+			.perform(get(authorizationContinuation).session(authenticatedSession).accept(MediaType.TEXT_HTML))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+			.andExpect(content().string(containsString("Consent required")))
+			.andExpect(content().string(containsString("name=\"scope\" value=\"profile\"")))
+			.andReturn();
+		String consentState = consentState(consentPage.getResponse().getContentAsString());
+
+		MvcResult consentResult = this.mockMvc
+			.perform(post("/oauth2/authorize").session(authenticatedSession)
+				.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+				.param(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+				.param(OAuth2ParameterNames.STATE, consentState)
+				.param(OAuth2ParameterNames.SCOPE, "profile"))
+			.andExpect(status().isFound())
+			.andExpect(header().string("Location", startsWith(REDIRECT_URI + "?")))
+			.andReturn();
+		URI clientRedirect = URI.create(consentResult.getResponse().getHeader("Location"));
+		String authorizationCode = queryParameter(clientRedirect, OAuth2ParameterNames.CODE);
+		assertThat(queryParameter(clientRedirect, OAuth2ParameterNames.STATE)).isEqualTo(clientState);
+		assertThat(consentState).isNotEqualTo(clientState);
+		assertThat(consentAuthorities(client)).containsExactlyInAnyOrder("SCOPE_openid", "SCOPE_profile");
+		assertThat(authorizationScopes(client)).containsExactlyInAnyOrder("openid", "profile");
+		assertThat(tokenInvalidated(client, "authorization_code")).isFalse();
+		assertThat(tokenCount(client)).isOne();
+		long revisionWithCode = authorizationRevision(client);
+
+		MvcResult rejectedExchange = this.mockMvc
+			.perform(tokenRequest(client, authorizationCode, "wrong-" + verifier))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+			.andReturn();
+		assertThat(JSON.readTree(rejectedExchange.getResponse().getContentAsString()).get("error").stringValue())
+			.isEqualTo("invalid_grant");
+		assertThat(tokenInvalidated(client, "authorization_code")).isFalse();
+		assertThat(tokenCount(client)).isOne();
+		assertThat(authorizationRevision(client)).isEqualTo(revisionWithCode);
+
+		MvcResult successfulExchange = this.mockMvc.perform(tokenRequest(client, authorizationCode, verifier))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+			.andReturn();
+		JsonNode tokenResponse = JSON.readTree(successfulExchange.getResponse().getContentAsString());
+		String accessTokenValue = tokenResponse.get("access_token").stringValue();
+		String idTokenValue = tokenResponse.get("id_token").stringValue();
+		assertThat(tokenResponse.get("token_type").stringValue()).isEqualTo("Bearer");
+		assertThat(Set.copyOf(List.of(tokenResponse.get("scope").stringValue().split(" "))))
+			.containsExactlyInAnyOrder("openid", "profile");
+		assertThat(tokenResponse.get("expires_in").longValue()).isPositive();
+		assertThat(tokenResponse.get("refresh_token")).isNull();
+
+		Jwt accessToken = this.jwtDecoder.decode(accessTokenValue);
+		assertThat(accessToken.getIssuer()).hasToString(ISSUER);
+		assertThat(accessToken.getSubject()).isEqualTo(user.user().id().toString());
+		assertThat(accessToken.getAudience()).containsExactly(client.identifier().value());
+		assertThat(accessToken.getClaimAsStringList("scope")).containsExactlyInAnyOrder("openid", "profile");
+		Jwt idToken = this.jwtDecoder.decode(idTokenValue);
+		assertThat(idToken.getIssuer()).hasToString(ISSUER);
+		assertThat(idToken.getSubject()).isEqualTo(user.user().id().toString());
+		assertThat(idToken.getAudience()).containsExactly(client.identifier().value());
+		assertThat(idToken.getClaimAsString("nonce")).isEqualTo(nonce);
+		assertThat(tokenCount(client)).isEqualTo(3);
+		assertThat(tokenInvalidated(client, "authorization_code")).isTrue();
+		assertThat(tokenInvalidated(client, "access_token")).isFalse();
+		assertThat(tokenInvalidated(client, "id_token")).isFalse();
+		assertThat(accessTokenScopeCount(client)).isEqualTo(2);
+		assertThat(authorizationRevision(client)).isEqualTo(revisionWithCode + 1);
+
+		MvcResult replay = this.mockMvc.perform(tokenRequest(client, authorizationCode, verifier))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+			.andReturn();
+		assertThat(JSON.readTree(replay.getResponse().getContentAsString()).get("error").stringValue())
+			.isEqualTo("invalid_grant");
+		assertThat(tokenInvalidated(client, "authorization_code")).isTrue();
+		assertThat(tokenInvalidated(client, "access_token")).isTrue();
+		assertThat(tokenInvalidated(client, "id_token")).isFalse();
+		assertThat(tokenCount(client)).isEqualTo(3);
+		assertThat(authorizationRevision(client)).isEqualTo(revisionWithCode + 2);
+	}
+
 	private MockHttpSession beginAuthorization(OAuthClient client) throws Exception {
+		return beginAuthorization(client, "openid", "state-value", "A".repeat(43), null);
+	}
+
+	private MockHttpSession beginAuthorization(OAuthClient client, String scopes, String state, String challenge,
+			String nonce) throws Exception {
+		MockHttpServletRequestBuilder authorizationRequest = get("/oauth2/authorize").accept(MediaType.TEXT_HTML)
+			.with((request) -> {
+				request.setScheme("https");
+				request.setServerName("attacker.example");
+				request.setServerPort(443);
+				return request;
+			})
+			.header("Forwarded", "host=forwarded-attacker.example;proto=https")
+			.header("X-Forwarded-Host", "forwarded-attacker.example")
+			.queryParam(OAuth2ParameterNames.RESPONSE_TYPE, "code")
+			.queryParam(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+			.queryParam(OAuth2ParameterNames.REDIRECT_URI, REDIRECT_URI)
+			.queryParam(OAuth2ParameterNames.SCOPE, scopes)
+			.queryParam(OAuth2ParameterNames.STATE, state)
+			.queryParam(PkceParameterNames.CODE_CHALLENGE, challenge)
+			.queryParam(PkceParameterNames.CODE_CHALLENGE_METHOD, "S256");
+		if (nonce != null) {
+			authorizationRequest.queryParam("nonce", nonce);
+		}
 		MvcResult result = this.mockMvc
-			.perform(get("/oauth2/authorize").accept(MediaType.TEXT_HTML)
-				.with((request) -> {
-					request.setScheme("https");
-					request.setServerName("attacker.example");
-					request.setServerPort(443);
-					return request;
-				})
-				.header("Forwarded", "host=forwarded-attacker.example;proto=https")
-				.header("X-Forwarded-Host", "forwarded-attacker.example")
-				.queryParam(OAuth2ParameterNames.RESPONSE_TYPE, "code")
-				.queryParam(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
-				.queryParam(OAuth2ParameterNames.REDIRECT_URI, REDIRECT_URI)
-				.queryParam(OAuth2ParameterNames.SCOPE, "openid")
-				.queryParam(OAuth2ParameterNames.STATE, "state-value")
-				.queryParam(PkceParameterNames.CODE_CHALLENGE, "A".repeat(43))
-				.queryParam(PkceParameterNames.CODE_CHALLENGE_METHOD, "S256"))
+			.perform(authorizationRequest)
 			.andExpect(status().isFound())
 			.andExpect(header().string("Location", endsWith("/login")))
 			.andExpect(unauthenticated())
@@ -263,10 +395,14 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	}
 
 	private OAuthClient createClient(TenantId tenantId, String purpose) {
+		return createClient(tenantId, purpose, Set.of(new ClientScope("openid")));
+	}
+
+	private OAuthClient createClient(TenantId tenantId, String purpose, Set<ClientScope> scopes) {
 		String identifier = "login-" + purpose + "-" + suffix();
 		CreateClientRequest request = new CreateClientRequest(new ClientIdentifier(identifier), "Authorization Login Client",
 				ClientType.PUBLIC, ClientAuthenticationMethod.NONE, Set.of(new ClientRedirectUri(REDIRECT_URI)), Set.of(),
-				Set.of(new ClientScope("openid")), ClientTokenPolicy.secureDefaults());
+				scopes, ClientTokenPolicy.secureDefaults());
 		try (ClientRegistration registration = this.clients.create(tenantId, request)) {
 			this.clientsToDelete.add(registration.client().id());
 			return registration.client();
@@ -297,6 +433,88 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			.param("userId", user.id().value())
 			.query(Integer.class)
 			.single();
+	}
+
+	private List<String> consentAuthorities(OAuthClient client) {
+		return this.jdbcClient.sql("""
+				SELECT authority
+				FROM oauth_authorization_consent_authorities
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", client.id().value())
+			.query(String.class)
+			.list();
+	}
+
+	private List<String> authorizationScopes(OAuthClient client) {
+		return this.jdbcClient.sql("""
+				SELECT scope
+				FROM oauth_authorization_scopes
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", client.id().value())
+			.query(String.class)
+			.list();
+	}
+
+	private int accessTokenScopeCount(OAuthClient client) {
+		return count("SELECT count(*) FROM oauth_authorization_token_scopes WHERE client_id = :clientId", client);
+	}
+
+	private int tokenCount(OAuthClient client) {
+		return count("SELECT count(*) FROM oauth_authorization_tokens WHERE client_id = :clientId", client);
+	}
+
+	private int count(String query, OAuthClient client) {
+		return this.jdbcClient.sql(query)
+			.param("clientId", client.id().value())
+			.query(Integer.class)
+			.single();
+	}
+
+	private long authorizationRevision(OAuthClient client) {
+		return this.jdbcClient.sql("SELECT version FROM oauth_authorizations WHERE client_id = :clientId")
+			.param("clientId", client.id().value())
+			.query(Long.class)
+			.single();
+	}
+
+	private boolean tokenInvalidated(OAuthClient client, String tokenType) {
+		return this.jdbcClient.sql("""
+				SELECT invalidated_at IS NOT NULL
+				FROM oauth_authorization_tokens
+				WHERE client_id = :clientId AND token_type = :tokenType
+				""")
+			.param("clientId", client.id().value())
+			.param("tokenType", tokenType)
+			.query(Boolean.class)
+			.single();
+	}
+
+	private static MockHttpServletRequestBuilder tokenRequest(OAuthClient client, String code, String verifier) {
+		return post("/oauth2/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+			.param(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.AUTHORIZATION_CODE.getValue())
+			.param(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+			.param(OAuth2ParameterNames.CODE, code)
+			.param(OAuth2ParameterNames.REDIRECT_URI, REDIRECT_URI)
+			.param(PkceParameterNames.CODE_VERIFIER, verifier);
+	}
+
+	private static String pkceChallenge(String verifier) throws Exception {
+		byte[] digest = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII));
+		return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+	}
+
+	private static String consentState(String page) {
+		Matcher matcher = CONSENT_STATE.matcher(page);
+		assertThat(matcher.find()).as("consent state field").isTrue();
+		return matcher.group(1);
+	}
+
+	private static String queryParameter(URI uri, String name) {
+		String value = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst(name);
+		assertThat(value).as("query parameter %s", name).isNotBlank();
+		return value;
 	}
 
 	private static String suffix() {
