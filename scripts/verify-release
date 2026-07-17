@@ -214,6 +214,7 @@ cd "${ROOT_DIR}"
 
 require_command curl
 require_command docker
+require_command jq
 require_command openssl
 [[ -x "${ROOT_DIR}/mvnw" ]] || fail "Maven Wrapper is not executable"
 
@@ -301,6 +302,16 @@ curl --fail --silent --show-error --max-time 5 \
 grep -q 'http_server_requests_seconds_bucket' "${metrics_file}" || fail "HTTP latency buckets are missing"
 grep -q 'application="iam-core-service"' "${metrics_file}" || fail "Application metric tag is missing"
 grep -q 'environment="release-check"' "${metrics_file}" || fail "Environment metric tag is missing"
+
+log "Checking native Authorization Code, PKCE, and OpenID Connect flow"
+postgres_container="$(compose ps --quiet postgres)"
+[[ -n "${postgres_container}" ]] || fail "Unable to resolve the PostgreSQL container"
+IAM_VERIFY_BASE_URL="http://127.0.0.1:${app_port}" \
+	IAM_VERIFY_ISSUER="https://issuer.release-check.invalid" \
+	IAM_VERIFY_POSTGRES_CONTAINER="${postgres_container}" \
+	IAM_DB_NAME="${db_name}" \
+	IAM_DB_USERNAME="${db_username}" \
+	"${ROOT_DIR}/scripts/verify-authorization-code-flow"
 
 log "Checking Redis outage and recovery"
 compose pause redis

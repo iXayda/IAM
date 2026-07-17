@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly TENANT_ID="00000000-0000-0000-0000-000000000001"
+readonly USER_ID="00000000-0000-0000-0000-000000000101"
+readonly CLIENT_ID="00000000-0000-0000-0000-000000000102"
+readonly CLIENT_IDENTIFIER="release-check-client"
+readonly USERNAME="release-check-user"
+readonly PASSWORD="password"
+readonly ENCODED_PASSWORD='{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG'
+readonly REDIRECT_URI="https://client.release-check.invalid/callback"
+readonly CODE_VERIFIER="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"
+
+base_url="${IAM_VERIFY_BASE_URL:?IAM_VERIFY_BASE_URL is required}"
+issuer="${IAM_VERIFY_ISSUER:?IAM_VERIFY_ISSUER is required}"
+postgres_container="${IAM_VERIFY_POSTGRES_CONTAINER:?IAM_VERIFY_POSTGRES_CONTAINER is required}"
+db_name="${IAM_DB_NAME:-iam}"
+db_username="${IAM_DB_USERNAME:-iam}"
+work_dir=""
+
+log() {
+	printf '[authorization-smoke] %s\n' "$*"
+}
+
+fail() {
+	log "ERROR: $*" >&2
+	exit 1
+}
+
+require_command() {
+	command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"
+}
+
+cleanup() {
+	local status=$?
+	trap - EXIT
+	[[ -z "${work_dir}" ]] || rm -rf -- "${work_dir}"
+	exit "${status}"
+}
+
+database() {
+	docker exec -i "${postgres_container}" psql --no-psqlrc --username "${db_username}" \
+		--dbname "${db_name}" --set=ON_ERROR_STOP=1 "$@"
+}
+
+header_value() {
+	local name=$1
+	local file=$2
+	awk -v expected="${name}" '
+		tolower($1) == tolower(expected ":") {
+			sub(/^[^:]*:[[:space:]]*/, "")
+			sub(/\r$/, "")
+			print
+			exit
+		}
+	' "${file}"
+}
+
+html_input_value() {
+	local name=$1
+	local file=$2
+	sed -n "s/.*name=\"${name}\"[^>]*value=\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
+}
+
+query_parameter() {
+	local url=$1
+	local name=$2
+	local query="${url#*\?}"
+	local pair
+	[[ "${query}" != "${url}" ]] || return 1
+	while [[ -n "${query}" ]]; do
+		pair="${query%%&*}"
+		if [[ "${pair%%=*}" == "${name}" ]]; then
+			printf '%s\n' "${pair#*=}"
+			return 0
+		fi
+		[[ "${query}" == *"&"* ]] || break
+		query="${query#*&}"
+	done
+	return 1
+}
+
+decode_jwt_payload() {
+	local token=$1
+	local payload="${token#*.}"
+	payload="${payload%%.*}"
+	case $((${#payload} % 4)) in
+		2) payload="${payload}==" ;;
+		3) payload="${payload}=" ;;
+		1) return 1 ;;
+	esac
+	printf '%s' "${payload}" | tr '_-' '/+' | openssl base64 -d -A
+}
+
+seed_fixture() {
+	database --set=user_id="${USER_ID}" --set=client_id="${CLIENT_ID}" \
+		--set=tenant_id="${TENANT_ID}" --set=username="${USERNAME}" \
+		--set=encoded_password="${ENCODED_PASSWORD}" --set=client_identifier="${CLIENT_IDENTIFIER}" \
+		--set=redirect_uri="${REDIRECT_URI}" >/dev/null <<'SQL'
+BEGIN;
+INSERT INTO users (user_id, tenant_id)
+VALUES (:'user_id', :'tenant_id');
+INSERT INTO user_login_identifiers
+    (tenant_id, user_id, identifier_type, identifier_value, canonical_value)
+VALUES
+    (:'tenant_id', :'user_id', 'username', :'username', :'username');
+INSERT INTO user_password_credentials (tenant_id, user_id, encoded_password)
+VALUES (:'tenant_id', :'user_id', :'encoded_password');
+INSERT INTO oauth_clients
+    (client_id, tenant_id, client_identifier, display_name, client_type, authentication_method)
+VALUES
+    (:'client_id', :'tenant_id', :'client_identifier', 'Release Check Client', 'public', 'none');
+INSERT INTO oauth_client_redirect_uris (tenant_id, client_id, redirect_uri)
+VALUES (:'tenant_id', :'client_id', :'redirect_uri');
+INSERT INTO oauth_client_scopes (tenant_id, client_id, scope)
+VALUES (:'tenant_id', :'client_id', 'openid'), (:'tenant_id', :'client_id', 'profile');
+COMMIT;
+SQL
+}
+
+trap cleanup EXIT
+require_command curl
+require_command docker
+require_command jq
+require_command openssl
+require_command awk
+require_command sed
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/iam-authorization-smoke.XXXXXX")"
+
+cookies="${work_dir}/cookies"
+headers="${work_dir}/headers"
+body="${work_dir}/body"
+token_response="${work_dir}/token-response.json"
+userinfo="${work_dir}/userinfo.json"
+id_payload="${work_dir}/id-token.json"
+client_state="release-check-state"
+nonce="release-check-nonce"
+code_challenge="$(printf '%s' "${CODE_VERIFIER}" | openssl dgst -sha256 -binary \
+	| openssl base64 -A | tr '+/' '-_' | tr -d '=')"
+
+log "Seeding disposable user and public client"
+seed_fixture
+
+log "Checking provider metadata and JWK publication"
+curl --fail --silent --show-error --max-time 10 "${base_url}/.well-known/openid-configuration" \
+	| jq -e --arg issuer "${issuer}" \
+		'.issuer == $issuer and .authorization_endpoint == ($issuer + "/oauth2/authorize") and .token_endpoint == ($issuer + "/oauth2/token")' \
+	>/dev/null || fail "OpenID Provider metadata is invalid"
+curl --fail --silent --show-error --max-time 10 "${base_url}/oauth2/jwks" \
+	| jq -e '.keys | length == 1 and .[0].kty == "RSA" and .[0].alg == "RS256" and (.[0].d | not)' \
+	>/dev/null || fail "Published JWK set is invalid"
+
+log "Starting Authorization Code request"
+status="$(curl --silent --show-error --max-time 10 --output /dev/null --dump-header "${headers}" \
+	--cookie-jar "${cookies}" --write-out '%{http_code}' --get "${base_url}/oauth2/authorize" \
+	--header 'Accept: text/html' --data-urlencode 'response_type=code' \
+	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "redirect_uri=${REDIRECT_URI}" \
+	--data-urlencode 'scope=openid profile' --data-urlencode "state=${client_state}" \
+	--data-urlencode "nonce=${nonce}" --data-urlencode "code_challenge=${code_challenge}" \
+	--data-urlencode 'code_challenge_method=S256')"
+[[ "${status}" == "302" ]] || fail "Authorization request returned HTTP ${status}"
+[[ "$(header_value Location "${headers}")" == */login ]] || fail "Authorization request did not redirect to login"
+
+curl --fail --silent --show-error --max-time 10 --cookie "${cookies}" --cookie-jar "${cookies}" \
+	--header 'Accept: text/html' --output "${body}" "${base_url}/login"
+csrf="$(html_input_value _csrf "${body}")"
+[[ -n "${csrf}" ]] || fail "Login page did not contain a CSRF token"
+
+log "Authenticating the local user"
+status="$(curl --silent --show-error --max-time 10 --output /dev/null --dump-header "${headers}" \
+	--cookie "${cookies}" --cookie-jar "${cookies}" --write-out '%{http_code}' --request POST \
+	--data-urlencode "username=${USERNAME}" --data-urlencode "password=${PASSWORD}" \
+	--data-urlencode "_csrf=${csrf}" "${base_url}/login")"
+[[ "${status}" == "302" ]] || fail "Login returned HTTP ${status}"
+continuation="$(header_value Location "${headers}")"
+[[ "${continuation}" == "${issuer}/oauth2/authorize?"* ]] || fail "Login did not return to the fixed issuer"
+continuation="${continuation#${issuer}}"
+
+curl --fail --silent --show-error --max-time 10 --cookie "${cookies}" --cookie-jar "${cookies}" \
+	--header 'Accept: text/html' --output "${body}" "${base_url}${continuation}"
+consent_state="$(html_input_value state "${body}")"
+[[ -n "${consent_state}" && "${consent_state}" != "${client_state}" ]] \
+	|| fail "Consent page did not contain an independent server state"
+grep -q 'name="scope" value="profile"' "${body}" || fail "Consent page did not request the profile scope"
+
+log "Approving consent and receiving the authorization code"
+status="$(curl --silent --show-error --max-time 10 --output /dev/null --dump-header "${headers}" \
+	--cookie "${cookies}" --cookie-jar "${cookies}" --write-out '%{http_code}' --request POST \
+	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "state=${consent_state}" \
+	--data-urlencode 'scope=profile' "${base_url}/oauth2/authorize")"
+[[ "${status}" == "302" ]] || fail "Consent submission returned HTTP ${status}"
+client_redirect="$(header_value Location "${headers}")"
+[[ "${client_redirect}" == "${REDIRECT_URI}?"* ]] || fail "Consent did not redirect to the registered callback"
+code="$(query_parameter "${client_redirect}" code)"
+returned_state="$(query_parameter "${client_redirect}" state)"
+[[ -n "${code}" && "${returned_state}" == "${client_state}" ]] || fail "Authorization response is incomplete"
+
+log "Checking PKCE failure does not consume the code"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request POST --data-urlencode 'grant_type=authorization_code' \
+	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "code=${code}" \
+	--data-urlencode "redirect_uri=${REDIRECT_URI}" --data-urlencode "code_verifier=wrong-${CODE_VERIFIER}" \
+	"${base_url}/oauth2/token")"
+[[ "${status}" == "400" ]] && jq -e '.error == "invalid_grant"' "${body}" >/dev/null \
+	|| fail "Incorrect PKCE verifier was not rejected"
+
+log "Exchanging the code with the correct verifier"
+status="$(curl --silent --show-error --max-time 10 --output "${token_response}" --write-out '%{http_code}' \
+	--request POST --data-urlencode 'grant_type=authorization_code' \
+	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "code=${code}" \
+	--data-urlencode "redirect_uri=${REDIRECT_URI}" --data-urlencode "code_verifier=${CODE_VERIFIER}" \
+	"${base_url}/oauth2/token")"
+[[ "${status}" == "200" ]] || fail "Token exchange returned HTTP ${status}"
+jq -e '.token_type == "Bearer" and .expires_in > 0 and (.scope | split(" ") | sort == ["openid", "profile"]) and (.refresh_token | not)' \
+	"${token_response}" >/dev/null || fail "Token response is invalid"
+access_token="$(jq -er '.access_token' "${token_response}")"
+id_token="$(jq -er '.id_token' "${token_response}")"
+decode_jwt_payload "${id_token}" >"${id_payload}" || fail "ID token payload is not valid base64url"
+jq -e --arg issuer "${issuer}" --arg subject "${USER_ID}" --arg audience "${CLIENT_IDENTIFIER}" \
+	--arg nonce "${nonce}" \
+	'.iss == $issuer and .sub == $subject and (.aud == $audience or .aud == [$audience]) and .nonce == $nonce' \
+	"${id_payload}" >/dev/null || fail "ID token claims are invalid"
+
+status="$(curl --silent --show-error --max-time 10 --output "${userinfo}" --write-out '%{http_code}' \
+	--header "Authorization: Bearer ${access_token}" "${base_url}/userinfo")"
+[[ "${status}" == "200" ]] && jq -e --arg subject "${USER_ID}" '.sub == $subject' "${userinfo}" >/dev/null \
+	|| fail "Issued access token was not accepted by UserInfo"
+
+log "Replaying the code and checking access-token invalidation"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request POST --data-urlencode 'grant_type=authorization_code' \
+	--data-urlencode "client_id=${CLIENT_IDENTIFIER}" --data-urlencode "code=${code}" \
+	--data-urlencode "redirect_uri=${REDIRECT_URI}" --data-urlencode "code_verifier=${CODE_VERIFIER}" \
+	"${base_url}/oauth2/token")"
+[[ "${status}" == "400" ]] && jq -e '.error == "invalid_grant"' "${body}" >/dev/null \
+	|| fail "Authorization code replay was not rejected"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header "Authorization: Bearer ${access_token}" "${base_url}/userinfo")"
+[[ "${status}" == "401" ]] || fail "Replayed authorization left the access token active"
+
+token_state="$(database --tuples-only --no-align --command "
+	SELECT string_agg(token_type || ':' || (invalidated_at IS NOT NULL)::text, ',' ORDER BY token_type)
+	FROM oauth_authorization_tokens WHERE client_id = '${CLIENT_ID}'")"
+[[ "${token_state}" == "access_token:true,authorization_code:true,id_token:false" ]] \
+	|| fail "Persisted token state is invalid: ${token_state}"
+consent_count="$(database --tuples-only --no-align --command \
+	"SELECT count(*) FROM oauth_authorization_consent_authorities WHERE client_id = '${CLIENT_ID}'")"
+[[ "${consent_count}" == "2" ]] || fail "Expected two persisted consent authorities"
+password_encoding="$(database --tuples-only --no-align --command \
+	"SELECT split_part(encoded_password, '}', 1) || '}' FROM user_password_credentials WHERE user_id = '${USER_ID}'")"
+[[ "${password_encoding}" == "{pbkdf2@SpringSecurity_v5_8}" ]] \
+	|| fail "Legacy password hash was not upgraded during native authentication"
+
+log "Authorization Code + PKCE + OIDC flow passed"

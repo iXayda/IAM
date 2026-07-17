@@ -16,7 +16,7 @@ All notable changes to this project will be documented in this file.
 - Fixed authorization-server issuer and persistent RSA-3072 signing keys with encrypted private material and restart-stable key IDs.
 - GitHub Actions release verification and Linux Native artifacts.
 - Production configuration, backup, rollback, and pilot acceptance guidance.
-- Automated release verification for tests, Native Image, schema state, probes, dependency recovery, and graceful shutdown.
+- Automated release verification for tests, Native Image, schema state, OAuth/OIDC flows, probes, dependency recovery, and graceful shutdown.
 - Spring Boot 4.1 application baseline with Java 21 and GraalVM Native Image support.
 - Health and root probe endpoints, tagged HTTP latency histograms, trace-correlated logs, sampled exemplars, and an optional local LGTM stack.
 - Prometheus alerts for availability, HTTP errors and latency, Redis-backed security dependencies, and login throttling surges.
