@@ -70,6 +70,11 @@ class OAuthClientSchemaIntegrationTests extends ApplicationIntegrationTest {
 		assertThat(count("oauth_client_post_logout_redirect_uris")).isOne();
 		assertThat(count("oauth_client_scopes")).isEqualTo(2);
 		assertThat(this.jdbcClient.sql("""
+				SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
+				FROM oauth_clients
+				ORDER BY client_identifier
+				""").query(String.class).list()).containsOnly("false|3600");
+		assertThat(this.jdbcClient.sql("""
 				SELECT collation_name
 				FROM information_schema.columns
 				WHERE table_schema = current_schema()
@@ -141,6 +146,27 @@ class OAuthClientSchemaIntegrationTests extends ApplicationIntegrationTest {
 			.update()).isInstanceOf(DataIntegrityViolationException.class);
 
 		insertPublicClient(FIRST_CLIENT_ID, TenantId.DEFAULT.value(), "aggregate-values");
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				UPDATE oauth_clients SET refresh_tokens_enabled = TRUE WHERE client_id = :clientId
+				""").param("clientId", FIRST_CLIENT_ID).update())
+			.isInstanceOf(DataIntegrityViolationException.class);
+		insertConfidentialClient(SECOND_CLIENT_ID, SECOND_TENANT_ID, "refresh-client", ENCODED_SECRET, CREATED_AT,
+				CREATED_AT.plusSeconds(7_776_000));
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				UPDATE oauth_clients
+				SET refresh_tokens_enabled = TRUE, refresh_token_ttl_seconds = access_token_ttl_seconds
+				WHERE client_id = :clientId
+				""").param("clientId", SECOND_CLIENT_ID).update())
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThat(this.jdbcClient.sql("""
+				UPDATE oauth_clients
+				SET refresh_tokens_enabled = TRUE, refresh_token_ttl_seconds = 3600
+				WHERE client_id = :clientId
+				""").param("clientId", SECOND_CLIENT_ID).update()).isOne();
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				UPDATE oauth_clients SET refresh_token_ttl_seconds = 2592001 WHERE client_id = :clientId
+				""").param("clientId", SECOND_CLIENT_ID).update())
+			.isInstanceOf(DataIntegrityViolationException.class);
 		assertThatThrownBy(() -> insertRedirect(TenantId.DEFAULT.value(), FIRST_CLIENT_ID,
 				"http://client.example.test/callback"))
 			.isInstanceOf(DataIntegrityViolationException.class);

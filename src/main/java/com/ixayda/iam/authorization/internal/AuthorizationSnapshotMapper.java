@@ -184,15 +184,15 @@ final class AuthorizationSnapshotMapper {
 
 	private static Map<AuthorizationTokenKind, AuthorizationTokenSnapshot> tokens(
 			OAuth2Authorization authorization) {
-		if (authorization.getRefreshToken() != null || authorization.getToken(OAuth2DeviceCode.class) != null
-				|| authorization.getToken(OAuth2UserCode.class) != null
-				|| authorization.getToken(OAuth2RefreshToken.class) != null) {
-			throw new IllegalArgumentException("Refresh, device, and user code tokens are not supported");
+		if (authorization.getToken(OAuth2DeviceCode.class) != null
+				|| authorization.getToken(OAuth2UserCode.class) != null) {
+			throw new IllegalArgumentException("Device and user code tokens are not supported");
 		}
 		Map<AuthorizationTokenKind, AuthorizationTokenSnapshot> tokens =
 				new java.util.EnumMap<>(AuthorizationTokenKind.class);
 		addCode(tokens, authorization.getToken(OAuth2AuthorizationCode.class));
 		addAccessToken(tokens, authorization.getAccessToken());
+		addRefreshToken(tokens, authorization.getRefreshToken());
 		addIdToken(tokens, authorization.getToken(OidcIdToken.class));
 		return tokens;
 	}
@@ -204,14 +204,18 @@ final class AuthorizationSnapshotMapper {
 		}
 		AuthorizationTokenSnapshot code = tokens.get(AuthorizationTokenKind.AUTHORIZATION_CODE);
 		AuthorizationTokenSnapshot accessToken = tokens.get(AuthorizationTokenKind.ACCESS_TOKEN);
+		AuthorizationTokenSnapshot refreshToken = tokens.get(AuthorizationTokenKind.REFRESH_TOKEN);
 		AuthorizationTokenSnapshot idToken = tokens.get(AuthorizationTokenKind.ID_TOKEN);
 		if (accessToken != null) {
 			if (code == null || !code.invalidated()) {
 				throw new IllegalArgumentException("Issued access tokens require an invalidated authorization code");
 			}
-			if (!accessToken.scopes().equals(authorizedScopes)) {
-				throw new IllegalArgumentException("Access token scopes must equal the authorized scopes");
+			if (!authorizedScopes.containsAll(accessToken.scopes())) {
+				throw new IllegalArgumentException("Access token scopes must be a subset of the authorized scopes");
 			}
+		}
+		if (refreshToken != null && accessToken == null) {
+			throw new IllegalArgumentException("Refresh tokens require an issued access token");
 		}
 		if (idToken != null && (accessToken == null || !authorizedScopes.contains("openid"))) {
 			throw new IllegalArgumentException("ID tokens require an OpenID access token authorization");
@@ -252,6 +256,22 @@ final class AuthorizationSnapshotMapper {
 		tokens.put(AuthorizationTokenKind.ACCESS_TOKEN,
 				new AuthorizationTokenSnapshot(value.getTokenValue(), issuedAt, expiresAt,
 					token.isInvalidated(), tokenType, value.getScopes(), claims));
+	}
+
+	private static void addRefreshToken(Map<AuthorizationTokenKind, AuthorizationTokenSnapshot> tokens,
+			OAuth2Authorization.Token<OAuth2RefreshToken> token) {
+		if (token == null) {
+			return;
+		}
+		validateMetadata(token, false);
+		OAuth2RefreshToken value = token.getToken();
+		validateToken(value.getTokenValue(), value.getIssuedAt(), value.getExpiresAt());
+		Instant issuedAt = AuthorizationTime.toDatabasePrecision(value.getIssuedAt());
+		Instant expiresAt = AuthorizationTime.toDatabasePrecision(value.getExpiresAt());
+		validateToken(value.getTokenValue(), issuedAt, expiresAt);
+		tokens.put(AuthorizationTokenKind.REFRESH_TOKEN,
+				new AuthorizationTokenSnapshot(value.getTokenValue(), issuedAt, expiresAt,
+					token.isInvalidated(), null, Set.of(), null));
 	}
 
 	private static void addIdToken(Map<AuthorizationTokenKind, AuthorizationTokenSnapshot> tokens,
@@ -322,6 +342,9 @@ final class AuthorizationSnapshotMapper {
 			.clientId(snapshot.clientIdentifier())
 			.clientAuthenticationMethod(org.springframework.security.oauth2.core.ClientAuthenticationMethod.NONE)
 			.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE);
+		if (snapshot.tokens().containsKey(AuthorizationTokenKind.REFRESH_TOKEN)) {
+			registeredClient.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
+		}
 		if (snapshot.redirectUri() != null) {
 			registeredClient.redirectUri(snapshot.redirectUri());
 		}
@@ -347,6 +370,10 @@ final class AuthorizationSnapshotMapper {
 		OAuth2Authorization.Token<OAuth2AccessToken> access = original.getAccessToken();
 		if (access != null) {
 			builder.token(access.getToken(), metadata -> metadata.putAll(access.getMetadata()));
+		}
+		OAuth2Authorization.Token<OAuth2RefreshToken> refresh = original.getRefreshToken();
+		if (refresh != null) {
+			builder.token(refresh.getToken(), metadata -> metadata.putAll(refresh.getMetadata()));
 		}
 		OAuth2Authorization.Token<OidcIdToken> id = original.getToken(OidcIdToken.class);
 		if (id != null) {

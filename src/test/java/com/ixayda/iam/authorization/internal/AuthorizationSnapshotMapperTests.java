@@ -52,6 +52,8 @@ class AuthorizationSnapshotMapperTests {
 				"exp", ISSUED_AT.plusSeconds(600));
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, "access-token",
 				ISSUED_AT, ISSUED_AT.plusSeconds(600), Set.of("openid"));
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken("refresh-token", ISSUED_AT,
+				ISSUED_AT.plusSeconds(3600));
 		OidcIdToken idToken = new OidcIdToken("id-token", ISSUED_AT, ISSUED_AT.plusSeconds(600), idClaims);
 		OAuth2AuthorizationCode code = new OAuth2AuthorizationCode("authorization-code", ISSUED_AT.minusSeconds(30),
 				ISSUED_AT.plusSeconds(300));
@@ -62,6 +64,7 @@ class AuthorizationSnapshotMapperTests {
 				metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, accessClaims);
 				metadata.put(OAuth2TokenFormat.class.getName(), OAuth2TokenFormat.SELF_CONTAINED.getValue());
 			})
+			.refreshToken(refreshToken)
 			.token(idToken, metadata -> metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, idClaims))
 			.invalidate(code)
 			.build();
@@ -71,7 +74,8 @@ class AuthorizationSnapshotMapperTests {
 		assertThat(snapshot.clientId()).isEqualTo(CLIENT_ID);
 		assertThat(snapshot.requestParameters()).containsEntry("code_challenge", CODE_CHALLENGE);
 		assertThat(snapshot.tokens()).containsOnlyKeys(AuthorizationTokenKind.AUTHORIZATION_CODE,
-				AuthorizationTokenKind.ACCESS_TOKEN, AuthorizationTokenKind.ID_TOKEN);
+				AuthorizationTokenKind.ACCESS_TOKEN, AuthorizationTokenKind.REFRESH_TOKEN,
+				AuthorizationTokenKind.ID_TOKEN);
 		assertThat(snapshot.tokens().get(AuthorizationTokenKind.ACCESS_TOKEN).claims()).isEqualTo(accessClaims);
 	}
 
@@ -101,7 +105,7 @@ class AuthorizationSnapshotMapperTests {
 	}
 
 	@Test
-	void rejectsArbitraryPrincipalsAndUnsupportedTokens() {
+	void rejectsArbitraryPrincipalsAndUnsupportedTokenState() {
 		UsernamePasswordAuthenticationToken arbitraryPrincipal = UsernamePasswordAuthenticationToken.authenticated(
 				USER_ID.toString(), null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
 		OAuth2Authorization unsupportedPrincipal = baseAuthorization(authorizationRequest())
@@ -129,7 +133,7 @@ class AuthorizationSnapshotMapperTests {
 			.hasMessage("Authorization principal authentication factor is required");
 		assertThatThrownBy(() -> this.mapper.toSnapshot(refreshToken))
 			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessage("Refresh, device, and user code tokens are not supported");
+			.hasMessage("Refresh tokens require an issued access token");
 		assertThatThrownBy(() -> this.mapper.toSnapshot(customToken))
 			.isInstanceOf(IllegalArgumentException.class)
 			.hasMessage("Authorization contains unsupported token state");
@@ -190,7 +194,7 @@ class AuthorizationSnapshotMapperTests {
 			.hasMessage("Issued access tokens require an invalidated authorization code");
 		assertThatThrownBy(() -> this.mapper.toSnapshot(overScoped))
 			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessage("Access token scopes must equal the authorized scopes");
+			.hasMessage("Access token scopes must be a subset of the authorized scopes");
 	}
 
 	private static OAuth2Authorization.Builder baseAuthorization(OAuth2AuthorizationRequest request) {
@@ -214,6 +218,7 @@ class AuthorizationSnapshotMapperTests {
 			.clientId("mapper-test-client")
 			.clientAuthenticationMethod(org.springframework.security.oauth2.core.ClientAuthenticationMethod.NONE)
 			.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+			.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
 			.redirectUri("https://client.example.test/callback")
 			.scope("openid")
 			.build();

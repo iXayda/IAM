@@ -33,6 +33,7 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
@@ -389,6 +390,17 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	private void synchronizeTokens(AuthorizationSnapshot snapshot,
 			Map<AuthorizationTokenKind, StoredToken> storedTokens,
 			Map<AuthorizationTokenKind, DesiredToken> desiredTokens, Instant now) {
+		StoredToken storedRefresh = storedTokens.get(AuthorizationTokenKind.REFRESH_TOKEN);
+		DesiredToken desiredRefresh = desiredTokens.get(AuthorizationTokenKind.REFRESH_TOKEN);
+		boolean refreshing = storedRefresh != null && desiredRefresh != null && !storedRefresh.invalidated()
+				&& !desiredRefresh.invalidated() && !hasSamePayload(storedRefresh, desiredRefresh);
+		if (refreshing) {
+			StoredToken storedAccess = storedTokens.get(AuthorizationTokenKind.ACCESS_TOKEN);
+			DesiredToken desiredAccess = desiredTokens.get(AuthorizationTokenKind.ACCESS_TOKEN);
+			if (storedAccess == null || desiredAccess == null || hasSamePayload(storedAccess, desiredAccess)) {
+				throw new IllegalArgumentException("Refresh-token rotation requires a new access token");
+			}
+		}
 		for (Map.Entry<AuthorizationTokenKind, StoredToken> stored : storedTokens.entrySet()) {
 			DesiredToken desired = desiredTokens.get(stored.getKey());
 			if (desired == null) {
@@ -396,6 +408,11 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 					throw new IllegalArgumentException("Persisted protocol tokens cannot be removed from an authorization");
 				}
 				deleteToken(stored.getValue());
+				continue;
+			}
+			if (refreshing && isRenewable(stored.getKey()) && !hasSamePayload(stored.getValue(), desired)) {
+				deleteToken(stored.getValue());
+				insertToken(snapshot, stored.getKey(), desired, now);
 				continue;
 			}
 			updateToken(stored.getValue(), desired, now);
@@ -462,11 +479,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	}
 
 	private void updateToken(StoredToken stored, DesiredToken desired, Instant now) {
-		if (!java.security.MessageDigest.isEqual(stored.digest(), this.tokenCipher.digest(desired.value()))
-				|| !stored.issuedAt().equals(desired.issuedAt()) || !stored.expiresAt().equals(desired.expiresAt())
-				|| !Objects.equals(stored.accessTokenType(), desired.accessTokenType())
-				|| !stored.scopes().equals(desired.scopes())
-				|| !Objects.equals(stored.claims(), desired.claims())) {
+		if (!hasSamePayload(stored, desired)) {
 			throw new IllegalArgumentException("Persisted authorization token payload is immutable");
 		}
 		if (stored.invalidated() && !desired.invalidated()) {
@@ -490,11 +503,27 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		}
 	}
 
+	private boolean hasSamePayload(StoredToken stored, DesiredToken desired) {
+		return java.security.MessageDigest.isEqual(stored.digest(), this.tokenCipher.digest(desired.value()))
+				&& stored.issuedAt().equals(desired.issuedAt()) && stored.expiresAt().equals(desired.expiresAt())
+				&& Objects.equals(stored.accessTokenType(), desired.accessTokenType())
+				&& stored.scopes().equals(desired.scopes()) && Objects.equals(stored.claims(), desired.claims());
+	}
+
+	private static boolean isRenewable(AuthorizationTokenKind kind) {
+		return kind == AuthorizationTokenKind.ACCESS_TOKEN || kind == AuthorizationTokenKind.REFRESH_TOKEN
+				|| kind == AuthorizationTokenKind.ID_TOKEN;
+	}
+
 	private void deleteToken(StoredToken token) {
-		this.jdbcClient.sql("DELETE FROM oauth_authorization_tokens WHERE token_id = :tokenId AND version = :version")
+		int affected = this.jdbcClient
+			.sql("DELETE FROM oauth_authorization_tokens WHERE token_id = :tokenId AND version = :version")
 			.param("tokenId", token.tokenId())
 			.param("version", token.version())
 			.update();
+		if (affected != 1) {
+			throw concurrentUpdate();
+		}
 	}
 
 	private StoredAuthorization lock(UUID authorizationId) {
@@ -549,10 +578,14 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				stored.authenticatedAt());
 		AuthorizationUserAuthentication authentication = AuthorizationUserAuthentication.authenticated(principal,
 				loadPrincipalAuthorities(stored).stream().map(authority -> storedAuthority(authority, principal)).toList());
+		Map<AuthorizationTokenKind, StoredToken> tokens = loadTokens(stored);
 		RegisteredClient.Builder registeredClient = RegisteredClient.withId(stored.clientId().toString())
 			.clientId(stored.clientIdentifier())
 			.clientAuthenticationMethod(org.springframework.security.oauth2.core.ClientAuthenticationMethod.NONE)
 			.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE);
+		if (tokens.containsKey(AuthorizationTokenKind.REFRESH_TOKEN)) {
+			registeredClient.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
+		}
 		if (stored.redirectUri() != null) {
 			registeredClient.redirectUri(stored.redirectUri());
 		}
@@ -566,7 +599,6 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 			.attribute(OAuth2AuthorizationRequest.class.getName(), request)
 			.attribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE, stored.version());
 
-		Map<AuthorizationTokenKind, StoredToken> tokens = loadTokens(stored);
 		StoredToken state = tokens.get(AuthorizationTokenKind.STATE);
 		if (state != null) {
 			builder.attribute(OAuth2ParameterNames.STATE, reveal(stored, state));
@@ -589,6 +621,13 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, access.claims());
 				metadata.put(OAuth2TokenFormat.class.getName(), OAuth2TokenFormat.SELF_CONTAINED.getValue());
 			});
+		}
+		StoredToken refresh = tokens.get(AuthorizationTokenKind.REFRESH_TOKEN);
+		if (refresh != null) {
+			OAuth2RefreshToken value = new OAuth2RefreshToken(reveal(stored, refresh), refresh.issuedAt(),
+					refresh.expiresAt());
+			builder.token(value, metadata -> metadata.put(OAuth2Authorization.Token.INVALIDATED_METADATA_NAME,
+					refresh.invalidated()));
 		}
 		StoredToken id = tokens.get(AuthorizationTokenKind.ID_TOKEN);
 		if (id != null) {
@@ -750,6 +789,9 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		}
 		if (OAuth2TokenType.ACCESS_TOKEN.equals(tokenType)) {
 			return AuthorizationTokenKind.ACCESS_TOKEN;
+		}
+		if (OAuth2TokenType.REFRESH_TOKEN.equals(tokenType)) {
+			return AuthorizationTokenKind.REFRESH_TOKEN;
 		}
 		if (OidcParameterNames.ID_TOKEN.equals(tokenType.getValue())) {
 			return AuthorizationTokenKind.ID_TOKEN;

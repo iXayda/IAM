@@ -54,6 +54,12 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 	private static final UUID THIRD_TOKEN_ID =
 			UUID.fromString("019cbb8a-50a8-7a40-b1f9-cde6d1e4300c");
 
+	private static final UUID FOURTH_TOKEN_ID =
+			UUID.fromString("019cbb8a-50a8-7a40-b1f9-cde6d1e4300d");
+
+	private static final UUID FIFTH_TOKEN_ID =
+			UUID.fromString("019cbb8a-50a8-7a40-b1f9-cde6d1e4300e");
+
 	private static final OffsetDateTime ISSUED_AT =
 			OffsetDateTime.of(2026, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
 
@@ -237,12 +243,32 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 				SECOND_TOKEN_ID, "id_token", bytes(32, (byte) 15), bytes(12, (byte) 16),
 				bytes(17, (byte) 17), null, "null"))
 			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertToken(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_AUTHORIZATION_ID,
+				FOURTH_TOKEN_ID, "refresh_token", bytes(32, (byte) 22), bytes(12, (byte) 23),
+				bytes(17, (byte) 24), null, "{}"))
+			.isInstanceOf(DataIntegrityViolationException.class);
 		assertThatThrownBy(() -> insertToken(SECOND_TENANT_ID, SECOND_CLIENT_ID, SECOND_AUTHORIZATION_ID,
 				SECOND_TOKEN_ID, "state", bytes(32, (byte) 18), bytes(12, (byte) 8),
 				bytes(17, (byte) 19), null, null))
 			.isInstanceOf(DataIntegrityViolationException.class);
 		insertToken(SECOND_TENANT_ID, SECOND_CLIENT_ID, SECOND_AUTHORIZATION_ID, THIRD_TOKEN_ID, "state",
 				bytes(32, (byte) 20), bytes(12, (byte) 8), bytes(17, (byte) 21), null, null, "test-v2");
+		insertToken(SECOND_TENANT_ID, SECOND_CLIENT_ID, SECOND_AUTHORIZATION_ID, FIFTH_TOKEN_ID, "refresh_token",
+				bytes(32, (byte) 25), bytes(12, (byte) 26), bytes(17, (byte) 27), null, null);
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				UPDATE oauth_authorization_tokens
+				SET access_token_type = 'Bearer'
+				WHERE token_id = :tokenId
+				""").param("tokenId", FIFTH_TOKEN_ID).update())
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertTokenScope(SECOND_TENANT_ID, SECOND_CLIENT_ID, SECOND_AUTHORIZATION_ID,
+				FIFTH_TOKEN_ID, "openid"))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertToken(SECOND_TENANT_ID, SECOND_CLIENT_ID, SECOND_AUTHORIZATION_ID,
+				FOURTH_TOKEN_ID, "refresh_token", bytes(32, (byte) 28), bytes(12, (byte) 29),
+				bytes(17, (byte) 30), null, null))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThat(count("oauth_authorization_tokens")).isEqualTo(3);
 
 		this.jdbcClient.sql("""
 				DELETE FROM oauth_authorization_scopes

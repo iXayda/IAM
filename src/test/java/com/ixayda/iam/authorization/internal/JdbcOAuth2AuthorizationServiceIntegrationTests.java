@@ -38,6 +38,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
@@ -140,7 +141,7 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 	}
 
 	@Test
-	void roundTripsTheOfficialStateCodeAccessAndIdTokenLifecycle() {
+	void roundTripsAndRotatesTheOfficialTokenLifecycle() throws Exception {
 		UUID authorizationId = UUID.randomUUID();
 		OAuth2Authorization pending = pendingAuthorization(authorizationId, "consent-state");
 
@@ -178,6 +179,8 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 		Map<String, Object> accessClaims = Map.of("sub", USER_ID.toString(), "iat", tokenIssuedAt);
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, "access-token",
 				tokenIssuedAt, tokenIssuedAt.plusSeconds(600), Set.of("openid", "api.read"));
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken("refresh-token", tokenIssuedAt,
+				tokenIssuedAt.plusSeconds(3600));
 		Map<String, Object> idClaims = Map.of("sub", USER_ID.toString(), "aud", List.of(CLIENT_IDENTIFIER),
 				"iat", tokenIssuedAt, "exp", tokenIssuedAt.plusSeconds(600), "nonce", "oidc-nonce", "sid",
 				SESSION_ID.toString(), "auth_time", Date.from(AUTHENTICATED_AT));
@@ -188,6 +191,7 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 				metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, accessClaims);
 				metadata.put(OAuth2TokenFormat.class.getName(), OAuth2TokenFormat.SELF_CONTAINED.getValue());
 			})
+			.refreshToken(refreshToken)
 			.token(idToken, metadata -> metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, idClaims))
 			.invalidate(persistedCode)
 			.build();
@@ -202,23 +206,78 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 		assertThat(stored.getAccessToken().getClaims()).isEqualTo(accessClaims);
 		assertThat(stored.getAccessToken().<String>getMetadata(OAuth2TokenFormat.class.getName()))
 			.isEqualTo(OAuth2TokenFormat.SELF_CONTAINED.getValue());
+		assertThat(stored.getRefreshToken().getToken()).isEqualTo(refreshToken);
 		assertThat(stored.getToken(OidcIdToken.class).getToken().getClaims()).isEqualTo(idClaims);
 		assertThat(this.authorizations.findByToken("access-token", OAuth2TokenType.ACCESS_TOKEN)).isEqualTo(stored);
+		assertThat(this.authorizations.findByToken("refresh-token", OAuth2TokenType.REFRESH_TOKEN)).isEqualTo(stored);
 		assertThat(this.authorizations.findByToken("id-token",
 				new OAuth2TokenType(OidcParameterNames.ID_TOKEN))).isEqualTo(stored);
 		assertThat(this.authorizations.findByToken("access-token", null)).isEqualTo(stored);
 		assertThat(this.authorizations.findById(authorizationId.toString())).isEqualTo(stored);
 		assertProtected("authorization-code", "authorization_code");
 		assertProtected("access-token", "access_token");
+		assertProtected("refresh-token", "refresh_token");
 		assertProtected("id-token", "id_token");
 
-		OAuth2AccessToken persistedAccessToken = stored.getAccessToken().getToken();
-		this.authorizations.save(OAuth2Authorization.from(stored).invalidate(persistedAccessToken).build());
+		OAuth2Authorization staleBeforeRotation = this.authorizations.findByToken("refresh-token",
+				OAuth2TokenType.REFRESH_TOKEN);
+		Instant rotatedAt = AuthorizationTime.toDatabasePrecision(Instant.now());
+		OAuth2AccessToken uncoordinatedAccess = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
+				"uncoordinated-access-token", rotatedAt, rotatedAt.plusSeconds(600), Set.of("openid"));
+		assertThatThrownBy(() -> this.authorizations.save(OAuth2Authorization.from(stored)
+			.token(uncoordinatedAccess, metadata -> {
+				metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME,
+						Map.of("sub", USER_ID.toString(), "iat", rotatedAt));
+				metadata.put(OAuth2TokenFormat.class.getName(), OAuth2TokenFormat.SELF_CONTAINED.getValue());
+			})
+			.build()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessage("Persisted authorization token payload is immutable");
+		assertThat(this.authorizations.findByToken("access-token", OAuth2TokenType.ACCESS_TOKEN)).isNotNull();
+
+		OAuth2Authorization firstRotation = rotate(stored, "first-rotated", rotatedAt);
+		OAuth2Authorization secondRotation = rotate(staleBeforeRotation, "second-rotated", rotatedAt);
+		CountDownLatch rotationStart = new CountDownLatch(1);
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<Boolean> firstResult = executor.submit(() -> rotate(firstRotation, rotationStart));
+			Future<Boolean> secondResult = executor.submit(() -> rotate(secondRotation, rotationStart));
+			rotationStart.countDown();
+
+			assertThat(List.of(firstResult.get(), secondResult.get())).containsExactlyInAnyOrder(true, false);
+		}
+
+		assertThat(this.authorizations.findByToken("access-token", OAuth2TokenType.ACCESS_TOKEN)).isNull();
+		assertThat(this.authorizations.findByToken("refresh-token", OAuth2TokenType.REFRESH_TOKEN)).isNull();
+		assertThat(this.authorizations.findByToken("id-token",
+				new OAuth2TokenType(OidcParameterNames.ID_TOKEN))).isNull();
+		OAuth2Authorization storedRotation = this.authorizations.findByToken("first-rotated-refresh-token",
+				OAuth2TokenType.REFRESH_TOKEN);
+		String rotationPrefix = "first-rotated";
+		if (storedRotation == null) {
+			storedRotation = this.authorizations.findByToken("second-rotated-refresh-token",
+					OAuth2TokenType.REFRESH_TOKEN);
+			rotationPrefix = "second-rotated";
+		}
+		assertThat(storedRotation.<Long>getAttribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE)).isEqualTo(3);
+		assertThat(storedRotation.getAccessToken().getToken().getScopes()).containsExactly("openid");
+		assertThat(storedRotation.getRefreshToken().getToken().getTokenValue())
+			.isEqualTo(rotationPrefix + "-refresh-token");
+		assertThat(storedRotation.getToken(OidcIdToken.class).getToken().getTokenValue())
+			.isEqualTo(rotationPrefix + "-id-token");
+		assertThat(tokenCount(authorizationId, "access_token")).isOne();
+		assertThat(tokenCount(authorizationId, "refresh_token")).isOne();
+		assertThat(tokenCount(authorizationId, "id_token")).isOne();
+		assertProtected(rotationPrefix + "-refresh-token", "refresh_token");
+
+		OAuth2RefreshToken persistedRefreshToken = storedRotation.getRefreshToken().getToken();
+		this.authorizations
+			.save(OAuth2Authorization.from(storedRotation).invalidate(persistedRefreshToken).build());
 		OAuth2Authorization replayed = this.authorizations.findByToken("authorization-code",
 				new OAuth2TokenType(OAuth2ParameterNames.CODE));
-		assertThat(replayed.<Long>getAttribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE)).isEqualTo(3);
+		assertThat(replayed.<Long>getAttribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE)).isEqualTo(4);
 		assertThat(replayed.getToken(OAuth2AuthorizationCode.class).isInvalidated()).isTrue();
 		assertThat(replayed.getAccessToken().isInvalidated()).isTrue();
+		assertThat(replayed.getRefreshToken().isInvalidated()).isTrue();
 		assertThat(scopesGrantedAt(authorizationId)).isEqualTo(scopesGrantedAt);
 
 		this.authorizations.remove(replayed);
@@ -389,6 +448,18 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 		}
 	}
 
+	private boolean rotate(OAuth2Authorization authorization, CountDownLatch start) throws InterruptedException {
+		start.await();
+		try {
+			this.authorizations.save(authorization);
+			return true;
+		}
+		catch (OAuth2AuthenticationException exception) {
+			assertThat(exception.getError().getErrorCode()).isEqualTo("invalid_grant");
+			return false;
+		}
+	}
+
 	private OAuth2Authorization pendingAuthorization(UUID authorizationId, String state) {
 		return baseAuthorization(authorizationId)
 			.attribute(OAuth2ParameterNames.STATE, state)
@@ -409,6 +480,26 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 			.authorizedScopes(Set.of("openid", "api.read"))
 			.token(code)
 			.attributes(attributes -> attributes.remove(OAuth2ParameterNames.STATE))
+			.build();
+	}
+
+	private static OAuth2Authorization rotate(OAuth2Authorization current, String prefix, Instant issuedAt) {
+		Map<String, Object> accessClaims = Map.of("sub", USER_ID.toString(), "iat", issuedAt);
+		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
+				prefix + "-access-token", issuedAt, issuedAt.plusSeconds(600), Set.of("openid"));
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken(prefix + "-refresh-token", issuedAt,
+				issuedAt.plusSeconds(3600));
+		Map<String, Object> idClaims = Map.of("sub", USER_ID.toString(), "aud", List.of(CLIENT_IDENTIFIER),
+				"iat", issuedAt, "exp", issuedAt.plusSeconds(600), "sid", SESSION_ID.toString(), "auth_time",
+				Date.from(AUTHENTICATED_AT));
+		OidcIdToken idToken = new OidcIdToken(prefix + "-id-token", issuedAt, issuedAt.plusSeconds(600), idClaims);
+		return OAuth2Authorization.from(current)
+			.token(accessToken, metadata -> {
+				metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, accessClaims);
+				metadata.put(OAuth2TokenFormat.class.getName(), OAuth2TokenFormat.SELF_CONTAINED.getValue());
+			})
+			.refreshToken(refreshToken)
+			.token(idToken, metadata -> metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, idClaims))
 			.build();
 	}
 

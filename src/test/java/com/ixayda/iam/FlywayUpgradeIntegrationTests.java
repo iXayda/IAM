@@ -17,6 +17,8 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
 	private static final UUID USER_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742902");
 
+	private static final UUID CLIENT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742903");
+
 	@Autowired
 	private DataSource dataSource;
 
@@ -30,13 +32,45 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalData(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(9);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(10);
 
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(12);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(13);
 			assertThat(count(jdbc, schema, "tenants")).isEqualTo(2);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(identifier(jdbc, schema)).isEqualTo("Alice@example.com|alice@example.com");
+			assertThat(current.migrate().migrationsExecuted).isZero();
+		}
+		finally {
+			jdbc.sql("DROP SCHEMA IF EXISTS " + schema + " CASCADE").update();
+		}
+	}
+
+	@Test
+	void upgradesExistingClientsWithRefreshTokensDisabled() {
+		String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		JdbcClient jdbc = JdbcClient.create(this.dataSource);
+		try {
+			Flyway historical = flyway(schema, "12");
+			assertThat(historical.migrate().migrationsExecuted).isEqualTo(12);
+			jdbc.sql("""
+					INSERT INTO %s.oauth_clients
+					    (client_id, tenant_id, client_identifier, display_name, client_type,
+					     authentication_method)
+					VALUES (:clientId, '00000000-0000-0000-0000-000000000001',
+					        'upgrade-client', 'Upgrade Client', 'public', 'none')
+					""".formatted(schema)).param("clientId", CLIENT_ID).update();
+
+			Flyway current = flyway(schema, null);
+			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(jdbc.sql("""
+					SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
+					FROM %s.oauth_clients
+					WHERE client_id = :clientId
+					""".formatted(schema)).param("clientId", CLIENT_ID).query(String.class).single())
+				.isEqualTo("false|3600");
+			assertThat(current.validateWithResult().validationSuccessful).isTrue();
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(13);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {

@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Tenant-bound local password login for authorization requests with CSRF protection and issuer-bound redirects.
+- Encrypted current refresh-token persistence with atomic access, refresh, and ID token rotation.
 - Explicit OAuth 2.0 and OpenID Connect endpoint security with public provider metadata and JWK discovery.
 - Tenant-owned web OAuth client constraints for identifiers, HTTPS callbacks, scopes, secrets, and token lifetimes.
 - Tenant-scoped OAuth client persistence with global client identifiers, one-time secret issuance, encoded secret storage, and optimistic lifecycle updates.

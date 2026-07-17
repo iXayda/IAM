@@ -38,6 +38,8 @@ enum AuthorizationTokenKind {
 
 	ACCESS_TOKEN("access_token"),
 
+	REFRESH_TOKEN("refresh_token"),
+
 	ID_TOKEN("id_token");
 
 	private final String databaseValue;
