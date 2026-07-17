@@ -56,6 +56,7 @@ All notable changes to this project will be documented in this file.
 - Validated tenant domain model and lifecycle contract.
 
 ### Fixed
+- OAuth consent approval and denial now update consent and pending authorization state atomically.
 - Database health checks now use bounded connection, validation, and socket waits.
 - GraalVM native application startup.
 - GraalVM native images now retain runtime LDAP configuration when the provider is disabled during the build.
