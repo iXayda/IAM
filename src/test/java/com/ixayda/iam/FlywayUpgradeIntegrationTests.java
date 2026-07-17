@@ -32,13 +32,15 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalData(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(10);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(11);
 
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(13);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(14);
 			assertThat(count(jdbc, schema, "tenants")).isEqualTo(2);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(identifier(jdbc, schema)).isEqualTo("Alice@example.com|alice@example.com");
+			assertThat(profileIsEmpty(jdbc, schema)).isTrue();
+			assertThat(userVersions(jdbc, schema)).isEqualTo("7|7");
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -62,7 +64,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
 			assertThat(jdbc.sql("""
 					SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
 					FROM %s.oauth_clients
@@ -70,7 +72,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).query(String.class).single())
 				.isEqualTo("false|3600");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(13);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(14);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -102,8 +104,8 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				VALUES (:tenantId, 'upgrade-test', 'Upgrade Test')
 				""").formatted(schema)).param("tenantId", TENANT_ID).update();
 		jdbc.sql(("""
-				INSERT INTO %s.users (user_id, tenant_id)
-				VALUES (:userId, :tenantId)
+				INSERT INTO %s.users (user_id, tenant_id, version)
+				VALUES (:userId, :tenantId, 7)
 				""").formatted(schema)).param("userId", USER_ID).param("tenantId", TENANT_ID).update();
 		jdbc.sql(("""
 				INSERT INTO %s.user_login_identifiers
@@ -129,6 +131,31 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 		return jdbc.sql("""
 				SELECT identifier_value || '|' || canonical_value
 				FROM %s.user_login_identifiers
+				WHERE tenant_id = :tenantId AND user_id = :userId
+				""".formatted(schema))
+			.param("tenantId", TENANT_ID)
+			.param("userId", USER_ID)
+			.query(String.class)
+			.single();
+	}
+
+	private static boolean profileIsEmpty(JdbcClient jdbc, String schema) {
+		return jdbc.sql("""
+				SELECT display_name IS NULL AND formatted_name IS NULL
+				       AND given_name IS NULL AND family_name IS NULL
+				FROM %s.users
+				WHERE tenant_id = :tenantId AND user_id = :userId
+				""".formatted(schema))
+			.param("tenantId", TENANT_ID)
+			.param("userId", USER_ID)
+			.query(Boolean.class)
+			.single();
+	}
+
+	private static String userVersions(JdbcClient jdbc, String schema) {
+		return jdbc.sql("""
+				SELECT version::text || '|' || security_version
+				FROM %s.users
 				WHERE tenant_id = :tenantId AND user_id = :userId
 				""".formatted(schema))
 			.param("tenantId", TENANT_ID)

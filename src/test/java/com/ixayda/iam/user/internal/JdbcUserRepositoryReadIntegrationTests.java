@@ -189,15 +189,17 @@ class JdbcUserRepositoryReadIntegrationTests extends ApplicationIntegrationTest 
 		this.usersToDelete.add(new UserReference(user.tenantId(), user.id()));
 		this.jdbcClient.sql("""
 				INSERT INTO users
-				    (user_id, tenant_id, status, version, created_at, updated_at, last_login_at)
+				    (user_id, tenant_id, status, version, security_version,
+				     created_at, updated_at, last_login_at)
 				VALUES
-				    (:userId, :tenantId, :status, :version, :createdAt, :updatedAt,
+				    (:userId, :tenantId, :status, :version, :securityVersion, :createdAt, :updatedAt,
 				     CAST(:lastLoginAt AS timestamptz))
 				""")
 			.param("userId", user.id().value())
 			.param("tenantId", user.tenantId().value())
 			.param("status", user.status().name().toLowerCase(Locale.ROOT))
 			.param("version", user.version())
+			.param("securityVersion", user.securityVersion())
 			.param("createdAt", databaseValue(user.createdAt()))
 			.param("updatedAt", databaseValue(user.updatedAt()))
 			.param("lastLoginAt", databaseValue(user.lastLoginAt()))

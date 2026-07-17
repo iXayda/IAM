@@ -250,7 +250,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				  AND sessions.status = 'active'
 				  AND sessions.expires_at > :now
 				  AND sessions.issued_tenant_version = tenants.version
-				  AND sessions.issued_user_version = users.version
+				  AND sessions.issued_user_version = users.security_version
 				  AND sessions.authentication_method = :authenticationMethod
 				  AND sessions.authenticated_at = :authenticatedAt
 				FOR SHARE OF clients, tenants, users, sessions

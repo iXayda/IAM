@@ -59,7 +59,7 @@ class DefaultSessionOperations implements SessionOperations {
 		}
 		Instant authenticatedAt = this.timeSource.now();
 		UserSession session = UserSession.start(SessionId.random(), tenantId, userId, authenticationMethod,
-				tenant.version(), user.version(), authenticatedAt, absoluteTtl.expiresAt(authenticatedAt));
+				tenant.version(), user.securityVersion(), authenticatedAt, absoluteTtl.expiresAt(authenticatedAt));
 		return this.repository.insert(session);
 	}
 
@@ -92,7 +92,7 @@ class DefaultSessionOperations implements SessionOperations {
 		Optional<User> user = this.users.findById(tenantId, session.userId());
 		User currentUser = user.orElse(null);
 		if (currentUser == null || !currentUser.isActive()
-				|| currentUser.version() != session.issuedUserVersion()) {
+				|| currentUser.securityVersion() != session.issuedUserVersion()) {
 			return Optional.empty();
 		}
 		return Optional.of(session);

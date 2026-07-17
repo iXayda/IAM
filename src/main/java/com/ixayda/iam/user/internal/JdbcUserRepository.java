@@ -19,6 +19,7 @@ import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserAlreadyExistsException;
 import com.ixayda.iam.user.UserConcurrentUpdateException;
 import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserProfile;
 import com.ixayda.iam.user.UserStatus;
 import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -37,7 +38,12 @@ class JdbcUserRepository {
 			SELECT u.user_id,
 			       u.tenant_id,
 			       u.status,
+			       u.display_name,
+			       u.formatted_name,
+			       u.given_name,
+			       u.family_name,
 			       u.version,
+			       u.security_version,
 			       u.created_at,
 			       u.updated_at,
 			       u.last_login_at,
@@ -62,7 +68,12 @@ class JdbcUserRepository {
 			SELECT u.user_id,
 			       u.tenant_id,
 			       u.status,
+			       u.display_name,
+			       u.formatted_name,
+			       u.given_name,
+			       u.family_name,
 			       u.version,
+			       u.security_version,
 			       u.created_at,
 			       u.updated_at,
 			       u.last_login_at,
@@ -102,15 +113,22 @@ class JdbcUserRepository {
 		requireWriteTransaction();
 		int affected = this.jdbcClient.sql("""
 				INSERT INTO users
-				    (user_id, tenant_id, status, version, created_at, updated_at, last_login_at)
+				    (user_id, tenant_id, status, display_name, formatted_name, given_name, family_name,
+				     version, security_version, created_at, updated_at, last_login_at)
 				VALUES
-				    (:userId, :tenantId, :status, :version, :createdAt, :updatedAt,
+				    (:userId, :tenantId, :status, :displayName, :formattedName, :givenName, :familyName,
+				     :version, :securityVersion, :createdAt, :updatedAt,
 				     CAST(:lastLoginAt AS timestamptz))
 				""")
 			.param("userId", user.id().value())
 			.param("tenantId", user.tenantId().value())
 			.param("status", databaseValue(user.status()))
+			.param("displayName", user.profile().displayName())
+			.param("formattedName", user.profile().formattedName())
+			.param("givenName", user.profile().givenName())
+			.param("familyName", user.profile().familyName())
 			.param("version", user.version())
+			.param("securityVersion", user.securityVersion())
 			.param("createdAt", databaseValue(user.createdAt()))
 			.param("updatedAt", databaseValue(user.updatedAt()))
 			.param("lastLoginAt", databaseValue(user.lastLoginAt()))
@@ -172,9 +190,12 @@ class JdbcUserRepository {
 		requireWriteTransaction();
 		if (!current.id().equals(changed.id()) || !current.tenantId().equals(changed.tenantId())
 				|| !current.identifiers().equals(changed.identifiers())
+				|| !current.profile().equals(changed.profile())
 				|| !current.createdAt().equals(changed.createdAt())
 				|| !Objects.equals(current.lastLoginAt(), changed.lastLoginAt()) || current.status() == changed.status()
-				|| current.version() == Long.MAX_VALUE || changed.version() != current.version() + 1
+				|| current.version() == Long.MAX_VALUE || current.securityVersion() == Long.MAX_VALUE
+				|| changed.version() != current.version() + 1
+				|| changed.securityVersion() != current.securityVersion() + 1
 				|| changed.updatedAt().isBefore(current.updatedAt())) {
 			throw new IllegalArgumentException(
 					"User status update must preserve ownership and identity, and advance one version to a different status");
@@ -182,18 +203,22 @@ class JdbcUserRepository {
 
 		int affected = this.jdbcClient.sql("""
 				UPDATE users
-				SET status = :newStatus, version = :newVersion, updated_at = :updatedAt
+				SET status = :newStatus, version = :newVersion,
+				    security_version = :newSecurityVersion, updated_at = :updatedAt
 				WHERE tenant_id = :tenantId
 				  AND user_id = :userId
 				  AND version = :expectedVersion
+				  AND security_version = :expectedSecurityVersion
 				  AND status = :expectedStatus
 				""")
 			.param("newStatus", databaseValue(changed.status()))
 			.param("newVersion", changed.version())
+			.param("newSecurityVersion", changed.securityVersion())
 			.param("updatedAt", databaseValue(changed.updatedAt()))
 			.param("tenantId", current.tenantId().value())
 			.param("userId", current.id().value())
 			.param("expectedVersion", current.version())
+			.param("expectedSecurityVersion", current.securityVersion())
 			.param("expectedStatus", databaseValue(current.status()))
 			.update();
 		if (affected == 0) {
@@ -201,6 +226,57 @@ class JdbcUserRepository {
 		}
 		if (affected != 1) {
 			throw new IllegalStateException("Updating a user affected an unexpected number of rows: " + affected);
+		}
+		return changed;
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY, noRollbackFor = UserConcurrentUpdateException.class)
+	public User updateProfile(User current, User changed) {
+		Objects.requireNonNull(current, "Current user must not be null");
+		Objects.requireNonNull(changed, "Changed user must not be null");
+		requireWriteTransaction();
+		if (!current.id().equals(changed.id()) || !current.tenantId().equals(changed.tenantId())
+				|| !current.identifiers().equals(changed.identifiers()) || current.profile().equals(changed.profile())
+				|| current.status() != changed.status() || !current.createdAt().equals(changed.createdAt())
+				|| !Objects.equals(current.lastLoginAt(), changed.lastLoginAt()) || current.version() == Long.MAX_VALUE
+				|| changed.version() != current.version() + 1
+				|| changed.securityVersion() != current.securityVersion()
+				|| changed.updatedAt().isBefore(current.updatedAt())) {
+			throw new IllegalArgumentException(
+					"User profile update must preserve ownership and lifecycle state, and advance one version");
+		}
+
+		int affected = this.jdbcClient.sql("""
+				UPDATE users
+				SET display_name = :displayName,
+				    formatted_name = :formattedName,
+				    given_name = :givenName,
+				    family_name = :familyName,
+				    version = :newVersion,
+				    updated_at = :updatedAt
+				WHERE tenant_id = :tenantId
+				  AND user_id = :userId
+				  AND version = :expectedVersion
+				  AND security_version = :expectedSecurityVersion
+				  AND status = :expectedStatus
+				""")
+			.param("displayName", changed.profile().displayName())
+			.param("formattedName", changed.profile().formattedName())
+			.param("givenName", changed.profile().givenName())
+			.param("familyName", changed.profile().familyName())
+			.param("newVersion", changed.version())
+			.param("updatedAt", databaseValue(changed.updatedAt()))
+			.param("tenantId", current.tenantId().value())
+			.param("userId", current.id().value())
+			.param("expectedVersion", current.version())
+			.param("expectedSecurityVersion", current.securityVersion())
+			.param("expectedStatus", databaseValue(current.status()))
+			.update();
+		if (affected == 0) {
+			throw new UserConcurrentUpdateException(current.tenantId(), current.id(), current.version());
+		}
+		if (affected != 1) {
+			throw new IllegalStateException("Updating a user profile affected an unexpected number of rows: " + affected);
 		}
 		return changed;
 	}
@@ -245,7 +321,11 @@ class JdbcUserRepository {
 		UserId userId = new UserId(resultSet.getObject("user_id", UUID.class));
 		TenantId tenantId = new TenantId(resultSet.getObject("tenant_id", UUID.class));
 		UserStatus status = status(resultSet.getString("status"));
+		UserProfile profile = new UserProfile(resultSet.getString("display_name"),
+				resultSet.getString("formatted_name"), resultSet.getString("given_name"),
+				resultSet.getString("family_name"));
 		long version = resultSet.getLong("version");
+		long securityVersion = resultSet.getLong("security_version");
 		OffsetDateTime createdAt = resultSet.getObject("created_at", OffsetDateTime.class);
 		OffsetDateTime updatedAt = resultSet.getObject("updated_at", OffsetDateTime.class);
 		OffsetDateTime lastLoginAt = resultSet.getObject("last_login_at", OffsetDateTime.class);
@@ -265,8 +345,8 @@ class JdbcUserRepository {
 		}
 		while (resultSet.next());
 
-		return Optional.of(new User(userId, tenantId, identifiers, status, version, createdAt.toInstant(),
-				updatedAt.toInstant(), lastLoginAt == null ? null : lastLoginAt.toInstant()));
+		return Optional.of(new User(userId, tenantId, identifiers, profile, status, version, securityVersion,
+				createdAt.toInstant(), updatedAt.toInstant(), lastLoginAt == null ? null : lastLoginAt.toInstant()));
 	}
 
 	private static LoginIdentifierType identifierType(String value) {

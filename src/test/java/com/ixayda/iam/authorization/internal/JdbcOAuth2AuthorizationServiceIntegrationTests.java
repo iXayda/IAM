@@ -360,6 +360,41 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 	}
 
 	@Test
+	void acceptsProfileRevisionsAndRejectsSecurityRevisions() {
+		UUID authorizationId = UUID.randomUUID();
+		this.authorizations.save(pendingAuthorization(authorizationId, "profile-revision-state"));
+		OAuth2Authorization pending = this.authorizations.findByToken("profile-revision-state",
+				new OAuth2TokenType(OAuth2ParameterNames.STATE));
+
+		this.jdbcClient.sql("""
+				UPDATE users
+				SET display_name = 'Alice Example', version = 1
+				WHERE tenant_id = :tenantId AND user_id = :userId
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("userId", USER_ID)
+			.update();
+		this.authorizations.save(approve(pending, "profile-revision-code"));
+		OAuth2Authorization approved = this.authorizations.findByToken("profile-revision-code",
+				new OAuth2TokenType(OAuth2ParameterNames.CODE));
+		assertThat(approved).isNotNull();
+
+		this.jdbcClient.sql("""
+				UPDATE users
+				SET version = 2, security_version = 1
+				WHERE tenant_id = :tenantId AND user_id = :userId
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("userId", USER_ID)
+			.update();
+		OAuth2AuthorizationCode code = approved.getToken(OAuth2AuthorizationCode.class).getToken();
+		assertThatThrownBy(() -> this.authorizations.save(OAuth2Authorization.from(approved).invalidate(code).build()))
+			.isInstanceOf(OAuth2AuthenticationException.class)
+			.satisfies(exception -> assertThat(((OAuth2AuthenticationException) exception).getError().getErrorCode())
+				.isEqualTo("invalid_grant"));
+	}
+
+	@Test
 	void roundTripsNanosecondTokenTimesAtDatabasePrecision() {
 		UUID authorizationId = UUID.randomUUID();
 		Instant issuedAt = Instant.now().minusSeconds(60).with(ChronoField.NANO_OF_SECOND, 123_456_789);

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Structured user profiles with independent directory and security revisions.
 - Tenant-bound local password login for authorization requests with CSRF protection and issuer-bound redirects.
 - Encrypted current refresh-token persistence with atomic access, refresh, and ID token rotation.
 - Explicit confidential-client Refresh Token grants with PKCE, scope reduction, forced rotation, and owner lifecycle enforcement.

@@ -236,7 +236,11 @@ class JdbcUserSessionRepositoryIntegrationTests extends ApplicationIntegrationTe
 	}
 
 	private void insertUser(TenantId tenantId, UserId userId, long version) {
-		this.jdbcClient.sql("INSERT INTO users (tenant_id, user_id, version) VALUES (:tenantId, :userId, :version)")
+		this.jdbcClient
+			.sql("""
+					INSERT INTO users (tenant_id, user_id, version, security_version)
+					VALUES (:tenantId, :userId, :version, :version)
+					""")
 			.param("tenantId", tenantId.value())
 			.param("userId", userId.value())
 			.param("version", version)

@@ -29,6 +29,7 @@ import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserOperations;
+import com.ixayda.iam.user.UserProfile;
 import com.ixayda.iam.user.UserStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,7 +80,7 @@ class DefaultSessionOperationsTests {
 	@Test
 	void startsASessionAfterLockingAndCapturingLifecycleVersions() {
 		Tenant tenant = tenant(TenantStatus.ACTIVE, 4);
-		User user = user(UserStatus.ACTIVE, 7);
+		User user = user(UserStatus.ACTIVE, 9, 7);
 		when(this.tenants.requireActiveForWrite(TENANT_ID)).thenReturn(tenant);
 		when(this.users.requireActiveForWrite(TENANT_ID, USER_ID)).thenReturn(user);
 		when(this.timeSource.now()).thenReturn(NOW);
@@ -139,7 +140,7 @@ class DefaultSessionOperationsTests {
 		when(this.repository.findById(TENANT_ID, SESSION_ID)).thenReturn(Optional.of(session));
 		when(this.timeSource.now()).thenReturn(NOW);
 		when(this.tenants.findById(TENANT_ID)).thenReturn(Optional.of(tenant(TenantStatus.ACTIVE, 4)));
-		when(this.users.findById(TENANT_ID, USER_ID)).thenReturn(Optional.of(user(UserStatus.ACTIVE, 7)));
+		when(this.users.findById(TENANT_ID, USER_ID)).thenReturn(Optional.of(user(UserStatus.ACTIVE, 9, 7)));
 
 		assertThat(this.operations.findUsable(TENANT_ID, SESSION_ID)).contains(session);
 	}
@@ -185,8 +186,8 @@ class DefaultSessionOperationsTests {
 		when(this.tenants.findById(TENANT_ID)).thenReturn(Optional.of(tenant(TenantStatus.ACTIVE, 4)));
 		when(this.users.findById(TENANT_ID, USER_ID))
 			.thenReturn(Optional.empty())
-			.thenReturn(Optional.of(user(UserStatus.DISABLED, 7)))
-			.thenReturn(Optional.of(user(UserStatus.ACTIVE, 8)));
+			.thenReturn(Optional.of(user(UserStatus.DISABLED, 9, 7)))
+			.thenReturn(Optional.of(user(UserStatus.ACTIVE, 9, 8)));
 
 		assertThat(this.operations.findUsable(TENANT_ID, SESSION_ID)).isEmpty();
 		assertThat(this.operations.findUsable(TENANT_ID, SESSION_ID)).isEmpty();
@@ -250,8 +251,12 @@ class DefaultSessionOperationsTests {
 	}
 
 	private User user(UserStatus status, long version) {
-		return new User(USER_ID, TENANT_ID, List.of(LoginIdentifier.username("session-user")), status, version,
-				CREATED_AT, CREATED_AT, null);
+		return user(status, version, version);
+	}
+
+	private User user(UserStatus status, long version, long securityVersion) {
+		return new User(USER_ID, TENANT_ID, List.of(LoginIdentifier.username("session-user")),
+				UserProfile.empty(), status, version, securityVersion, CREATED_AT, CREATED_AT, null);
 	}
 
 }

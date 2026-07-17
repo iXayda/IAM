@@ -20,6 +20,7 @@ import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserOperations;
+import com.ixayda.iam.user.UserProfile;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -84,7 +85,7 @@ class SessionOperationsIntegrationTests extends ApplicationIntegrationTest {
 		UserSession started = start(TenantId.DEFAULT, user.id(), EIGHT_HOURS);
 
 		assertThat(started.issuedTenantVersion()).isEqualTo(tenant.version());
-		assertThat(started.issuedUserVersion()).isEqualTo(user.version());
+		assertThat(started.issuedUserVersion()).isEqualTo(user.securityVersion());
 		assertThat(Duration.between(started.authenticatedAt(), started.expiresAt()))
 			.isEqualTo(EIGHT_HOURS.value());
 		assertThat(this.sessions.findById(TenantId.DEFAULT, started.id())).contains(started);
@@ -134,9 +135,26 @@ class SessionOperationsIntegrationTests extends ApplicationIntegrationTest {
 		User reactivated = this.users.activate(TenantId.DEFAULT, user.id());
 
 		assertThat(reactivated.isActive()).isTrue();
-		assertThat(reactivated.version()).isGreaterThan(started.issuedUserVersion());
+		assertThat(reactivated.securityVersion()).isGreaterThan(started.issuedUserVersion());
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, started.id())).isEmpty();
 		assertThat(this.sessions.findById(TenantId.DEFAULT, started.id())).contains(started);
+	}
+
+	@Test
+	void profileUpdatesDoNotInvalidateAnActiveSession() {
+		User user = createUser(TenantId.DEFAULT, "profile-version");
+		UserSession started = start(TenantId.DEFAULT, user.id(), EIGHT_HOURS);
+
+		User updated = this.users.updateProfile(TenantId.DEFAULT, user.id(), user.version(),
+				new UserProfile("Alice Example", "Alice Q. Example", "Alice", "Example"));
+
+		assertThat(updated.version()).isGreaterThan(user.version());
+		assertThat(updated.securityVersion()).isEqualTo(user.securityVersion());
+		assertThat(this.sessions.findUsable(TenantId.DEFAULT, started.id())).contains(started);
+
+		UserSession startedAfterUpdate = start(TenantId.DEFAULT, user.id(), EIGHT_HOURS);
+		assertThat(startedAfterUpdate.issuedUserVersion()).isEqualTo(updated.securityVersion());
+		assertThat(this.sessions.findUsable(TenantId.DEFAULT, startedAfterUpdate.id())).contains(startedAfterUpdate);
 	}
 
 	@Test

@@ -56,13 +56,16 @@ class UserOperationsCreateIntegrationTests extends ApplicationIntegrationTest {
 		Tenant tenant = createTenant();
 		List<LoginIdentifier> identifiers = List.of(LoginIdentifier.username("alice"),
 				LoginIdentifier.email("Alice@example.com"), LoginIdentifier.phone("+1 (555) 123-4567"));
+		UserProfile profile = new UserProfile("Alice Jensen", "Alice Q. Jensen", "Alice", "Jensen");
 
-		User created = this.users.create(tenant.id(), new CreateUserRequest(identifiers));
+		User created = this.users.create(tenant.id(), new CreateUserRequest(identifiers, profile));
 
 		assertThat(created.tenantId()).isEqualTo(tenant.id());
 		assertThat(created.identifiers()).containsExactlyElementsOf(identifiers);
+		assertThat(created.profile()).isEqualTo(profile);
 		assertThat(created.status()).isEqualTo(UserStatus.ACTIVE);
 		assertThat(created.version()).isZero();
+		assertThat(created.securityVersion()).isZero();
 		assertThat(created.createdAt()).isEqualTo(created.updatedAt());
 		assertThat(created.lastLoginAt()).isNull();
 		assertThat(this.users.findById(tenant.id(), created.id())).contains(created);

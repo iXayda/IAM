@@ -6,18 +6,31 @@ import java.util.Objects;
 
 import com.ixayda.iam.tenant.TenantId;
 
-public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifiers, UserStatus status, long version,
-		Instant createdAt, Instant updatedAt, Instant lastLoginAt) {
+public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifiers, UserProfile profile,
+		UserStatus status, long version, long securityVersion, Instant createdAt, Instant updatedAt,
+		Instant lastLoginAt) {
+
+	public User(UserId id, TenantId tenantId, List<LoginIdentifier> identifiers, UserStatus status, long version,
+			Instant createdAt, Instant updatedAt, Instant lastLoginAt) {
+		this(id, tenantId, identifiers, UserProfile.empty(), status, version, version, createdAt, updatedAt, lastLoginAt);
+	}
+
+	public User(UserId id, TenantId tenantId, List<LoginIdentifier> identifiers, UserProfile profile,
+			UserStatus status, long version, Instant createdAt, Instant updatedAt, Instant lastLoginAt) {
+		this(id, tenantId, identifiers, profile, status, version, version, createdAt, updatedAt, lastLoginAt);
+	}
 
 	public User {
 		Objects.requireNonNull(id, "User ID must not be null");
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		identifiers = LoginIdentifier.validatedCopy(identifiers);
+		Objects.requireNonNull(profile, "User profile must not be null");
 		Objects.requireNonNull(status, "User status must not be null");
 		Objects.requireNonNull(createdAt, "User creation time must not be null");
 		Objects.requireNonNull(updatedAt, "User update time must not be null");
-		if (version < 0) {
-			throw new IllegalArgumentException("User version must not be negative");
+		if (version < 0 || securityVersion < 0 || securityVersion > version) {
+			throw new IllegalArgumentException(
+					"User version and security version must be non-negative, with security version not ahead of version");
 		}
 		if (updatedAt.isBefore(createdAt)) {
 			throw new IllegalArgumentException("User update time must not be before its creation time");
@@ -51,11 +64,29 @@ public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifie
 		return changeStatus(UserStatus.DELETED, changedAt);
 	}
 
+	public User updateProfile(UserProfile replacement, Instant changedAt) {
+		Objects.requireNonNull(replacement, "User profile must not be null");
+		Objects.requireNonNull(changedAt, "User profile change time must not be null");
+		if (this.profile.equals(replacement)) {
+			return this;
+		}
+		if (isDeleted()) {
+			throw new IllegalStateException("Deleted user profile cannot be changed");
+		}
+		if (changedAt.isBefore(this.updatedAt)) {
+			throw new IllegalArgumentException("User profile change time must not be before its last update");
+		}
+		return new User(this.id, this.tenantId, this.identifiers, replacement, this.status,
+				Math.incrementExact(this.version), this.securityVersion, this.createdAt, changedAt, this.lastLoginAt);
+	}
+
 	@Override
 	public String toString() {
 		return "User[id=" + this.id + ", tenantId=" + this.tenantId + ", status=" + this.status + ", version="
-				+ this.version + ", createdAt=" + this.createdAt + ", updatedAt=" + this.updatedAt + ", lastLoginAt="
-				+ this.lastLoginAt + ", identifierCount=" + this.identifiers.size() + "]";
+				+ this.version + ", securityVersion=" + this.securityVersion + ", createdAt=" + this.createdAt
+				+ ", updatedAt=" + this.updatedAt + ", lastLoginAt="
+				+ this.lastLoginAt + ", identifierCount=" + this.identifiers.size() + ", profilePresent="
+				+ !this.profile.isEmpty() + "]";
 	}
 
 	private User changeStatus(UserStatus targetStatus, Instant changedAt) {
@@ -69,7 +100,8 @@ public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifie
 		if (changedAt.isBefore(this.updatedAt)) {
 			throw new IllegalArgumentException("User status change time must not be before its last update");
 		}
-		return new User(this.id, this.tenantId, this.identifiers, targetStatus, Math.incrementExact(this.version),
+		return new User(this.id, this.tenantId, this.identifiers, this.profile, targetStatus,
+				Math.incrementExact(this.version), Math.incrementExact(this.securityVersion),
 				this.createdAt, changedAt, this.lastLoginAt);
 	}
 

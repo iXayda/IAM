@@ -192,8 +192,8 @@ class UserSessionSchemaIntegrationTests extends ApplicationIntegrationTest {
 
 	private void insertUser(UUID tenantId, UUID userId, long version) {
 		this.jdbcClient.sql("""
-				INSERT INTO users (tenant_id, user_id, version)
-				VALUES (:tenantId, :userId, :version)
+				INSERT INTO users (tenant_id, user_id, version, security_version)
+				VALUES (:tenantId, :userId, :version, :version)
 				""")
 			.param("tenantId", tenantId)
 			.param("userId", userId)

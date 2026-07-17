@@ -43,9 +43,19 @@ class CreateUserRequestTests {
 	@Test
 	void keepsLoginValuesOutOfDiagnosticStrings() {
 		LoginIdentifier email = LoginIdentifier.email("Alice@Example.COM");
-		CreateUserRequest request = new CreateUserRequest(List.of(email));
+		UserProfile profile = new UserProfile("Alice Jensen", null, "Alice", "Jensen");
+		CreateUserRequest request = new CreateUserRequest(List.of(email), profile);
 
-		assertThat(request.toString()).doesNotContain(email.value(), email.canonicalValue());
+		assertThat(request.toString()).doesNotContain(email.value(), email.canonicalValue(), profile.displayName(),
+				profile.givenName(), profile.familyName());
+	}
+
+	@Test
+	void defaultsProfilesToEmptyAndRejectsNull() {
+		assertThat(new CreateUserRequest(List.of(LoginIdentifier.username("alice"))).profile())
+			.isEqualTo(UserProfile.empty());
+		assertThatThrownBy(() -> new CreateUserRequest(List.of(LoginIdentifier.username("alice")), null))
+			.isInstanceOf(NullPointerException.class);
 	}
 
 }

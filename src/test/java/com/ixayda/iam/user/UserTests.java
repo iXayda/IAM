@@ -28,6 +28,8 @@ class UserTests {
 
 	private static final LoginIdentifier USERNAME = LoginIdentifier.username("alice");
 
+	private static final UserProfile PROFILE = new UserProfile("Alice Jensen", "Alice Q. Jensen", "Alice", "Jensen");
+
 	@ParameterizedTest
 	@MethodSource("statusTransitions")
 	void enforcesTheCompleteStatusTransitionMatrix(UserStatus source, UserStatus target, boolean allowed) {
@@ -42,10 +44,12 @@ class UserTests {
 
 			assertThat(changed.status()).isEqualTo(target);
 			assertThat(changed.version()).isEqualTo(original.version() + 1);
+			assertThat(changed.securityVersion()).isEqualTo(original.securityVersion() + 1);
 			assertThat(changed.updatedAt()).isEqualTo(changedAt);
 			assertThat(changed.id()).isEqualTo(original.id());
 			assertThat(changed.tenantId()).isEqualTo(original.tenantId());
 			assertThat(changed.identifiers()).isEqualTo(original.identifiers());
+			assertThat(changed.profile()).isEqualTo(original.profile());
 			assertThat(changed.createdAt()).isEqualTo(original.createdAt());
 			assertThat(changed.lastLoginAt()).isEqualTo(original.lastLoginAt());
 		}
@@ -74,6 +78,26 @@ class UserTests {
 	}
 
 	@Test
+	void updatesProfilesOptimisticallyWithoutChangingLifecycleState() {
+		User original = user(UserStatus.DISABLED);
+		Instant changedAt = UPDATED_AT.plusSeconds(60);
+
+		User changed = original.updateProfile(PROFILE, changedAt);
+
+		assertThat(changed.profile()).isEqualTo(PROFILE);
+		assertThat(changed.version()).isOne();
+		assertThat(changed.securityVersion()).isEqualTo(original.securityVersion());
+		assertThat(changed.updatedAt()).isEqualTo(changedAt);
+		assertThat(changed.status()).isEqualTo(UserStatus.DISABLED);
+		assertThat(changed.identifiers()).isEqualTo(original.identifiers());
+		assertThat(changed.updateProfile(PROFILE, changedAt.plusSeconds(1))).isSameAs(changed);
+		assertThatThrownBy(() -> original.updateProfile(PROFILE, UPDATED_AT.minusSeconds(1)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> user(UserStatus.DELETED).updateProfile(PROFILE, changedAt))
+			.isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
 	void defensivelyCopiesIdentifiers() {
 		List<LoginIdentifier> source = new ArrayList<>();
 		source.add(USERNAME);
@@ -95,15 +119,19 @@ class UserTests {
 				CREATED_AT, CREATED_AT.minusSeconds(1), LAST_LOGIN_AT)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new User(USER_ID, TenantId.DEFAULT, List.of(USERNAME), UserStatus.ACTIVE, 0,
 				CREATED_AT, UPDATED_AT, CREATED_AT.minusSeconds(1))).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new User(USER_ID, TenantId.DEFAULT, List.of(USERNAME), UserProfile.empty(),
+				UserStatus.ACTIVE, 0, 1, CREATED_AT, UPDATED_AT, LAST_LOGIN_AT))
+			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> user(UserStatus.ACTIVE).disable(UPDATED_AT.minusSeconds(1)))
 			.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test
 	void keepsLoginValuesOutOfDiagnosticStrings() {
-		User user = user(UserStatus.ACTIVE);
+		User user = user(UserStatus.ACTIVE).updateProfile(PROFILE, UPDATED_AT.plusSeconds(1));
 
-		assertThat(user.toString()).doesNotContain(USERNAME.value(), USERNAME.canonicalValue());
+		assertThat(user.toString()).doesNotContain(USERNAME.value(), USERNAME.canonicalValue(), PROFILE.displayName(),
+				PROFILE.formattedName(), PROFILE.givenName(), PROFILE.familyName());
 	}
 
 	private static Stream<Arguments> statusTransitions() {

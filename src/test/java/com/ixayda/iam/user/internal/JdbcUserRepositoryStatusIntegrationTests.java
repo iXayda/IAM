@@ -14,6 +14,7 @@ import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserConcurrentUpdateException;
 import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserProfile;
 import com.ixayda.iam.user.UserStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -104,6 +105,11 @@ class JdbcUserRepositoryStatusIntegrationTests extends ApplicationIntegrationTes
 				current.createdAt(), current.updatedAt().plusSeconds(1), current.lastLoginAt());
 		User regressedTime = new User(current.id(), current.tenantId(), current.identifiers(), UserStatus.DISABLED, 1,
 				current.createdAt(), CREATED_AT.plusSeconds(30), current.lastLoginAt());
+		User changedProfile = new User(current.id(), current.tenantId(), current.identifiers(),
+				new UserProfile("Status User", null, null, null), UserStatus.DISABLED, 1, 1,
+				current.createdAt(), current.updatedAt().plusSeconds(1), current.lastLoginAt());
+		User unchangedSecurityVersion = new User(current.id(), current.tenantId(), current.identifiers(), current.profile(),
+				UserStatus.DISABLED, 1, 0, current.createdAt(), current.updatedAt().plusSeconds(1), current.lastLoginAt());
 
 		assertThatThrownBy(() -> update(current, changedId)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> update(current, changedTenant)).isInstanceOf(IllegalArgumentException.class);
@@ -112,6 +118,8 @@ class JdbcUserRepositoryStatusIntegrationTests extends ApplicationIntegrationTes
 		assertThatThrownBy(() -> update(current, changedCreationTime)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> update(current, skippedVersion)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> update(current, regressedTime)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> update(current, changedProfile)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> update(current, unchangedSecurityVersion)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> update(current, current)).isInstanceOf(IllegalArgumentException.class);
 	}
 

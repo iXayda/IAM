@@ -17,6 +17,7 @@ import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserNotFoundException;
 import com.ixayda.iam.user.UserOperations;
+import com.ixayda.iam.user.UserProfile;
 import com.ixayda.iam.user.UserStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -45,7 +46,8 @@ class DefaultUserOperations implements UserOperations {
 		Objects.requireNonNull(request, "Create user request must not be null");
 		this.tenants.requireActiveForWrite(tenantId);
 		Instant now = this.timeSource.now();
-		User user = new User(UserId.random(), tenantId, request.identifiers(), UserStatus.ACTIVE, 0, now, now, null);
+		User user = new User(UserId.random(), tenantId, request.identifiers(), request.profile(), UserStatus.ACTIVE, 0, 0,
+				now, now, null);
 		return this.repository.insert(user);
 	}
 
@@ -57,6 +59,25 @@ class DefaultUserOperations implements UserOperations {
 	@Override
 	public Optional<User> findByLogin(TenantId tenantId, LoginKey loginKey) {
 		return this.repository.findByLogin(tenantId, loginKey);
+	}
+
+	@Override
+	@Transactional
+	public User updateProfile(TenantId tenantId, UserId userId, long expectedVersion, UserProfile profile) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		Objects.requireNonNull(profile, "User profile must not be null");
+		if (expectedVersion < 0) {
+			throw new IllegalArgumentException("Expected user version must not be negative");
+		}
+		this.tenants.requireActiveForWrite(tenantId);
+		User current = this.repository.findByIdForUpdate(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		if (current.version() != expectedVersion) {
+			throw new UserConcurrentUpdateException(tenantId, userId, expectedVersion);
+		}
+		User changed = current.updateProfile(profile, transitionTime(current));
+		return changed == current ? current : this.repository.updateProfile(current, changed);
 	}
 
 	@Override

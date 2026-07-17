@@ -15,6 +15,8 @@ public interface UserOperations {
 	 */
 	Optional<User> findByLogin(TenantId tenantId, LoginKey loginKey);
 
+	User updateProfile(TenantId tenantId, UserId userId, long expectedVersion, UserProfile profile);
+
 	User activate(TenantId tenantId, UserId userId);
 
 	User disable(TenantId tenantId, UserId userId);
