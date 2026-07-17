@@ -3,6 +3,8 @@ package com.ixayda.iam.authorization.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.net.URI;
+import java.net.URL;
 import java.time.Instant;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -17,10 +19,12 @@ class AuthorizationJsonCodecTests {
 	private final AuthorizationJsonCodec codec = new AuthorizationJsonCodec();
 
 	@Test
-	void roundTripsOnlyJsonValuesAndExplicitInstants() {
+	void roundTripsOnlyJsonValuesAndExplicitProtocolTypes() throws Exception {
 		Instant issuedAt = Instant.parse("2026-01-01T00:00:00Z");
 		Date authenticationTime = Date.from(issuedAt.minusSeconds(60));
+		URL issuer = URI.create("https://issuer.example.test").toURL();
 		Map<String, Object> values = Map.of(
+				"iss", issuer,
 				"sub", "user-id",
 				"iat", issuedAt,
 				"auth_time", authenticationTime,
@@ -29,8 +33,8 @@ class AuthorizationJsonCodecTests {
 
 		String json = this.codec.write(values);
 
-		assertThat(json).contains("$iam_type", "instant", "date")
-			.doesNotContain(Instant.class.getName(), Date.class.getName());
+		assertThat(json).contains("$iam_type", "instant", "date", "url")
+			.doesNotContain(Instant.class.getName(), Date.class.getName(), URL.class.getName());
 		assertThat(this.codec.read(json)).isEqualTo(values);
 	}
 
@@ -60,6 +64,9 @@ class AuthorizationJsonCodecTests {
 		assertThatThrownBy(() -> this.codec.read("{\"claim\":{\"$iam_type\":\"unknown\",\"value\":\"value\"}}"))
 			.isInstanceOf(DataRetrievalFailureException.class)
 			.hasMessage("Authorization JSON contains an unsupported type marker");
+		assertThatThrownBy(() -> this.codec.read("{\"iss\":{\"$iam_type\":\"url\",\"value\":\"file:///tmp/key\"}}"))
+			.isInstanceOf(DataRetrievalFailureException.class)
+			.hasMessage("Authorization JSON contains an invalid URL value");
 	}
 
 }

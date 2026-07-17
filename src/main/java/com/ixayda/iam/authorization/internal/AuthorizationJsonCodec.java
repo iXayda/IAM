@@ -2,6 +2,8 @@ package com.ixayda.iam.authorization.internal;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.net.URI;
+import java.net.URL;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -28,6 +30,8 @@ final class AuthorizationJsonCodec {
 	private static final String INSTANT_TYPE = "instant";
 
 	private static final String DATE_TYPE = "date";
+
+	private static final String URL_TYPE = "url";
 
 	private final JsonMapper jsonMapper;
 
@@ -91,6 +95,9 @@ final class AuthorizationJsonCodec {
 		if (value instanceof Date date) {
 			return Map.of(TYPE_PROPERTY, DATE_TYPE, VALUE_PROPERTY, date.toInstant().toString());
 		}
+		if (value instanceof URL url) {
+			return Map.of(TYPE_PROPERTY, URL_TYPE, VALUE_PROPERTY, url.toExternalForm());
+		}
 		if (value instanceof Map<?, ?> map) {
 			return normalizeMap(map, depth);
 		}
@@ -123,15 +130,9 @@ final class AuthorizationJsonCodec {
 			return value;
 		}
 		if (value instanceof Map<?, ?> map) {
-			if (map.size() == 2 && map.get(VALUE_PROPERTY) instanceof String encodedTemporal
-					&& (INSTANT_TYPE.equals(map.get(TYPE_PROPERTY)) || DATE_TYPE.equals(map.get(TYPE_PROPERTY)))) {
-				try {
-					Instant instant = Instant.parse(encodedTemporal);
-					return DATE_TYPE.equals(map.get(TYPE_PROPERTY)) ? Date.from(instant) : instant;
-				}
-				catch (RuntimeException exception) {
-					throw new DataRetrievalFailureException("Authorization JSON contains an invalid temporal value", exception);
-				}
+			if (map.size() == 2 && map.get(VALUE_PROPERTY) instanceof String encodedValue
+					&& map.get(TYPE_PROPERTY) instanceof String type && isSupportedType(type)) {
+				return restoreTypedValue(type, encodedValue);
 			}
 			if (map.containsKey(TYPE_PROPERTY)) {
 				throw new DataRetrievalFailureException("Authorization JSON contains an unsupported type marker");
@@ -146,6 +147,30 @@ final class AuthorizationJsonCodec {
 		}
 		throw new DataRetrievalFailureException(
 				"Authorization JSON contains an unsupported value type: " + value.getClass().getName());
+	}
+
+	private static boolean isSupportedType(String type) {
+		return INSTANT_TYPE.equals(type) || DATE_TYPE.equals(type) || URL_TYPE.equals(type);
+	}
+
+	private static Object restoreTypedValue(String type, String encodedValue) {
+		try {
+			if (URL_TYPE.equals(type)) {
+				URI uri = URI.create(encodedValue);
+				if (uri.getHost() == null || !("https".equalsIgnoreCase(uri.getScheme())
+						|| "http".equalsIgnoreCase(uri.getScheme()))) {
+					throw new IllegalArgumentException("URL must be an absolute HTTP(S) URL");
+				}
+				return uri.toURL();
+			}
+			Instant instant = Instant.parse(encodedValue);
+			return DATE_TYPE.equals(type) ? Date.from(instant) : instant;
+		}
+		catch (Exception exception) {
+			String valueType = URL_TYPE.equals(type) ? "URL" : "temporal";
+			throw new DataRetrievalFailureException("Authorization JSON contains an invalid " + valueType + " value",
+					exception);
+		}
 	}
 
 	private static void requireDepth(int depth) {
