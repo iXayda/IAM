@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
@@ -20,7 +21,8 @@ class AuthorizationServerWebSecurityConfiguration {
 
 	@Bean
 	@Order(Ordered.HIGHEST_PRECEDENCE)
-	SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) {
+	SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http,
+			HttpSessionRequestCache authorizationRequestCache) {
 		http.oauth2AuthorizationServer((authorizationServer) -> {
 			http.securityMatcher(authorizationServer.getEndpointsMatcher());
 			authorizationServer.authorizationEndpoint((authorizationEndpoint) -> authorizationEndpoint
@@ -28,6 +30,7 @@ class AuthorizationServerWebSecurityConfiguration {
 			authorizationServer.oidc(withDefaults());
 		});
 		http.authorizeHttpRequests((authorize) -> authorize.anyRequest().authenticated());
+		http.requestCache((requestCache) -> requestCache.requestCache(authorizationRequestCache));
 		http.oauth2ResourceServer((resourceServer) -> resourceServer.jwt(withDefaults()));
 		http.exceptionHandling((exceptions) -> exceptions.defaultAuthenticationEntryPointFor(
 				new LoginUrlAuthenticationEntryPoint("/login"), htmlRequestMatcher()));

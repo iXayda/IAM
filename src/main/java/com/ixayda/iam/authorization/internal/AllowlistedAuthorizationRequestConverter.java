@@ -24,7 +24,7 @@ final class AllowlistedAuthorizationRequestConverter implements AuthenticationCo
 
 	private static final String ERROR_URI = "https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.2.1";
 
-	private static final String CONTINUE_PARAMETER = "continue";
+	static final String CONTINUE_PARAMETER = "continue";
 
 	private static final Set<String> ALLOWED_PARAMETERS = Set.of(OAuth2ParameterNames.RESPONSE_TYPE,
 			OAuth2ParameterNames.CLIENT_ID, OAuth2ParameterNames.REDIRECT_URI, OAuth2ParameterNames.SCOPE,
@@ -47,20 +47,27 @@ final class AllowlistedAuthorizationRequestConverter implements AuthenticationCo
 		if (authentication == null) {
 			return null;
 		}
-		for (Map.Entry<String, String[]> parameter : request.getParameterMap().entrySet()) {
+		if (!hasValidParameters(request.getParameterMap())) {
+			throw invalidRequest();
+		}
+		return authentication;
+	}
+
+	static boolean hasValidParameters(Map<String, String[]> parameters) {
+		for (Map.Entry<String, String[]> parameter : parameters.entrySet()) {
 			String[] values = parameter.getValue();
 			if (CONTINUE_PARAMETER.equals(parameter.getKey())) {
 				if (values == null || values.length != 1 || !values[0].isEmpty()) {
-					throw invalidRequest();
+					return false;
 				}
 				continue;
 			}
 			if (!ALLOWED_PARAMETERS.contains(parameter.getKey()) || values == null || values.length != 1
 					|| !StringUtils.hasText(values[0])) {
-				throw invalidRequest();
+				return false;
 			}
 		}
-		return authentication;
+		return true;
 	}
 
 	private static OAuth2AuthorizationCodeRequestAuthenticationException invalidRequest() {

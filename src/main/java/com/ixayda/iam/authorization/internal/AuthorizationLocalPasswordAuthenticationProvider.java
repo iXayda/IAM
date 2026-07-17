@@ -22,9 +22,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.CredentialsContainer;
 import org.springframework.security.core.authority.FactorGrantedAuthority;
-import org.springframework.stereotype.Component;
 
-@Component
 final class AuthorizationLocalPasswordAuthenticationProvider implements AuthenticationProvider {
 
 	private static final String INVALID_CREDENTIALS = "Invalid tenant, login, or password";
