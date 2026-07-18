@@ -17,7 +17,9 @@ import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
+import com.ixayda.iam.user.UserDirectoryQuery;
 import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserPage;
 import com.ixayda.iam.user.UserStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -116,6 +118,91 @@ class JdbcUserRepositoryReadIntegrationTests extends ApplicationIntegrationTest 
 		assertThat(this.repository.findById(TenantId.DEFAULT, deleted.id())).contains(deleted);
 		assertThat(this.repository.findByLogin(TenantId.DEFAULT, LoginKey.from("deleted@example.com")))
 			.contains(deleted);
+	}
+
+	@Test
+	void pagesCompleteVisibleUsersBeforeJoiningTheirIdentifiers() {
+		User active = user(TenantId.DEFAULT, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.username("page-active"), LoginIdentifier.email("page-active@example.com"),
+						LoginIdentifier.phone("+1 555 000 0001")));
+		User disabled = user(TenantId.DEFAULT, UserStatus.DISABLED,
+				List.of(LoginIdentifier.username("page-disabled"), LoginIdentifier.email("page-disabled@example.com")));
+		User locked = user(TenantId.DEFAULT, UserStatus.LOCKED,
+				List.of(LoginIdentifier.username("page-locked")));
+		User deleted = user(TenantId.DEFAULT, UserStatus.DELETED,
+				List.of(LoginIdentifier.username("page-deleted")));
+		User otherTenant = user(SECOND_TENANT_ID, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.username("page-other")));
+		List.of(active, disabled, locked, deleted, otherTenant).forEach(this::insert);
+		List<User> visible = List.of(active, disabled, locked).stream()
+			.sorted(java.util.Comparator.comparing((user) -> user.id().toString()))
+			.toList();
+
+		UserPage first = this.repository.findDirectoryPage(TenantId.DEFAULT, UserDirectoryQuery.all(0, 2));
+		UserPage second = this.repository.findDirectoryPage(TenantId.DEFAULT, UserDirectoryQuery.all(2, 2));
+
+		assertThat(first.totalResults()).isEqualTo(3);
+		assertThat(first.users()).containsExactlyElementsOf(visible.subList(0, 2));
+		assertThat(second.totalResults()).isEqualTo(3);
+		assertThat(second.users()).containsExactlyElementsOf(visible.subList(2, 3));
+		assertThat(first.users()).allSatisfy((user) -> assertThat(user.identifiers()).isNotEmpty());
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT, UserDirectoryQuery.all(3, 2)).users())
+			.isEmpty();
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT, UserDirectoryQuery.all(0, 0)))
+			.extracting(UserPage::totalResults, UserPage::users)
+			.containsExactly(3L, List.of());
+	}
+
+	@Test
+	void filtersByCanonicalIdAndMappedPrimaryUserName() {
+		User usernameFirst = user(TenantId.DEFAULT, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.username("primary-user"), LoginIdentifier.email("secondary@example.com")));
+		User emailOnly = user(TenantId.DEFAULT, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.email("Target@Example.com")));
+		User phoneOnly = user(TenantId.DEFAULT, UserStatus.ACTIVE,
+				List.of(LoginIdentifier.phone("+1 555 000 0002")));
+		insert(usernameFirst);
+		insert(emailOnly);
+		insert(phoneOnly);
+
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				UserDirectoryQuery.primaryIdentifierEquals(0, 10, "PRIMARY-USER")).users())
+			.containsExactly(usernameFirst);
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				UserDirectoryQuery.primaryIdentifierEquals(0, 10, "target@example.COM")).users())
+			.containsExactly(emailOnly);
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				UserDirectoryQuery.primaryIdentifierEquals(0, 10, "secondary@example.com")).users())
+			.isEmpty();
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				UserDirectoryQuery.primaryIdentifierEquals(0, 10, "+1 555 000 0002")).users())
+			.containsExactly(phoneOnly);
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				UserDirectoryQuery.idEquals(0, 10, emailOnly.id())).users())
+			.containsExactly(emailOnly);
+		assertThat(this.repository.findDirectoryPage(SECOND_TENANT_ID,
+				UserDirectoryQuery.idEquals(0, 10, emailOnly.id())).users())
+			.isEmpty();
+	}
+
+	@Test
+	void exposesTheDirectoryPagingIndex() {
+		List<String> definitions = this.jdbcClient.sql("""
+				SELECT indexdef
+				FROM pg_indexes
+				WHERE schemaname = current_schema()
+				  AND indexname IN (
+				      'users_tenant_directory_page_idx',
+				      'user_login_identifiers_tenant_phone_value_idx'
+				  )
+				ORDER BY indexname
+				""").query(String.class).list();
+
+		assertThat(definitions).hasSize(2)
+			.anySatisfy((definition) -> assertThat(definition)
+				.contains("(tenant_id, user_id)", "WHERE (status <> 'deleted'::text)"))
+			.anySatisfy((definition) -> assertThat(definition)
+				.contains("(tenant_id, identifier_value, user_id)", "WHERE (identifier_type = 'phone'::text)"));
 	}
 
 	@Test

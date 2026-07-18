@@ -5,8 +5,11 @@ import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.User;
+import com.ixayda.iam.user.UserDirectoryQuery;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserOperations;
+import com.ixayda.iam.user.UserPage;
+import com.unboundid.scim2.common.exceptions.BadRequestException;
 import com.unboundid.scim2.common.exceptions.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
 
@@ -41,6 +44,20 @@ final class ScimUserService {
 			throw notFound();
 		}
 		return user;
+	}
+
+	UserPage findPage(TenantId tenantId, UserDirectoryQuery query) throws ResourceNotFoundException, BadRequestException {
+		try {
+			this.tenants.requireActive(tenantId);
+		}
+		catch (TenantDisabledException | TenantNotFoundException exception) {
+			throw notFound();
+		}
+		UserPage page = this.users.findDirectoryPage(tenantId, query);
+		if (page.totalResults() > Integer.MAX_VALUE) {
+			throw BadRequestException.tooMany("The SCIM User query matched too many resources.");
+		}
+		return page;
 	}
 
 	private static ResourceNotFoundException notFound() {

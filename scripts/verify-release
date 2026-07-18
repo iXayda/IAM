@@ -330,6 +330,7 @@ jq -e \
 	 and .patch.supported == false
 	 and .bulk.supported == false
 	 and .filter.supported == false
+	 and .filter.maxResults == 0
 	 and (.authenticationSchemes | length) == 1
 	 and .authenticationSchemes[0].type == "oauthbearertoken"
 	 and .authenticationSchemes[0].primary == true

@@ -15,10 +15,12 @@ import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserConcurrentUpdateException;
 import com.ixayda.iam.user.UserDeletionParticipant;
+import com.ixayda.iam.user.UserDirectoryQuery;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserNotFoundException;
 import com.ixayda.iam.user.UserOperations;
+import com.ixayda.iam.user.UserPage;
 import com.ixayda.iam.user.UserProfile;
 import com.ixayda.iam.user.UserStatus;
 import org.springframework.stereotype.Service;
@@ -60,6 +62,13 @@ class DefaultUserOperations implements UserOperations {
 	@Override
 	public Optional<User> findById(TenantId tenantId, UserId userId) {
 		return this.repository.findById(tenantId, userId);
+	}
+
+	@Override
+	public UserPage findDirectoryPage(TenantId tenantId, UserDirectoryQuery query) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(query, "User directory query must not be null");
+		return this.repository.findDirectoryPage(tenantId, query);
 	}
 
 	@Override

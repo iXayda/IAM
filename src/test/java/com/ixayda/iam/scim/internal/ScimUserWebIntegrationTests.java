@@ -38,7 +38,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -130,6 +132,135 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.externalId").doesNotExist())
 			.andExpect(jsonPath("$.password").doesNotExist())
 			.andExpect(jsonPath("$.groups").doesNotExist());
+	}
+
+	@Test
+	void listsOnlyVisibleTenantUsersWithCanonicalPaginationMetadata() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User active = createUser(tenant.id(), "collection-active");
+		User disabled = createUser(tenant.id(), "collection-disabled");
+		User deleted = createUser(tenant.id(), "collection-deleted");
+		createUser(other.id(), "collection-other");
+		this.users.disable(tenant.id(), disabled.id());
+		this.users.delete(tenant.id(), deleted.id());
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.queryParam("tenant_id", other.id().toString())
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, "https://scim.example.test/scim/v2/Users"))
+			.andExpect(header().doesNotExist(HttpHeaders.LOCATION))
+			.andExpect(jsonPath("$.schemas[0]").value("urn:ietf:params:scim:api:messages:2.0:ListResponse"))
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.startIndex").value(1))
+			.andExpect(jsonPath("$.itemsPerPage").value(2))
+			.andExpect(jsonPath("$.Resources", hasSize(2)))
+			.andExpect(jsonPath("$.Resources[*].id", containsInAnyOrder(active.id().toString(),
+					disabled.id().toString())))
+			.andExpect(jsonPath("$.Resources[*].active", containsInAnyOrder(true, false)))
+			.andExpect(jsonPath("$.Resources[*].password").doesNotExist());
+	}
+
+	@Test
+	void appliesBoundedPagingAndAttributeProjectionToUserCollections() throws Exception {
+		Tenant tenant = createTenant();
+		User first = createUser(tenant.id(), "page-first");
+		User second = createUser(tenant.id(), "page-second");
+		List<User> ordered = List.of(first, second).stream()
+			.sorted(java.util.Comparator.comparing((user) -> user.id().toString()))
+			.toList();
+		String authorization = bearer(token(tenant.id(), "scim.read"));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("startIndex", "2")
+			.queryParam("count", "1")
+			.queryParam("attributes", "userName")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.startIndex").value(2))
+			.andExpect(jsonPath("$.itemsPerPage").value(1))
+			.andExpect(jsonPath("$.Resources[0].id").value(ordered.get(1).id().toString()))
+			.andExpect(jsonPath("$.Resources[0].userName").value(ordered.get(1).identifiers().getFirst().value()))
+			.andExpect(jsonPath("$.Resources[0].active").doesNotExist())
+			.andExpect(jsonPath("$.Resources[0].meta").doesNotExist());
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("startIndex", "-20")
+			.queryParam("count", "-1")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.startIndex").value(1))
+			.andExpect(jsonPath("$.itemsPerPage").value(0))
+			.andExpect(jsonPath("$.Resources", hasSize(0)));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("startIndex", "100")
+			.queryParam("count", "101")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.startIndex").value(100))
+			.andExpect(jsonPath("$.itemsPerPage").value(0))
+			.andExpect(jsonPath("$.Resources", hasSize(0)));
+	}
+
+	@Test
+	void supportsExactCollectionFiltersAndRejectsUnsupportedQueries() throws Exception {
+		Tenant tenant = createTenant();
+		User alice = createUser(tenant.id(), "filter-alice");
+		createUser(tenant.id(), "filter-bob");
+		String authorization = bearer(token(tenant.id(), "scim.read"));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("filter", "userName EQ \"FILTER-ALICE\"")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(1))
+			.andExpect(jsonPath("$.Resources[0].id").value(alice.id().toString()));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("filter", ScimUserSchema.URN + ":id eq \"" + alice.id() + "\"")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(1))
+			.andExpect(jsonPath("$.Resources[0].userName").value("filter-alice"));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("filter", "emails.value eq \"secret-filter-value\"")
+			.accept(SCIM_JSON))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidFilter"))
+			.andExpect(content().string(not(containsString("secret-filter-value"))));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("sortBy", "userName")
+			.accept(SCIM_JSON))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("startIndex", "9223372036854775808")
+			.accept(SCIM_JSON))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+
+		this.mockMvc.perform(get("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isForbidden());
 	}
 
 	@Test

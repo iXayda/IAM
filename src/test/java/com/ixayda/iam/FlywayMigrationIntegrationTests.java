@@ -14,6 +14,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 
+	private static final int CURRENT_SCHEMA_VERSION = 19;
+
 	private static final UUID DEFAULT_TENANT_ID =
 			UUID.fromString("00000000-0000-0000-0000-000000000001");
 
@@ -79,7 +81,8 @@ class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void createsTheBuiltInTenant() {
-		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success")).isEqualTo(18);
+		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success"))
+			.isEqualTo(CURRENT_SCHEMA_VERSION);
 		assertThat(count("SELECT count(*) FROM tenants")).isOne();
 		assertThat(this.jdbcClient.sql("SELECT status FROM tenants WHERE slug = 'default'")
 			.query(String.class)

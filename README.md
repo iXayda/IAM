@@ -125,6 +125,7 @@ IAM 不负责：
 - SCIM Users/Groups 资源命名空间的专用 JWT profile 校验与 `scim.read` / `scim.write` 授权边界
 - SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - 租户隔离的 SCIM User 单资源读取、属性选择和统一的资源不可见响应
+- 有界的 SCIM Users 集合分页，以及 `id`、`userName` 精确查询
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
 - Redis 一次性安全状态、租户与用途绑定、原子消费和自动过期
@@ -230,12 +231,15 @@ GET /scim/v2/Schemas
 GET /scim/v2/Schemas/{id}
 GET /scim/v2/ResourceTypes
 GET /scim/v2/ResourceTypes/{id}
+GET /scim/v2/Users
 GET /scim/v2/Users/{id}
 ```
 
-discovery 接口匿名开放。`GET /scim/v2/Users/{id}` 使用带 `scim.read` scope 的机器 token，并且只从
-已验证的 `tenant_id` claim 确定租户；支持 `attributes` 和 `excludedAttributes`。Users 集合查询、创建、
-更新、删除以及 Groups provisioning 尚未实现。
+discovery 接口匿名开放。Users 读取接口使用带 `scim.read` scope 的机器 token，并且只从已验证的
+`tenant_id` claim 确定租户。集合查询支持 `startIndex`、`count`，以及未在 discovery 中宣告为通用
+filtering 能力的 `id eq`、`userName eq` 精确查询；
+单资源和集合均支持 `attributes`、`excludedAttributes`。Users 创建、更新、删除以及 Groups
+provisioning 尚未实现。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：

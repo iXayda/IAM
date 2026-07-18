@@ -6,7 +6,9 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,7 +20,9 @@ import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserAlreadyExistsException;
 import com.ixayda.iam.user.UserConcurrentUpdateException;
+import com.ixayda.iam.user.UserDirectoryQuery;
 import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserPage;
 import com.ixayda.iam.user.UserProfile;
 import com.ixayda.iam.user.UserStatus;
 import org.springframework.jdbc.core.ResultSetExtractor;
@@ -33,6 +37,46 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class JdbcUserRepository {
 
 	private static final ResultSetExtractor<Optional<User>> USER_EXTRACTOR = JdbcUserRepository::extractUser;
+
+	private static final ResultSetExtractor<UserPage> USER_PAGE_EXTRACTOR = JdbcUserRepository::extractUserPage;
+
+	private static final String VISIBLE_USER_CONDITION = "u.status <> 'deleted'";
+
+	private static final String NO_USERS_CONDITION = "false";
+
+	private static final String ID_EQUALS_CONDITION = VISIBLE_USER_CONDITION + " AND u.user_id = :matchedUserId";
+
+	private static final String USER_NAME_EQUALS_CONDITION = VISIBLE_USER_CONDITION + """
+			 AND u.user_id = (
+			     SELECT matched_identifier.user_id
+			     FROM user_login_identifiers matched_identifier
+			     WHERE matched_identifier.tenant_id = :tenantId
+			       AND (
+			           matched_identifier.identifier_type IN ('username', 'email')
+			           AND matched_identifier.canonical_value = lower(:matchedUserName)
+			           OR matched_identifier.identifier_type = 'phone'
+			           AND matched_identifier.identifier_value = :matchedUserName
+			       )
+			       AND NOT EXISTS (
+			           SELECT 1
+			           FROM user_login_identifiers higher_priority
+			           WHERE higher_priority.tenant_id = matched_identifier.tenant_id
+			             AND higher_priority.user_id = matched_identifier.user_id
+			             AND CASE higher_priority.identifier_type
+			                     WHEN 'username' THEN 0
+			                     WHEN 'email' THEN 1
+			                     WHEN 'phone' THEN 2
+			                     ELSE 3
+			                 END
+			                 < CASE matched_identifier.identifier_type
+			                       WHEN 'username' THEN 0
+			                       WHEN 'email' THEN 1
+			                       WHEN 'phone' THEN 2
+			                       ELSE 3
+			                   END
+			       )
+			 )
+			 """;
 
 	private static final String FIND_BY_ID = """
 			SELECT u.user_id,
@@ -150,6 +194,28 @@ class JdbcUserRepository {
 			.param("tenantId", tenantId.value())
 			.param("userId", userId.value())
 			.query(USER_EXTRACTOR);
+	}
+
+	UserPage findDirectoryPage(TenantId tenantId, UserDirectoryQuery query) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(query, "User directory query must not be null");
+		String condition = switch (query.criterion()) {
+			case UserDirectoryQuery.All ignored -> VISIBLE_USER_CONDITION;
+			case UserDirectoryQuery.None ignored -> NO_USERS_CONDITION;
+			case UserDirectoryQuery.IdEquals ignored -> ID_EQUALS_CONDITION;
+			case UserDirectoryQuery.PrimaryIdentifierEquals ignored -> USER_NAME_EQUALS_CONDITION;
+		};
+		JdbcClient.StatementSpec statement = this.jdbcClient.sql(directoryPageQuery(condition))
+			.param("tenantId", tenantId.value())
+			.param("offset", query.offset())
+			.param("limit", query.limit());
+		if (query.criterion() instanceof UserDirectoryQuery.IdEquals idEquals) {
+			statement = statement.param("matchedUserId", idEquals.userId().value());
+		}
+		else if (query.criterion() instanceof UserDirectoryQuery.PrimaryIdentifierEquals primaryIdentifierEquals) {
+			statement = statement.param("matchedUserName", primaryIdentifierEquals.value());
+		}
+		return statement.query(USER_PAGE_EXTRACTOR);
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
@@ -390,6 +456,129 @@ class JdbcUserRepository {
 
 		return Optional.of(new User(userId, tenantId, identifiers, profile, status, version, securityVersion,
 				createdAt.toInstant(), updatedAt.toInstant(), lastLoginAt == null ? null : lastLoginAt.toInstant()));
+	}
+
+	private static UserPage extractUserPage(ResultSet resultSet) throws SQLException {
+		if (!resultSet.next()) {
+			throw new IllegalStateException("User directory query did not return its total result row");
+		}
+		long totalResults = resultSet.getLong("total_results");
+		Map<UserId, PageUser> pageUsers = new LinkedHashMap<>();
+		do {
+			if (resultSet.getObject("user_id") == null) {
+				continue;
+			}
+			UserRow row = readUserRow(resultSet);
+			PageUser pageUser = pageUsers.computeIfAbsent(row.userId(), ignored -> new PageUser(row));
+			if (!pageUser.row().equals(row)) {
+				throw new IllegalStateException("User directory query returned inconsistent rows for " + row.userId());
+			}
+			pageUser.identifiers().add(readIdentifier(resultSet, row.userId()));
+		}
+		while (resultSet.next());
+		List<User> users = pageUsers.values().stream().map(PageUser::toUser).toList();
+		return new UserPage(totalResults, users);
+	}
+
+	private static UserRow readUserRow(ResultSet resultSet) throws SQLException {
+		OffsetDateTime lastLoginAt = resultSet.getObject("last_login_at", OffsetDateTime.class);
+		return new UserRow(new UserId(resultSet.getObject("user_id", UUID.class)),
+				new TenantId(resultSet.getObject("tenant_id", UUID.class)), status(resultSet.getString("status")),
+				new UserProfile(resultSet.getString("display_name"), resultSet.getString("formatted_name"),
+						resultSet.getString("given_name"), resultSet.getString("family_name")),
+				resultSet.getLong("version"), resultSet.getLong("security_version"),
+				resultSet.getObject("created_at", OffsetDateTime.class).toInstant(),
+				resultSet.getObject("updated_at", OffsetDateTime.class).toInstant(),
+				lastLoginAt == null ? null : lastLoginAt.toInstant());
+	}
+
+	private static LoginIdentifier readIdentifier(ResultSet resultSet, UserId userId) throws SQLException {
+		String identifierType = resultSet.getString("identifier_type");
+		if (identifierType == null) {
+			throw new IllegalStateException("User has no login identifiers: " + userId);
+		}
+		return new LoginIdentifier(identifierType(identifierType), resultSet.getString("identifier_value"),
+				resultSet.getString("canonical_value"));
+	}
+
+	private static String directoryPageQuery(String condition) {
+		return """
+				WITH total AS (
+				    SELECT count(*) AS total_results
+				    FROM users u
+				    WHERE u.tenant_id = :tenantId
+				      AND %1$s
+				), page AS (
+				    SELECT u.user_id,
+				           u.tenant_id,
+				           u.status,
+				           u.display_name,
+				           u.formatted_name,
+				           u.given_name,
+				           u.family_name,
+				           u.version,
+				           u.security_version,
+				           u.created_at,
+				           u.updated_at,
+				           u.last_login_at
+				    FROM users u
+				    WHERE u.tenant_id = :tenantId
+				      AND %1$s
+				    ORDER BY u.user_id
+				    OFFSET :offset
+				    LIMIT :limit
+				)
+				SELECT total.total_results,
+				       page.user_id,
+				       page.tenant_id,
+				       page.status,
+				       page.display_name,
+				       page.formatted_name,
+				       page.given_name,
+				       page.family_name,
+				       page.version,
+				       page.security_version,
+				       page.created_at,
+				       page.updated_at,
+				       page.last_login_at,
+				       identifier.identifier_type,
+				       identifier.identifier_value,
+				       identifier.canonical_value
+				FROM total
+				LEFT JOIN page ON true
+				LEFT JOIN user_login_identifiers identifier
+				  ON identifier.tenant_id = page.tenant_id
+				 AND identifier.user_id = page.user_id
+				ORDER BY page.user_id,
+				         CASE identifier.identifier_type
+				             WHEN 'username' THEN 0
+				             WHEN 'email' THEN 1
+				             WHEN 'phone' THEN 2
+				             ELSE 3
+				         END
+				""".formatted(condition);
+	}
+
+	private record UserRow(UserId userId, TenantId tenantId, UserStatus status, UserProfile profile, long version,
+			long securityVersion, Instant createdAt, Instant updatedAt, Instant lastLoginAt) {
+
+		User toUser(List<LoginIdentifier> identifiers) {
+			return new User(this.userId, this.tenantId, identifiers, this.profile, this.status, this.version,
+					this.securityVersion, this.createdAt, this.updatedAt, this.lastLoginAt);
+		}
+
+	}
+
+	private record PageUser(UserRow row, List<LoginIdentifier> identifiers) {
+
+		PageUser(UserRow row) {
+			this(row, new ArrayList<>());
+		}
+
+		User toUser() {
+			return this.row.toUser(List.copyOf(this.identifiers));
+		}
+
 	}
 
 	private static LoginIdentifierType identifierType(String value) {

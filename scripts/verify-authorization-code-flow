@@ -390,6 +390,22 @@ jq -e --arg id "${USER_ID}" --arg username "${USERNAME}" --arg location "${scim_
 	"${body}" >/dev/null || fail "SCIM user representation is invalid"
 [[ "$(header_value Content-Location "${headers}")" == "${scim_user_location}" ]] \
 	|| fail "SCIM user Content-Location is invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --get \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	--data-urlencode "filter=userName eq \"${USERNAME}\"" --data-urlencode 'count=1' \
+	--data-urlencode 'tenant_id=00000000-0000-0000-0000-000000000999' \
+	"${base_url}/scim/v2/Users")"
+[[ "${status}" == "200" ]] || fail "SCIM read token did not query its tenant directory: HTTP ${status}"
+jq -e --arg id "${USER_ID}" --arg username "${USERNAME}" \
+	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+	 and .totalResults == 1 and .startIndex == 1 and .itemsPerPage == 1
+	 and (.Resources | length) == 1
+	 and .Resources[0].id == $id and .Resources[0].userName == $username
+	 and (.Resources[0] | has("password") | not)' \
+	"${body}" >/dev/null || fail "SCIM User collection response is invalid"
+[[ "$(header_value Content-Location "${headers}")" == "${scim_base_url}/Users" ]] \
+	|| fail "SCIM User collection Content-Location is invalid"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request POST --header 'Accept: application/scim+json' \
 	--header "Authorization: Bearer ${service_access_token}" "${base_url}/scim/v2/Users")"

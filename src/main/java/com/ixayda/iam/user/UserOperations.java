@@ -10,6 +10,8 @@ public interface UserOperations {
 
 	Optional<User> findById(TenantId tenantId, UserId userId);
 
+	UserPage findDirectoryPage(TenantId tenantId, UserDirectoryQuery query);
+
 	/**
 	 * Finds a user by tenant and canonical login key, independent of identifier type.
 	 */

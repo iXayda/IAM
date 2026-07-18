@@ -13,6 +13,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
+	private static final int CURRENT_SCHEMA_VERSION = 19;
+
 	private static final UUID TENANT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742901");
 
 	private static final UUID USER_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742902");
@@ -43,10 +45,10 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalData(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(15);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 3);
 
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(count(jdbc, schema, "tenants")).isEqualTo(2);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(identifier(jdbc, schema)).isEqualTo("Alice@example.com|alice@example.com");
@@ -75,7 +77,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(6);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 12);
 			assertThat(jdbc.sql("""
 					SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
 					FROM %s.oauth_clients
@@ -83,7 +85,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).query(String.class).single())
 				.isEqualTo("false|3600");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -100,9 +102,9 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			assertThat(historical.migrate().migrationsExecuted).isEqualTo(14);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(4);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 14);
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(count(jdbc, schema, "groups")).isZero();
 			jdbc.sql("""
 					INSERT INTO %s.groups (group_id, tenant_id, display_name)
@@ -135,9 +137,9 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("groupId", GROUP_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(3);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 15);
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(count(jdbc, schema, "groups")).isOne();
 			assertThat(count(jdbc, schema, "group_memberships")).isZero();
@@ -166,7 +168,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalAuthorization(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 16);
 			assertThat(jdbc.sql("""
 					SELECT clients.authorization_grant_type || '|' || authorizations.authorization_grant_type
 					       || '|' || tokens.authorization_grant_type
@@ -192,7 +194,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				.query(String.class)
 				.single()).isEqualTo("authorization_code|authorization_code|authorization_code");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -210,7 +212,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalServiceClient(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 17);
 			assertThat(jdbc.sql("""
 					SELECT status || '|' || authorization_grant_type || '|' || access_token_ttl_seconds
 					FROM %s.oauth_clients
@@ -260,7 +262,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).update())
 				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
