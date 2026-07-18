@@ -7,6 +7,8 @@ spring:
       enabled: true
 
 iam:
+  scim:
+    base-url: ${IAM_SCIM_BASE_URL:http://127.0.0.1:8080/scim/v2}
   authorization:
     server:
       issuer: ${IAM_AUTHORIZATION_ISSUER:http://127.0.0.1:8080}

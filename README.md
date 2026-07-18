@@ -119,6 +119,9 @@ IAM 不负责：
 - 租户隔离的组织模型、JDBC 持久化和乐观并发控制
 - 租户隔离的用户目录、统一登录标识和事务化生命周期操作
 - 用户软删除标识保留、乐观并发收敛和租户写入保护
+- 租户隔离的用户资料、目录组和直接用户组成员关系
+- OAuth 2.0 Authorization Code、PKCE、OpenID Connect 和 Refresh Token
+- SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
 - Redis 一次性安全状态、租户与用途绑定、原子消费和自动过期
@@ -219,8 +222,15 @@ IAM 当前采用模块化单体架构。
 SCIM 接口：
 
 ```text
-/scim/v2/**
+GET /scim/v2/ServiceProviderConfig
+GET /scim/v2/Schemas
+GET /scim/v2/Schemas/{id}
+GET /scim/v2/ResourceTypes
+GET /scim/v2/ResourceTypes/{id}
 ```
+
+当前仅开放匿名 discovery。SCIM 用户和组 provisioning 在机器客户端认证及可信租户上下文完成前保持关闭。
+部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：
 

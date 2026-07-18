@@ -10,11 +10,13 @@
 - PostgreSQL、Flyway 迁移、租户、组织、用户和凭据数据；
 - 本地密码认证领域能力、LDAP credential verifier；
 - Redis 登录限流和一次性安全状态；
+- OAuth 2.0 Authorization Code、PKCE、OpenID Connect 和 Refresh Token；
+- 匿名 SCIM 2.0 discovery；
 - 健康探针、Prometheus 指标、OpenTelemetry 和告警规则。
 
-本地密码登录等能力当前通过进程内接口提供。仓库尚未提供 OAuth 2.0/OIDC、SCIM、Admin RBAC、
-完整 MFA 或审计的 HTTP 入口，因此当前试点不得宣称这些协议和外部工作流已经可用。新增 HTTP
-adapter 后必须补充协议一致性、安全性和端到端验收。
+OAuth 2.0/OIDC 和 SCIM discovery 已提供 HTTP 入口并纳入发布门禁。SCIM 用户和组 provisioning、
+Admin RBAC、完整 MFA 和审计 HTTP 入口尚未提供，因此当前试点不得宣称这些外部工作流已经可用。
+新增 HTTP adapter 后必须补充协议一致性、安全性和端到端验收。
 
 `compose.yaml` 和 `local` profile 只用于开发与发布验证，不是生产部署清单。
 
@@ -32,9 +34,10 @@ GitHub Actions 在 pull request、`master` push、手动触发和每周定时任
 2. Prometheus 告警规则单元测试；
 3. GraalVM Native Image 构建；
 4. 全新数据库迁移、探针、指标和 schema history 检查；
-5. Redis/PostgreSQL 中断、readiness 降级、liveness 保持和恢复；
-6. 缺少安全 secret 时的 fail-closed readiness；
-7. 重启迁移幂等性和 SIGTERM 优雅关闭。
+5. SCIM discovery、OAuth 2.0 Authorization Code、PKCE、OIDC 和 Refresh Token HTTP smoke；
+6. Redis/PostgreSQL 中断、readiness 降级、liveness 保持和恢复；
+7. 缺少安全 secret 时的 fail-closed readiness；
+8. 重启迁移幂等性和 SIGTERM 优雅关闭。
 
 `--smoke-only` 只用于复用已经构建的本地 Native 可执行文件，不是发布门禁的替代品。仓库管理员应将
 `Release verification` 配置为受保护分支的 required status check。workflow 文件本身不能设置分支
@@ -55,6 +58,7 @@ GitHub Actions 在 pull request、`master` push、手动触发和每周定时任
 | Redis | Redis 6.2+、TLS、认证、受限 key-prefix ACL 和高可用 |
 | 环境标签 | `IAM_DEPLOYMENT_ENVIRONMENT` 和 `IAM_SERVICE_NAMESPACE` |
 | Authorization issuer | `IAM_AUTHORIZATION_ISSUER`，稳定的环境专用 HTTPS URL |
+| SCIM base URL | `IAM_SCIM_BASE_URL`，以 `/scim/v2` 结尾的稳定 HTTPS URL |
 | Token 加密 key | `IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID` 和对应的 32 字节 Base64 key |
 | Signing key 加密 key | `IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID` 和对应的独立 32 字节 Base64 key |
 | 登录限流 secret | `IAM_LOGIN_RATE_LIMIT_KEY_SECRET`，独立的 32 字节以上 Base64 secret |
@@ -133,7 +137,7 @@ Redis 丢失后应按空库恢复：现有 challenge 全部失效，限流预算
 - LDAP 仅在启用时完成安全传输、allowlist 和故障验收；
 - Prometheus 抓取、告警接收和恢复通知已实际验证；
 - management 端点和探针不存在公网暴露；
-- 已明确记录尚未提供的 OAuth/OIDC、JWT、SCIM、Admin RBAC、完整 MFA 和审计 HTTP 能力。
+- 已明确记录尚未提供的 SCIM provisioning、机器客户端租户认证、Admin RBAC、完整 MFA 和审计 HTTP 能力。
 
-告警路由、生产部署清单、真实备份自动化和业务协议 HTTP smoke 仍由目标环境负责，不能以本地 Compose
+告警路由、生产部署清单、真实备份自动化和目标环境协议验收仍由目标环境负责，不能以本地 Compose
 或当前 release gate 代替。

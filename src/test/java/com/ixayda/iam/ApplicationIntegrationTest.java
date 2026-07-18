@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Import;
 		"iam.authorization.signing-key-protection.keys.test-v1=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
 		"iam.authorization.token-protection.active-key-id=test-v1",
 		"iam.authorization.token-protection.keys.test-v1=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		"iam.scim.base-url=https://scim.example.test/scim/v2",
 		"iam.ratelimit.login.key-prefix=iam:test:ratelimit",
 		"iam.ratelimit.login.key-secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 		"iam.security-state.key-prefix=iam:test:security-state",

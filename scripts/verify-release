@@ -12,6 +12,8 @@ app_pid=""
 app_port=""
 app_log=""
 metrics_file=""
+scim_body_file=""
+scim_headers_file=""
 
 log() {
 	printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
@@ -84,7 +86,26 @@ cleanup() {
 	fi
 	[[ -z "${app_log}" ]] || rm -f "${app_log}"
 	[[ -z "${metrics_file}" ]] || rm -f "${metrics_file}"
+	[[ -z "${scim_body_file}" ]] || rm -f "${scim_body_file}"
+	[[ -z "${scim_headers_file}" ]] || rm -f "${scim_headers_file}"
 	exit "${status}"
+}
+
+request_scim() {
+	local path=$1
+	local expected_status=$2
+	local actual_status
+	actual_status="$(curl --silent --show-error --connect-timeout 1 --max-time 5 \
+		--header 'Accept: application/scim+json' \
+		--dump-header "${scim_headers_file}" \
+		--output "${scim_body_file}" \
+		--write-out '%{http_code}' \
+		"http://127.0.0.1:${app_port}${path}")"
+	[[ "${actual_status}" == "${expected_status}" ]] \
+		|| fail "Expected SCIM ${path} to return ${expected_status}, found ${actual_status}"
+	grep -Eiq '^content-type:[[:space:]]*application/scim\+json([[:space:]]*;[^[:cntrl:]]*)?[[:space:]]*$' \
+		"${scim_headers_file}" \
+		|| fail "SCIM ${path} did not return application/scim+json"
 }
 
 wait_for_status() {
@@ -162,6 +183,7 @@ start_app() {
 		IAM_AUTHORIZATION_SIGNING_KEY_V1="${authorization_signing_key_secret}" \
 		IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID=v1 \
 		IAM_AUTHORIZATION_TOKEN_KEY_V1="${authorization_token_secret}" \
+		IAM_SCIM_BASE_URL=https://scim.release-check.invalid/scim/v2 \
 		IAM_LOGIN_RATE_LIMIT_KEY_SECRET="${login_secret_value}" \
 		IAM_SECURITY_STATE_KEY_SECRET="${security_state_secret_value}" \
 		IAM_DEPLOYMENT_ENVIRONMENT=release-check \
@@ -210,6 +232,8 @@ stop_app() {
 trap cleanup EXIT
 app_log="$(mktemp "${TMPDIR:-/tmp}/iam-release-app.XXXXXX")"
 metrics_file="$(mktemp "${TMPDIR:-/tmp}/iam-release-metrics.XXXXXX")"
+scim_body_file="$(mktemp "${TMPDIR:-/tmp}/iam-release-scim-body.XXXXXX")"
+scim_headers_file="$(mktemp "${TMPDIR:-/tmp}/iam-release-scim-headers.XXXXXX")"
 cd "${ROOT_DIR}"
 
 require_command curl
@@ -297,6 +321,38 @@ migration_count="$(successful_migration_count)"
 	|| fail "Expected ${#migration_files[@]} successful migrations, found ${migration_count}"
 signing_kid="$(active_signing_kid)"
 [[ "${signing_kid}" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "Persistent signing key was not initialized"
+
+log "Checking native SCIM discovery and protocol errors"
+request_scim /scim/v2/ServiceProviderConfig 200
+jq -e \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"]
+	 and .patch.supported == false
+	 and .bulk.supported == false
+	 and .filter.supported == false
+	 and .authenticationSchemes == []
+	 and .meta.resourceType == "ServiceProviderConfig"' \
+	"${scim_body_file}" >/dev/null || fail "SCIM service provider configuration is invalid"
+request_scim /scim/v2/Schemas 200
+jq -e \
+	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+	 and .totalResults == 0
+	 and .Resources == []' \
+	"${scim_body_file}" >/dev/null || fail "SCIM schema catalog is invalid"
+request_scim /scim/v2/ResourceTypes 200
+jq -e \
+	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+	 and .totalResults == 0
+	 and .Resources == []' \
+	"${scim_body_file}" >/dev/null || fail "SCIM resource type catalog is invalid"
+request_scim /scim/v2/Schemas/unknown 404
+jq -e \
+	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "404"' \
+	"${scim_body_file}" >/dev/null || fail "SCIM not-found response is invalid"
+request_scim /scim/v2/Users 403
+jq -e \
+	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "403"' \
+	"${scim_body_file}" >/dev/null || fail "Closed SCIM provisioning response is invalid"
+
 curl --fail --silent --show-error --max-time 5 \
 	"http://127.0.0.1:${app_port}/actuator/prometheus" >"${metrics_file}"
 grep -q 'http_server_requests_seconds_bucket' "${metrics_file}" || fail "HTTP latency buckets are missing"

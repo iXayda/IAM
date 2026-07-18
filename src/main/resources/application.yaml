@@ -76,6 +76,8 @@ management:
       probability: 0.1
 
 iam:
+  scim:
+    base-url: ${IAM_SCIM_BASE_URL:}
   authorization:
     persistence:
       pending-authorization-ttl: ${IAM_AUTHORIZATION_PENDING_TTL:10m}
