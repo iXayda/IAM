@@ -126,6 +126,7 @@ IAM 不负责：
 - SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - 租户隔离的 SCIM User 单资源读取、属性选择和统一的资源不可见响应
 - 有界的 SCIM Users 集合分页，以及 `id`、`userName` 精确查询
+- 租户隔离的 SCIM User 创建、受限可写属性和不泄露标识的唯一性冲突响应
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
 - Redis 一次性安全状态、租户与用途绑定、原子消费和自动过期
@@ -233,13 +234,18 @@ GET /scim/v2/ResourceTypes
 GET /scim/v2/ResourceTypes/{id}
 GET /scim/v2/Users
 GET /scim/v2/Users/{id}
+POST /scim/v2/Users
 ```
 
-discovery 接口匿名开放。Users 读取接口使用带 `scim.read` scope 的机器 token，并且只从已验证的
-`tenant_id` claim 确定租户。集合查询支持 `startIndex`、`count`，以及未在 discovery 中宣告为通用
-filtering 能力的 `id eq`、`userName eq` 精确查询；
-单资源和集合均支持 `attributes`、`excludedAttributes`。Users 创建、更新、删除以及 Groups
-provisioning 尚未实现。
+discovery 接口匿名开放。Users 读取使用带 `scim.read` scope 的机器 token，创建使用 `scim.write`，
+并且只从已验证的 `tenant_id` claim 确定租户。集合查询支持 `startIndex`、`count`，以及未在 discovery
+中宣告为通用 filtering 能力的 `id eq`、`userName eq` 精确查询；所有返回资源的操作均支持
+`attributes`、`excludedAttributes`。
+
+创建 User 时 `userName` 和唯一的 core User schema URN 必填；支持 `displayName`、`name.formatted`、
+`name.givenName`、`name.familyName`、单个 `emails.value`、单个 `phoneNumbers.value` 和 `active`。
+`id`、`meta`、`groups` 按 read-only 规则忽略，其他未发布的写属性返回固定 `invalidValue`。
+Users 更新、删除以及 Groups provisioning 尚未实现。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：

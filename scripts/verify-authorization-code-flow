@@ -422,6 +422,29 @@ jq -e \
 	 and (.refresh_token | not) and (.id_token | not)' \
 	"${service_token_response}" >/dev/null || fail "Client Credentials write-token response is invalid"
 service_write_access_token="$(jq -er '.access_token' "${service_token_response}")"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --request POST \
+	--header 'Accept: application/scim+json' --header 'Content-Type: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	--data '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"release-created-user","active":false}' \
+	"${base_url}/scim/v2/Users")"
+[[ "${status}" == "201" ]] || fail "SCIM write token did not create a tenant user: HTTP ${status}"
+created_scim_user_id="$(jq -er '.id' "${body}")"
+created_scim_user_location="${scim_base_url}/Users/${created_scim_user_id}"
+jq -e --arg location "${created_scim_user_location}" \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:User"]
+	 and .userName == "release-created-user" and .active == false
+	 and .meta.resourceType == "User" and .meta.location == $location
+	 and (has("password") | not)' \
+	"${body}" >/dev/null || fail "Created SCIM User representation is invalid"
+[[ "$(header_value Location "${headers}")" == "${created_scim_user_location}" \
+	&& "$(header_value Content-Location "${headers}")" == "${created_scim_user_location}" ]] \
+	|| fail "Created SCIM User location headers are invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Users/${created_scim_user_id}")"
+[[ "${status}" == "200" ]] && jq -e '.userName == "release-created-user" and .active == false' "${body}" >/dev/null \
+	|| fail "Created SCIM User was not readable through the native service"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request POST --header 'Accept: application/scim+json' \
 	--header "Authorization: Bearer ${service_write_access_token}" "${base_url}/scim/v2/Groups")"

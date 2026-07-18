@@ -42,7 +42,7 @@ final class ScimRuntimeHints implements RuntimeHintsRegistrar {
 			ChangePasswordConfig.class, SortConfig.class, ETagConfig.class, PaginationConfig.class,
 			AuthenticationScheme.class, ListResponse.class, SchemaResource.class, ResourceTypeResource.class,
 			ResourceTypeResource.SchemaExtension.class, AttributeDefinition.class, Meta.class, ErrorResponse.class,
-			UserResource.class, Name.class, Email.class, PhoneNumber.class, Address.class,
+			UserResource.class, ScimUserCreateResource.class, Name.class, Email.class, PhoneNumber.class, Address.class,
 			InstantMessagingAddress.class, Photo.class, Group.class, Entitlement.class, Role.class,
 			X509Certificate.class, StatusSerializer.class, StatusDeserializer.class);
 

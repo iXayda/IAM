@@ -19,7 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -105,8 +105,13 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.Resources", hasSize(1)))
 			.andExpect(jsonPath("$.Resources[0].id").value(ScimUserSchema.URN))
 			.andExpect(jsonPath("$.Resources[0].name").value("User"))
-			.andExpect(jsonPath("$.Resources[0].attributes[*].name", hasItem("userName")))
-			.andExpect(jsonPath("$.Resources[0].attributes[*].name", hasItem("password")))
+			.andExpect(jsonPath("$.Resources[0].attributes", hasSize(6)))
+			.andExpect(jsonPath("$.Resources[0].attributes[*].name", containsInAnyOrder(
+					"userName", "name", "displayName", "active", "emails", "phoneNumbers")))
+			.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'name')].subAttributes[*].name",
+					containsInAnyOrder("formatted", "givenName", "familyName")))
+			.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'emails')].subAttributes[*].name",
+					containsInAnyOrder("value")))
 			.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("Schema"));
 
 		this.mockMvc.perform(get("/scim/v2/ResourceTypes").accept(SCIM_JSON))

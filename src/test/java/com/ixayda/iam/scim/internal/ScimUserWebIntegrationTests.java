@@ -20,6 +20,7 @@ import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserOperations;
 import com.ixayda.iam.user.UserProfile;
+import com.ixayda.iam.user.UserStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +37,8 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
@@ -43,6 +46,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -62,6 +66,8 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 	private static final String AUDIENCE = "https://scim.example.test/scim/v2";
 
 	private static final String CLIENT_ID = "scim-user-reader";
+
+	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private final List<TenantId> tenantsToDelete = new ArrayList<>();
 
@@ -132,6 +138,196 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.externalId").doesNotExist())
 			.andExpect(jsonPath("$.password").doesNotExist())
 			.andExpect(jsonPath("$.groups").doesNotExist());
+	}
+
+	@Test
+	void createsAnInactiveTenantScopedUserAndIgnoresReadOnlyAttributes() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		String request = """
+				{
+				  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+				  "id": "client-controlled-id",
+				  "meta": {"location": "https://attacker.example.test/Users/1"},
+				  "groups": [{"value": "client-controlled-group"}],
+				  "userName": "provisioned-user",
+				  "displayName": "Provisioned User",
+				  "name": {
+				    "formatted": "Provisioned Q. User",
+				    "givenName": "Provisioned",
+				    "familyName": "User"
+				  },
+				  "emails": [{"value": "Provisioned@Example.com"}],
+				  "phoneNumbers": [{"value": "tel:+1-555-123-4500"}],
+				  "active": false
+				}
+				""";
+
+		MvcResult result = this.mockMvc.perform(post("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("tenant_id", other.id().toString())
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isCreated())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ScimUserSchema.URN))
+			.andExpect(jsonPath("$.id").isNotEmpty())
+			.andExpect(jsonPath("$.id").value(not("client-controlled-id")))
+			.andExpect(jsonPath("$.userName").value("provisioned-user"))
+			.andExpect(jsonPath("$.displayName").value("Provisioned User"))
+			.andExpect(jsonPath("$.name.formatted").value("Provisioned Q. User"))
+			.andExpect(jsonPath("$.emails[0].value").value("provisioned@example.com"))
+			.andExpect(jsonPath("$.phoneNumbers[0].value").value("tel:+15551234500"))
+			.andExpect(jsonPath("$.active").value(false))
+			.andExpect(jsonPath("$.groups").doesNotExist())
+			.andExpect(jsonPath("$.meta.location").isNotEmpty())
+			.andReturn();
+
+		JsonNode body = JSON.readTree(result.getResponse().getContentAsString());
+		String id = body.get("id").stringValue();
+		String location = "https://scim.example.test/scim/v2/Users/" + id;
+		assertThat(result.getResponse().getHeader(HttpHeaders.LOCATION)).isEqualTo(location);
+		assertThat(result.getResponse().getHeader(HttpHeaders.CONTENT_LOCATION)).isEqualTo(location);
+		assertThat(body.get("meta").get("location").stringValue()).isEqualTo(location);
+
+		User stored = this.users.findById(tenant.id(), com.ixayda.iam.user.UserId.from(id)).orElseThrow();
+		assertThat(stored.tenantId()).isEqualTo(tenant.id());
+		assertThat(stored.status()).isEqualTo(UserStatus.DISABLED);
+		assertThat(stored.identifiers()).containsExactly(LoginIdentifier.username("provisioned-user"),
+				LoginIdentifier.email("Provisioned@Example.com"), LoginIdentifier.phone("+1-555-123-4500"));
+		assertThat(this.users.findById(other.id(), stored.id())).isEmpty();
+	}
+
+	@Test
+	void appliesResponseProjectionWhileAlwaysReturningTheCreatedLocation() throws Exception {
+		Tenant tenant = createTenant();
+		String request = """
+				{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"projected-user"}
+				""";
+
+		this.mockMvc.perform(post("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("attributes", "userName")
+			.contentType(MediaType.APPLICATION_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.id").isNotEmpty())
+			.andExpect(jsonPath("$.userName").value("projected-user"))
+			.andExpect(jsonPath("$.active").doesNotExist())
+			.andExpect(jsonPath("$.meta.location").isNotEmpty())
+			.andExpect(jsonPath("$.meta.created").doesNotExist());
+	}
+
+	@Test
+	void returnsAConfidentialUniquenessConflictWithoutCommittingPartialUsers() throws Exception {
+		Tenant tenant = createTenant();
+		createUser(tenant.id(), "duplicate-user");
+		createUser(tenant.id());
+		String usernameConflict = """
+				{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],
+				 "userName":"duplicate-user","emails":[{"value":"secret-conflict@example.com"}]}
+				""";
+		String emailConflict = """
+				{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],
+				 "userName":"unique-email-user","emails":[{"value":"DUPLICATE-USER@example.COM"}]}
+				""";
+		String phoneConflict = """
+				{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],
+				 "userName":"unique-phone-user","phoneNumbers":[{"value":"tel:+15551234567"}]}
+				""";
+
+		String authorization = bearer(token(tenant.id(), "scim.write"));
+		assertCreateConflict(authorization, usernameConflict, "duplicate-user", "secret-conflict@example.com");
+		assertCreateConflict(authorization, emailConflict, "DUPLICATE-USER@example.COM");
+		assertCreateConflict(authorization, phoneConflict, "tel:+15551234567");
+
+		assertThat(this.jdbcClient.sql("SELECT count(*) FROM users WHERE tenant_id = :tenantId")
+			.param("tenantId", tenant.id().value())
+			.query(Long.class)
+			.single()).isEqualTo(2);
+	}
+
+	@Test
+	void rejectsInvalidCreateBodiesWithoutReflectingTheirValues() throws Exception {
+		Tenant tenant = createTenant();
+		String authorization = bearer(token(tenant.id(), "scim.write"));
+
+		assertCreateError(authorization, "{not-json", "invalidSyntax", null);
+		assertCreateError(authorization, "", "invalidSyntax", null);
+		assertCreateError(authorization, "{\"schemas\":null,\"userName\":\"null-schemas-user\"}",
+				"invalidValue", null);
+		assertCreateError(authorization, "{\"schemas\":[],\"userName\":\"empty-schemas-user\"}",
+				"invalidValue", null);
+		assertCreateError(authorization,
+				"{\"schemas\":[\"" + ScimUserSchema.URN + "\"],\"userName\":\"alice\","
+						+ "\"password\":\"secret-password-value\"}",
+				"invalidValue", "secret-password-value");
+		assertCreateError(authorization,
+				"{\"schemas\":[\"urn:example:unsupported:User\"],\"userName\":\"alice\"}",
+				"invalidValue", "urn:example:unsupported:User");
+		assertCreateError(authorization,
+				"{\"schemas\":[\"" + ScimUserSchema.URN
+						+ "\",\"urn:example:unsupported:User\"],\"userName\":\"alice\"}",
+				"invalidValue", "urn:example:unsupported:User");
+		assertCreateError(authorization,
+				"{\"schemas\":[\"" + ScimUserSchema.URN + "\",\"" + ScimUserSchema.URN
+						+ "\"],\"userName\":\"duplicate-schemas-user\"}",
+				"invalidValue", null);
+		assertCreateError(authorization, "{\"userName\":\"missing-schemas-user\"}", "invalidValue", null);
+		assertCreateError(authorization,
+				"{\"schemas\":[\"" + ScimUserSchema.URN + "\"],\"userName\":\"alice\",\"emails\":\"bad-type\"}",
+				"invalidValue", "bad-type");
+		assertCreateError(authorization, "{\"schemas\":[\"" + ScimUserSchema.URN + "\"]}",
+				"invalidValue", null);
+	}
+
+	@Test
+	void rejectsScalarCoercionForCreateAttributesWithoutPersistingAUser() throws Exception {
+		Tenant tenant = createTenant();
+		String authorization = bearer(token(tenant.id(), "scim.write"));
+		String prefix = "{\"schemas\":[\"" + ScimUserSchema.URN + "\"],";
+		List<String> requests = List.of(
+				prefix + "\"userName\":123}",
+				prefix + "\"userName\":\"typed-display\",\"displayName\":123}",
+				prefix + "\"userName\":\"typed-formatted\",\"name\":{\"formatted\":123}}",
+				prefix + "\"userName\":\"typed-given\",\"name\":{\"givenName\":true}}",
+				prefix + "\"userName\":\"typed-family\",\"name\":{\"familyName\":123.5}}",
+				prefix + "\"userName\":\"typed-email\",\"emails\":[{\"value\":123}]}",
+				prefix + "\"userName\":\"typed-phone\",\"phoneNumbers\":[{\"value\":123}]}",
+				prefix + "\"userName\":\"typed-active-string\",\"active\":\"false\"}",
+				prefix + "\"userName\":\"typed-active-empty\",\"active\":\"\"}",
+				prefix + "\"userName\":\"typed-active-blank\",\"active\":\"   \"}",
+				prefix + "\"userName\":\"typed-active-number\",\"active\":0}");
+
+		for (String request : requests) {
+			assertCreateError(authorization, request, "invalidValue", null);
+		}
+
+		assertThat(this.jdbcClient.sql("SELECT count(*) FROM users WHERE tenant_id = :tenantId")
+			.param("tenantId", tenant.id().value())
+			.query(Long.class)
+			.single()).isZero();
+	}
+
+	@Test
+	void rejectsCreatesForDisabledTenantsWithoutPersistingAUser() throws Exception {
+		Tenant tenant = createTenant();
+		this.tenants.disable(tenant.id());
+
+		this.mockMvc.perform(post("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content("{\"schemas\":[\"" + ScimUserSchema.URN + "\"],\"userName\":\"disabled-tenant-user\"}"))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL));
+
+		assertThat(this.jdbcClient.sql("SELECT count(*) FROM users WHERE tenant_id = :tenantId")
+			.param("tenantId", tenant.id().value())
+			.query(Long.class)
+			.single()).isZero();
 	}
 
 	@Test
@@ -395,6 +591,39 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
 			.andReturn();
 		return result.getResponse().getContentAsString();
+	}
+
+	private void assertCreateError(String authorization, String request, String scimType, String secret)
+			throws Exception {
+		var response = this.mockMvc.perform(post("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("400"))
+			.andExpect(jsonPath("$.scimType").value(scimType));
+		if (secret != null) {
+			response.andExpect(content().string(not(containsString(secret))));
+		}
+	}
+
+	private void assertCreateConflict(String authorization, String request, String... secrets) throws Exception {
+		var response = this.mockMvc.perform(post("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isConflict())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("409"))
+			.andExpect(jsonPath("$.scimType").value("uniqueness"));
+		for (String secret : secrets) {
+			response.andExpect(content().string(not(containsString(secret))));
+		}
 	}
 
 	private Tenant createTenant() {

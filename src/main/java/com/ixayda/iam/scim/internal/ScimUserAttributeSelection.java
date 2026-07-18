@@ -26,9 +26,12 @@ final class ScimUserAttributeSelection {
 
 	private final List<List<String>> paths;
 
-	private ScimUserAttributeSelection(Mode mode, List<List<String>> paths) {
+	private final List<List<String>> requiredPaths;
+
+	private ScimUserAttributeSelection(Mode mode, List<List<String>> paths, List<List<String>> requiredPaths) {
 		this.mode = mode;
 		this.paths = List.copyOf(paths);
+		this.requiredPaths = List.copyOf(requiredPaths);
 	}
 
 	static ScimUserAttributeSelection parse(List<String> attributes, List<String> excludedAttributes)
@@ -37,15 +40,22 @@ final class ScimUserAttributeSelection {
 			throw invalidSelection();
 		}
 		if (attributes == null && excludedAttributes == null) {
-			return new ScimUserAttributeSelection(Mode.ALL, List.of());
+			return new ScimUserAttributeSelection(Mode.ALL, List.of(), List.of());
 		}
 		return new ScimUserAttributeSelection(attributes == null ? Mode.EXCLUDE : Mode.INCLUDE,
-				parsePaths(attributes == null ? excludedAttributes : attributes));
+				parsePaths(attributes == null ? excludedAttributes : attributes), List.of());
+	}
+
+	ScimUserAttributeSelection requiring(String... attributePath) {
+		List<List<String>> required = new ArrayList<>(this.requiredPaths);
+		required.add(normalize(attributePath));
+		return new ScimUserAttributeSelection(this.mode, this.paths, required);
 	}
 
 	boolean includes(String... attributePath) {
 		List<String> candidate = normalize(attributePath);
-		if (isAlwaysReturned(candidate)) {
+		if (isAlwaysReturned(candidate) || this.requiredPaths.stream()
+			.anyMatch((required) -> isPrefix(required, candidate) || isPrefix(candidate, required))) {
 			return true;
 		}
 		return switch (this.mode) {

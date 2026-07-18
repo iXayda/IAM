@@ -16,6 +16,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -65,6 +67,25 @@ final class ScimUserController {
 				query.startIndex(), resources.size());
 		URI location = this.properties.endpoint(USERS_PATH);
 		return ResponseEntity.ok().header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString()).body(response);
+	}
+
+	@PostMapping(value = USERS_PATH,
+			consumes = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE },
+			produces = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE })
+	ResponseEntity<UserResource> createUser(@AuthenticationPrincipal Jwt jwt, @RequestBody ScimUserCreateResource resource,
+			@RequestParam(name = "attributes", required = false) List<String> attributes,
+			@RequestParam(name = "excludedAttributes", required = false) List<String> excludedAttributes)
+			throws ScimException {
+		ScimUserAttributeSelection selection = ScimUserAttributeSelection.parse(attributes, excludedAttributes)
+			.requiring("meta", "location");
+		ScimUserCreateRequest command = ScimUserCreateRequest.parse(resource);
+		TenantId tenantId = this.tenantResolver.resolve(jwt);
+		User created = this.users.create(tenantId, command);
+		URI location = this.properties.endpoint(USERS_PATH, created.id().toString());
+		UserResource response = this.mapper.map(created, location, selection);
+		return ResponseEntity.created(location)
+			.header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString())
+			.body(response);
 	}
 
 	@GetMapping(value = USERS_PATH + "/{id}",

@@ -5,16 +5,19 @@ import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.User;
+import com.ixayda.iam.user.UserAlreadyExistsException;
 import com.ixayda.iam.user.UserDirectoryQuery;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserOperations;
 import com.ixayda.iam.user.UserPage;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
+import com.unboundid.scim2.common.exceptions.ResourceConflictException;
 import com.unboundid.scim2.common.exceptions.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
-final class ScimUserService {
+class ScimUserService {
 
 	private static final String NOT_FOUND_DETAIL = "The requested SCIM user was not found.";
 
@@ -58,6 +61,22 @@ final class ScimUserService {
 			throw BadRequestException.tooMany("The SCIM User query matched too many resources.");
 		}
 		return page;
+	}
+
+	@Transactional(rollbackFor = com.unboundid.scim2.common.exceptions.ScimException.class)
+	public User create(TenantId tenantId, ScimUserCreateRequest command)
+			throws ResourceConflictException, ResourceNotFoundException {
+		try {
+			User created = this.users.create(tenantId, command.request());
+			return command.active() ? created : this.users.disable(tenantId, created.id());
+		}
+		catch (UserAlreadyExistsException exception) {
+			throw ResourceConflictException.uniqueness(
+					"A SCIM User with the same login identifier already exists.");
+		}
+		catch (TenantDisabledException | TenantNotFoundException exception) {
+			throw notFound();
+		}
 	}
 
 	private static ResourceNotFoundException notFound() {
