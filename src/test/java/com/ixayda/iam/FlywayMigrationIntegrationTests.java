@@ -79,7 +79,7 @@ class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void createsTheBuiltInTenant() {
-		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success")).isEqualTo(14);
+		assertThat(count("SELECT count(*) FROM flyway_schema_history WHERE success")).isEqualTo(15);
 		assertThat(count("SELECT count(*) FROM tenants")).isOne();
 		assertThat(this.jdbcClient.sql("SELECT status FROM tenants WHERE slug = 'default'")
 			.query(String.class)

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Tenant-scoped directory groups with non-unique display names, optimistic updates, and soft deletion.
 - Structured user profiles with independent directory and security revisions.
 - Tenant-bound local password login for authorization requests with CSRF protection and issuer-bound redirects.
 - Encrypted current refresh-token persistence with atomic access, refresh, and ID token rotation.

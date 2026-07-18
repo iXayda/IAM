@@ -32,10 +32,10 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalData(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(11);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(12);
 
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(14);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(15);
 			assertThat(count(jdbc, schema, "tenants")).isEqualTo(2);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(identifier(jdbc, schema)).isEqualTo("Alice@example.com|alice@example.com");
@@ -64,7 +64,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(3);
 			assertThat(jdbc.sql("""
 					SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
 					FROM %s.oauth_clients
@@ -72,7 +72,34 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).query(String.class).single())
 				.isEqualTo("false|3600");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(14);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(15);
+			assertThat(current.migrate().migrationsExecuted).isZero();
+		}
+		finally {
+			jdbc.sql("DROP SCHEMA IF EXISTS " + schema + " CASCADE").update();
+		}
+	}
+
+	@Test
+	void upgradesTheProfileSchemaToDirectoryGroups() {
+		String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		JdbcClient jdbc = JdbcClient.create(this.dataSource);
+		try {
+			Flyway historical = flyway(schema, "14");
+			assertThat(historical.migrate().migrationsExecuted).isEqualTo(14);
+
+			Flyway current = flyway(schema, null);
+			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.validateWithResult().validationSuccessful).isTrue();
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(15);
+			assertThat(count(jdbc, schema, "groups")).isZero();
+			jdbc.sql("""
+					INSERT INTO %s.groups (group_id, tenant_id, display_name)
+					VALUES (:groupId, '00000000-0000-0000-0000-000000000001', 'Upgrade Group')
+					""".formatted(schema))
+				.param("groupId", UUID.randomUUID())
+				.update();
+			assertThat(count(jdbc, schema, "groups")).isOne();
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
