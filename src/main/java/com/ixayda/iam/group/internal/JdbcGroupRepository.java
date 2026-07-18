@@ -148,6 +148,39 @@ class JdbcGroupRepository {
 		return requireSingleUpdate(current, changed, affected);
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY, noRollbackFor = GroupConcurrentUpdateException.class)
+	Group updateMembers(Group current, Group changed) {
+		Objects.requireNonNull(current, "Current group must not be null");
+		Objects.requireNonNull(changed, "Changed group must not be null");
+		requireWriteTransaction();
+		if (!sameIdentity(current, changed) || !current.displayName().equals(changed.displayName())
+				|| current.status() != GroupStatus.ACTIVE || changed.status() != GroupStatus.ACTIVE
+				|| current.version() == Long.MAX_VALUE || changed.version() != current.version() + 1
+				|| changed.updatedAt().isBefore(current.updatedAt())) {
+			throw new IllegalArgumentException(
+					"Group membership update must preserve ownership and profile, and advance one version");
+		}
+
+		int affected = this.jdbcClient.sql("""
+				UPDATE groups
+				SET version = :newVersion, updated_at = :updatedAt
+				WHERE tenant_id = :tenantId
+				  AND group_id = :groupId
+				  AND display_name = :expectedDisplayName
+				  AND status = :expectedStatus
+				  AND version = :expectedVersion
+				""")
+			.param("newVersion", changed.version())
+			.param("updatedAt", databaseValue(changed.updatedAt()))
+			.param("tenantId", current.tenantId().value())
+			.param("groupId", current.id().value())
+			.param("expectedDisplayName", current.displayName())
+			.param("expectedStatus", databaseValue(current.status()))
+			.param("expectedVersion", current.version())
+			.update();
+		return requireSingleUpdate(current, changed, affected);
+	}
+
 	private Optional<Group> findByIdWithLock(TenantId tenantId, GroupId groupId, String lockClause) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(groupId, "Group ID must not be null");

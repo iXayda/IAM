@@ -281,6 +281,49 @@ class JdbcUserRepository {
 		return changed;
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY, noRollbackFor = UserConcurrentUpdateException.class)
+	public User updateMemberships(User current, User changed) {
+		Objects.requireNonNull(current, "Current user must not be null");
+		Objects.requireNonNull(changed, "Changed user must not be null");
+		requireWriteTransaction();
+		if (!current.id().equals(changed.id()) || !current.tenantId().equals(changed.tenantId())
+				|| !current.identifiers().equals(changed.identifiers())
+				|| !current.profile().equals(changed.profile()) || current.status() != changed.status()
+				|| !current.createdAt().equals(changed.createdAt())
+				|| !Objects.equals(current.lastLoginAt(), changed.lastLoginAt()) || current.isDeleted()
+				|| current.version() == Long.MAX_VALUE || changed.version() != current.version() + 1
+				|| changed.securityVersion() != current.securityVersion()
+				|| changed.updatedAt().isBefore(current.updatedAt())) {
+			throw new IllegalArgumentException(
+					"User membership update must preserve ownership and lifecycle state, and advance one directory version");
+		}
+
+		int affected = this.jdbcClient.sql("""
+				UPDATE users
+				SET version = :newVersion, updated_at = :updatedAt
+				WHERE tenant_id = :tenantId
+				  AND user_id = :userId
+				  AND version = :expectedVersion
+				  AND security_version = :expectedSecurityVersion
+				  AND status = :expectedStatus
+				""")
+			.param("newVersion", changed.version())
+			.param("updatedAt", databaseValue(changed.updatedAt()))
+			.param("tenantId", current.tenantId().value())
+			.param("userId", current.id().value())
+			.param("expectedVersion", current.version())
+			.param("expectedSecurityVersion", current.securityVersion())
+			.param("expectedStatus", databaseValue(current.status()))
+			.update();
+		if (affected == 0) {
+			throw new UserConcurrentUpdateException(current.tenantId(), current.id(), current.version());
+		}
+		if (affected != 1) {
+			throw new IllegalStateException("Updating user memberships affected an unexpected number of rows: " + affected);
+		}
+		return changed;
+	}
+
 	private void insertIdentifier(User user, LoginIdentifier identifier) {
 		int affected = this.jdbcClient.sql("""
 				INSERT INTO user_login_identifiers

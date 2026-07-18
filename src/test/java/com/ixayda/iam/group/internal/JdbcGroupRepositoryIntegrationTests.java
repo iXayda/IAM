@@ -82,6 +82,17 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void updatesMembershipRevisionsWithTenantScopedOptimisticLocking() {
+		Group current = insert(group(TenantId.DEFAULT, "Engineering", GroupStatus.ACTIVE, 0, CREATED_AT));
+		Group changed = current.membersChanged(CREATED_AT.plusSeconds(1));
+
+		assertThat(updateMembers(current, changed)).isEqualTo(changed);
+		assertThat(this.repository.findById(TenantId.DEFAULT, current.id())).contains(changed);
+		assertThatThrownBy(() -> updateMembers(current, changed))
+			.isInstanceOf(GroupConcurrentUpdateException.class);
+	}
+
+	@Test
 	void rejectsForgedGroupChanges() {
 		Group current = group(TenantId.DEFAULT, "Engineering", GroupStatus.ACTIVE, 0, CREATED_AT);
 		Group moved = new Group(current.id(), SECOND_TENANT_ID, "Platform", GroupStatus.ACTIVE, 1,
@@ -92,11 +103,19 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 				current.createdAt(), current.updatedAt().plusSeconds(1));
 		Group changedProfileOnDelete = new Group(current.id(), current.tenantId(), "Platform", GroupStatus.DELETED, 1,
 				current.createdAt(), current.updatedAt().plusSeconds(1));
+		Group changedProfileOnMembers = new Group(current.id(), current.tenantId(), "Platform", GroupStatus.ACTIVE, 1,
+				current.createdAt(), current.updatedAt().plusSeconds(1));
+		Group skippedMemberVersion = new Group(current.id(), current.tenantId(), current.displayName(), GroupStatus.ACTIVE,
+				2, current.createdAt(), current.updatedAt().plusSeconds(1));
 
 		assertThatThrownBy(() -> updateDisplayName(current, moved)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> updateDisplayName(current, changedStatus)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> updateDisplayName(current, skippedVersion)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> delete(current, changedProfileOnDelete)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> updateMembers(current, changedProfileOnMembers))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> updateMembers(current, skippedMemberVersion))
+			.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test
@@ -104,6 +123,8 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 		Group group = group(TenantId.DEFAULT, "Engineering", GroupStatus.ACTIVE, 0, CREATED_AT);
 
 		assertThatThrownBy(() -> this.repository.insert(group)).isInstanceOf(IllegalTransactionStateException.class);
+		assertThatThrownBy(() -> this.repository.updateMembers(group, group.membersChanged(CREATED_AT.plusSeconds(1))))
+			.isInstanceOf(IllegalTransactionStateException.class);
 		insert(group);
 		assertThatThrownBy(() -> this.repository.findByIdForUpdate(TenantId.DEFAULT, group.id()))
 			.isInstanceOf(IllegalTransactionStateException.class);
@@ -134,6 +155,10 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 
 	private Group delete(Group current, Group changed) {
 		return transactionTemplate().execute(status -> this.repository.delete(current, changed));
+	}
+
+	private Group updateMembers(Group current, Group changed) {
+		return transactionTemplate().execute(status -> this.repository.updateMembers(current, changed));
 	}
 
 	private TransactionTemplate transactionTemplate() {

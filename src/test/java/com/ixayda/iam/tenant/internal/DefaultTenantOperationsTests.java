@@ -42,6 +42,15 @@ class DefaultTenantOperationsTests {
 	}
 
 	@Test
+	void usesAnExclusiveLockForCrossAggregateWrites() {
+		Tenant active = tenant(TenantStatus.ACTIVE, 0, CREATED_AT);
+		when(this.repository.findByIdForUpdate(TENANT_ID)).thenReturn(Optional.of(active));
+
+		assertThat(this.operations.requireActiveForExclusiveWrite(TENANT_ID)).isEqualTo(active);
+		verify(this.repository).findByIdForUpdate(TENANT_ID);
+	}
+
+	@Test
 	void returnsTheLatestTenantWhenAConcurrentRequestReachedTheTargetStatus() {
 		Tenant active = tenant(TenantStatus.ACTIVE, 0, CREATED_AT);
 		Tenant disabled = tenant(TenantStatus.DISABLED, 3, CREATED_AT.plusSeconds(3));

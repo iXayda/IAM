@@ -1,6 +1,7 @@
 package com.ixayda.iam.user.internal;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiFunction;
@@ -13,6 +14,7 @@ import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserConcurrentUpdateException;
+import com.ixayda.iam.user.UserDeletionParticipant;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserNotFoundException;
@@ -33,10 +35,14 @@ class DefaultUserOperations implements UserOperations {
 
 	private final UserTimeSource timeSource;
 
-	DefaultUserOperations(JdbcUserRepository repository, TenantOperations tenants, UserTimeSource timeSource) {
+	private final List<UserDeletionParticipant> deletionParticipants;
+
+	DefaultUserOperations(JdbcUserRepository repository, TenantOperations tenants, UserTimeSource timeSource,
+			List<UserDeletionParticipant> deletionParticipants) {
 		this.repository = repository;
 		this.tenants = tenants;
 		this.timeSource = timeSource;
+		this.deletionParticipants = List.copyOf(deletionParticipants);
 	}
 
 	@Override
@@ -111,6 +117,37 @@ class DefaultUserOperations implements UserOperations {
 	}
 
 	@Override
+	@Transactional(propagation = Propagation.MANDATORY,
+			noRollbackFor = { TenantDisabledException.class, TenantNotFoundException.class,
+					UserNotFoundException.class })
+	public User requireNotDeletedForWrite(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		this.tenants.requireActiveForWrite(tenantId);
+		User user = this.repository.findByIdForShare(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		if (user.isDeleted()) {
+			throw new UserNotFoundException(tenantId, userId);
+		}
+		return user;
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public User recordMembershipChangeForWrite(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		this.tenants.requireActiveForWrite(tenantId);
+		User current = this.repository.findByIdForUpdate(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		if (current.isDeleted()) {
+			throw new UserNotFoundException(tenantId, userId);
+		}
+		User changed = current.membershipsChanged(transitionTime(current));
+		return this.repository.updateMemberships(current, changed);
+	}
+
+	@Override
 	@Transactional
 	public User activate(TenantId tenantId, UserId userId) {
 		return changeStatus(tenantId, userId, User::activate);
@@ -131,7 +168,15 @@ class DefaultUserOperations implements UserOperations {
 	@Override
 	@Transactional
 	public User delete(TenantId tenantId, UserId userId) {
-		return changeStatus(tenantId, userId, User::delete);
+		this.tenants.requireActiveForExclusiveWrite(tenantId);
+		User current = this.repository.findByIdForUpdate(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		User changed = current.delete(transitionTime(current));
+		if (changed == current) {
+			return current;
+		}
+		this.deletionParticipants.forEach(participant -> participant.beforeDelete(current));
+		return this.repository.updateStatus(current, changed);
 	}
 
 	private User changeStatus(TenantId tenantId, UserId userId, BiFunction<User, Instant, User> transition) {

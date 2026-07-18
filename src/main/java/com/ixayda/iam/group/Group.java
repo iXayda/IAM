@@ -57,6 +57,16 @@ public record Group(GroupId id, TenantId tenantId, String displayName, GroupStat
 				Math.incrementExact(this.version), this.createdAt, changedAt);
 	}
 
+	public Group membersChanged(Instant changedAt) {
+		Objects.requireNonNull(changedAt, "Group membership change time must not be null");
+		if (isDeleted()) {
+			throw new IllegalStateException("Deleted group members cannot be changed");
+		}
+		validateChangeTime(changedAt);
+		return new Group(this.id, this.tenantId, this.displayName, this.status, Math.incrementExact(this.version),
+				this.createdAt, changedAt);
+	}
+
 	@Override
 	public String toString() {
 		return "Group[id=" + this.id + ", tenantId=" + this.tenantId + ", status=" + this.status + ", version="

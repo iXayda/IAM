@@ -80,6 +80,18 @@ public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifie
 				Math.incrementExact(this.version), this.securityVersion, this.createdAt, changedAt, this.lastLoginAt);
 	}
 
+	public User membershipsChanged(Instant changedAt) {
+		Objects.requireNonNull(changedAt, "User membership change time must not be null");
+		if (isDeleted()) {
+			throw new IllegalStateException("Deleted user memberships cannot be changed");
+		}
+		if (changedAt.isBefore(this.updatedAt)) {
+			throw new IllegalArgumentException("User membership change time must not be before its last update");
+		}
+		return new User(this.id, this.tenantId, this.identifiers, this.profile, this.status,
+				Math.incrementExact(this.version), this.securityVersion, this.createdAt, changedAt, this.lastLoginAt);
+	}
+
 	@Override
 	public String toString() {
 		return "User[id=" + this.id + ", tenantId=" + this.tenantId + ", status=" + this.status + ", version="

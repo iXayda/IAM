@@ -70,6 +70,19 @@ class DefaultTenantOperations implements TenantOperations {
 		return requireActive(tenant);
 	}
 
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY,
+			noRollbackFor = { TenantDisabledException.class, TenantNotFoundException.class })
+	public Tenant requireActiveForExclusiveWrite(TenantId tenantId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+			throw new IllegalTransactionStateException("Exclusive tenant write guard requires a read-write transaction");
+		}
+		Tenant tenant = this.repository.findByIdForUpdate(tenantId)
+			.orElseThrow(() -> new TenantNotFoundException(tenantId));
+		return requireActive(tenant);
+	}
+
 	private Tenant requireActive(Tenant tenant) {
 		if (!tenant.isActive()) {
 			throw new TenantDisabledException(tenant.id());

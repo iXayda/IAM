@@ -89,6 +89,8 @@ class TenantOperationsIntegrationTests extends ApplicationIntegrationTest {
 	void requiresAnExistingTransactionForTheWriteGuard() {
 		assertThatThrownBy(() -> this.tenants.requireActiveForWrite(TenantId.DEFAULT))
 			.isInstanceOf(IllegalTransactionStateException.class);
+		assertThatThrownBy(() -> this.tenants.requireActiveForExclusiveWrite(TenantId.DEFAULT))
+			.isInstanceOf(IllegalTransactionStateException.class);
 	}
 
 	@Test
@@ -100,6 +102,43 @@ class TenantOperationsIntegrationTests extends ApplicationIntegrationTest {
 				() -> transaction.executeWithoutResult(status -> this.tenants.requireActiveForWrite(TenantId.DEFAULT)))
 			.isInstanceOf(IllegalTransactionStateException.class)
 			.hasMessage("Tenant write guard requires a read-write transaction");
+		assertThatThrownBy(() -> transaction
+			.executeWithoutResult(status -> this.tenants.requireActiveForExclusiveWrite(TenantId.DEFAULT)))
+			.isInstanceOf(IllegalTransactionStateException.class)
+			.hasMessage("Exclusive tenant write guard requires a read-write transaction");
+	}
+
+	@Test
+	void exclusiveGuardBlocksConcurrentTenantScopedWrites() throws Exception {
+		Tenant created = create("exclusive-write-guard", "Exclusive Write Guard");
+		CountDownLatch guardAcquired = new CountDownLatch(1);
+		CountDownLatch releaseGuard = new CountDownLatch(1);
+
+		try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+			Future<Tenant> exclusiveWrite = executor.submit(() -> transactionTemplate().execute(status -> {
+				Tenant guarded = this.tenants.requireActiveForExclusiveWrite(created.id());
+				guardAcquired.countDown();
+				await(releaseGuard);
+				return guarded;
+			}));
+
+			assertThat(guardAcquired.await(5, TimeUnit.SECONDS)).isTrue();
+			try {
+				Throwable lockTimeout = catchThrowable(() -> transactionTemplate().executeWithoutResult(status -> {
+					this.jdbcClient.sql("SET LOCAL lock_timeout = '1s'").update();
+					this.tenants.requireActiveForWrite(created.id());
+				}));
+				assertThat(lockTimeout).isInstanceOf(DataAccessException.class);
+				assertThat(((DataAccessException) lockTimeout).getRootCause())
+					.isInstanceOfSatisfying(SQLException.class,
+							ex -> assertThat(ex.getSQLState()).isEqualTo("55P03"));
+			}
+			finally {
+				releaseGuard.countDown();
+			}
+
+			assertThat(exclusiveWrite.get(5, TimeUnit.SECONDS)).isEqualTo(created);
+		}
 	}
 
 	@Test

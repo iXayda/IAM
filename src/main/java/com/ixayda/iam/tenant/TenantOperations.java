@@ -22,4 +22,10 @@ public interface TenantOperations {
 	 */
 	Tenant requireActiveForWrite(TenantId tenantId);
 
+	/**
+	 * Requires an active tenant and prevents concurrent tenant-scoped writes while
+	 * the caller coordinates a cross-aggregate lifecycle change.
+	 */
+	Tenant requireActiveForExclusiveWrite(TenantId tenantId);
+
 }

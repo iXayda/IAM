@@ -88,6 +88,18 @@ class JdbcUserRepositoryStatusIntegrationTests extends ApplicationIntegrationTes
 	}
 
 	@Test
+	void updatesMembershipDirectoryRevisionsWithoutChangingSecurityState() {
+		User current = insert(user(TenantId.DEFAULT, CREATED_AT));
+		User changed = current.membershipsChanged(CREATED_AT.plusSeconds(1));
+
+		assertThat(updateMemberships(current, changed)).isEqualTo(changed);
+		assertThat(changed.securityVersion()).isEqualTo(current.securityVersion());
+		assertThat(this.repository.findById(TenantId.DEFAULT, current.id())).contains(changed);
+		assertThatThrownBy(() -> updateMemberships(current, changed))
+			.isInstanceOf(UserConcurrentUpdateException.class);
+	}
+
+	@Test
 	void rejectsChangingImmutableStateOrRegressingTime() {
 		User current = user(TenantId.DEFAULT, CREATED_AT.plusSeconds(60));
 		User changedId = new User(UserId.random(), current.tenantId(), current.identifiers(), UserStatus.DISABLED, 1,
@@ -142,6 +154,9 @@ class JdbcUserRepositoryStatusIntegrationTests extends ApplicationIntegrationTes
 
 		assertThatThrownBy(() -> this.repository.updateStatus(current, changed))
 			.isInstanceOf(IllegalTransactionStateException.class);
+		assertThatThrownBy(() -> this.repository
+			.updateMemberships(current, current.membershipsChanged(CREATED_AT.plusSeconds(1))))
+			.isInstanceOf(IllegalTransactionStateException.class);
 
 		TransactionTemplate readOnly = transactionTemplate();
 		readOnly.setReadOnly(true);
@@ -162,6 +177,10 @@ class JdbcUserRepositoryStatusIntegrationTests extends ApplicationIntegrationTes
 
 	private User update(User current, User changed) {
 		return transactionTemplate().execute(status -> this.repository.updateStatus(current, changed));
+	}
+
+	private User updateMemberships(User current, User changed) {
+		return transactionTemplate().execute(status -> this.repository.updateMemberships(current, changed));
 	}
 
 	private TransactionTemplate transactionTemplate() {

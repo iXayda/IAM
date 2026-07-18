@@ -3,6 +3,7 @@ package com.ixayda.iam.user.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -24,6 +25,7 @@ import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserConcurrentUpdateException;
+import com.ixayda.iam.user.UserDeletionParticipant;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserNotFoundException;
@@ -48,8 +50,10 @@ class DefaultUserOperationsTests {
 
 	private final UserTimeSource timeSource = mock(UserTimeSource.class);
 
+	private final UserDeletionParticipant deletionParticipant = mock(UserDeletionParticipant.class);
+
 	private final DefaultUserOperations operations =
-			new DefaultUserOperations(this.repository, this.tenants, this.timeSource);
+			new DefaultUserOperations(this.repository, this.tenants, this.timeSource, List.of(this.deletionParticipant));
 
 	@Test
 	void createsAUserAfterAcquiringTheTenantWriteGuard() {
@@ -123,6 +127,51 @@ class DefaultUserOperationsTests {
 	}
 
 	@ParameterizedTest
+	@EnumSource(value = UserStatus.class, names = { "ACTIVE", "DISABLED", "LOCKED" })
+	void allowsNonDeletedUsersForDirectoryRelationshipWrites(UserStatus status) {
+		User user = user(status, 0, CREATED_AT);
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForShare(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(user));
+
+		assertThat(this.operations.requireNotDeletedForWrite(TenantId.DEFAULT, USER_ID)).isEqualTo(user);
+		InOrder order = inOrder(this.tenants, this.repository);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForShare(TenantId.DEFAULT, USER_ID);
+	}
+
+	@Test
+	void hidesDeletedAndMissingUsersFromDirectoryRelationshipWrites() {
+		User deleted = user(UserStatus.DELETED, 1, CREATED_AT.plusSeconds(1));
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForShare(TenantId.DEFAULT, USER_ID))
+			.thenReturn(Optional.of(deleted))
+			.thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> this.operations.requireNotDeletedForWrite(TenantId.DEFAULT, USER_ID))
+			.isInstanceOf(UserNotFoundException.class);
+		assertThatThrownBy(() -> this.operations.requireNotDeletedForWrite(TenantId.DEFAULT, USER_ID))
+			.isInstanceOf(UserNotFoundException.class);
+	}
+
+	@Test
+	void advancesOnlyTheDirectoryRevisionForMembershipChanges() {
+		User current = user(UserStatus.ACTIVE, 0, CREATED_AT);
+		User changed = current.membershipsChanged(CREATED_AT.plusSeconds(1));
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(current));
+		when(this.timeSource.now()).thenReturn(CREATED_AT.plusSeconds(1));
+		when(this.repository.updateMemberships(current, changed)).thenReturn(changed);
+
+		assertThat(this.operations.recordMembershipChangeForWrite(TenantId.DEFAULT, USER_ID)).isEqualTo(changed);
+		assertThat(changed.securityVersion()).isEqualTo(current.securityVersion());
+		InOrder order = inOrder(this.tenants, this.repository, this.timeSource);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForUpdate(TenantId.DEFAULT, USER_ID);
+		order.verify(this.timeSource).now();
+		order.verify(this.repository).updateMemberships(current, changed);
+	}
+
+	@ParameterizedTest
 	@EnumSource(value = UserStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
 	void rejectsInactiveUsersForWrite(UserStatus status) {
 		User user = user(status, 0, CREATED_AT);
@@ -136,7 +185,7 @@ class DefaultUserOperationsTests {
 	}
 
 	@ParameterizedTest
-	@EnumSource(UserStatus.class)
+	@EnumSource(value = UserStatus.class, names = { "ACTIVE", "DISABLED", "LOCKED" })
 	void usesTheTenantWriteGuardForEveryStatusCommand(UserStatus target) {
 		User current = user(sourceFor(target), 0, CREATED_AT);
 		User changed = transition(current, target, CREATED_AT.plusSeconds(1));
@@ -148,6 +197,36 @@ class DefaultUserOperationsTests {
 		assertThat(changeStatus(target)).isEqualTo(changed);
 		verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
 		verify(this.repository).updateStatus(current, changed);
+	}
+
+	@Test
+	void coordinatesDeletionUnderTheExclusiveTenantGuard() {
+		User current = user(UserStatus.ACTIVE, 0, CREATED_AT);
+		User deleted = current.delete(CREATED_AT.plusSeconds(1));
+		when(this.tenants.requireActiveForExclusiveWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(current));
+		when(this.timeSource.now()).thenReturn(CREATED_AT.plusSeconds(1));
+		when(this.repository.updateStatus(current, deleted)).thenReturn(deleted);
+
+		assertThat(this.operations.delete(TenantId.DEFAULT, USER_ID)).isEqualTo(deleted);
+		InOrder order = inOrder(this.tenants, this.repository, this.deletionParticipant);
+		order.verify(this.tenants).requireActiveForExclusiveWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForUpdate(TenantId.DEFAULT, USER_ID);
+		order.verify(this.deletionParticipant).beforeDelete(current);
+		order.verify(this.repository).updateStatus(current, deleted);
+	}
+
+	@Test
+	void doesNotPersistDeletionWhenAParticipantRejectsIt() {
+		User current = user(UserStatus.ACTIVE, 0, CREATED_AT);
+		RuntimeException failure = new IllegalStateException("relationship cleanup failed");
+		when(this.tenants.requireActiveForExclusiveWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(current));
+		when(this.timeSource.now()).thenReturn(CREATED_AT.plusSeconds(1));
+		doThrow(failure).when(this.deletionParticipant).beforeDelete(current);
+
+		assertThatThrownBy(() -> this.operations.delete(TenantId.DEFAULT, USER_ID)).isSameAs(failure);
+		verify(this.repository, never()).updateStatus(any(), any());
 	}
 
 	@Test

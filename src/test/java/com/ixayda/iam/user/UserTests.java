@@ -98,6 +98,24 @@ class UserTests {
 	}
 
 	@Test
+	void advancesOnlyTheDirectoryRevisionWhenMembershipsChange() {
+		User original = user(UserStatus.LOCKED);
+		Instant changedAt = UPDATED_AT.plusSeconds(60);
+
+		User changed = original.membershipsChanged(changedAt);
+
+		assertThat(changed.version()).isOne();
+		assertThat(changed.securityVersion()).isEqualTo(original.securityVersion());
+		assertThat(changed.updatedAt()).isEqualTo(changedAt);
+		assertThat(changed.status()).isEqualTo(original.status());
+		assertThat(changed.profile()).isEqualTo(original.profile());
+		assertThatThrownBy(() -> original.membershipsChanged(UPDATED_AT.minusSeconds(1)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> user(UserStatus.DELETED).membershipsChanged(changedAt))
+			.isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
 	void defensivelyCopiesIdentifiers() {
 		List<LoginIdentifier> source = new ArrayList<>();
 		source.add(USERNAME);

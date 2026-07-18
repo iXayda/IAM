@@ -72,6 +72,31 @@ class GroupDomainTests {
 	}
 
 	@Test
+	void advancesTheDirectoryRevisionWhenMembersChange() {
+		Group original = group("Engineering", GroupStatus.ACTIVE, 0, CREATED_AT);
+
+		Group changed = original.membersChanged(CREATED_AT.plusSeconds(1));
+
+		assertThat(changed.id()).isEqualTo(original.id());
+		assertThat(changed.tenantId()).isEqualTo(original.tenantId());
+		assertThat(changed.displayName()).isEqualTo(original.displayName());
+		assertThat(changed.status()).isEqualTo(GroupStatus.ACTIVE);
+		assertThat(changed.version()).isOne();
+		assertThat(changed.updatedAt()).isEqualTo(CREATED_AT.plusSeconds(1));
+	}
+
+	@Test
+	void rejectsMemberChangesForDeletedGroupsAndRegressingTime() {
+		Group active = group("Engineering", GroupStatus.ACTIVE, 0, CREATED_AT.plusSeconds(1));
+		Group deleted = active.delete(CREATED_AT.plusSeconds(2));
+
+		assertThatThrownBy(() -> active.membersChanged(CREATED_AT))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> deleted.membersChanged(CREATED_AT.plusSeconds(3)))
+			.isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
 	void rejectsInvalidEntityStateAndRegressingTime() {
 		assertThatThrownBy(() -> group("Engineering", GroupStatus.ACTIVE, -1, CREATED_AT))
 			.isInstanceOf(IllegalArgumentException.class);
