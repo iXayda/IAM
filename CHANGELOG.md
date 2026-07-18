@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Tenant-bound OAuth client-credentials authorization persistence with grant-specific owner, request, and token invariants.
 - SCIM 2.0 service provider, schema, and resource type discovery with protocol errors and Native Image verification.
 - Atomic tenant-scoped direct-user group memberships with lifecycle cleanup and directory revision tracking.
 - Tenant-scoped directory groups with non-unique display names, optimistic updates, and soft deletion.

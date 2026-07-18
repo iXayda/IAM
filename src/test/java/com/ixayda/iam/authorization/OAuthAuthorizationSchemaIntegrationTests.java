@@ -160,6 +160,45 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 	}
 
 	@Test
+	void storesClientCredentialsAuthorizationWithoutUserOrRequestState() {
+		configureClientCredentialsGrant(FIRST_CLIENT_ID);
+		insertClientCredentialsAuthorization(FIRST_AUTHORIZATION_ID);
+		insertRequestedScope(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_AUTHORIZATION_ID, "api.read");
+		insertAuthorizedScope(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_AUTHORIZATION_ID, "api.read");
+		insertToken(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_AUTHORIZATION_ID, FIRST_TOKEN_ID,
+				"client_credentials", "access_token", bytes(32, (byte) 31), bytes(12, (byte) 32),
+				bytes(17, (byte) 33), "Bearer", "{\"sub\":\"authorization-schema-first\"}", "test-v1");
+		insertTokenScope(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_AUTHORIZATION_ID, FIRST_TOKEN_ID,
+				"api.read");
+
+		assertThat(this.jdbcClient.sql("""
+				SELECT user_id IS NULL AND session_id IS NULL AND authorization_uri IS NULL
+				       AND redirect_uri IS NULL AND client_state IS NULL
+				       AND request_parameters = '{}'::jsonb
+				       AND authorization_grant_type = 'client_credentials'
+				FROM oauth_authorizations
+				WHERE authorization_id = :authorizationId
+				""")
+			.param("authorizationId", FIRST_AUTHORIZATION_ID)
+			.query(Boolean.class)
+			.single()).isTrue();
+		assertThat(this.jdbcClient.sql("""
+				SELECT authorization_grant_type
+				FROM oauth_authorization_tokens
+				WHERE token_id = :tokenId
+				""")
+			.param("tokenId", FIRST_TOKEN_ID)
+			.query(String.class)
+			.single()).isEqualTo("client_credentials");
+
+		this.jdbcClient.sql("DELETE FROM oauth_authorizations WHERE authorization_id = :authorizationId")
+			.param("authorizationId", FIRST_AUTHORIZATION_ID)
+			.update();
+		assertThat(count("oauth_authorization_tokens")).isZero();
+		assertThat(count("oauth_authorization_token_scopes")).isZero();
+	}
+
+	@Test
 	void rejectsCrossTenantAndUnregisteredAuthorizationState() {
 		assertThatThrownBy(() -> insertAuthorization(SECOND_TENANT_ID, FIRST_CLIENT_ID, SECOND_USER_ID,
 				SECOND_SESSION_ID, FIRST_AUTHORIZATION_ID, "authorization-schema-first", SECOND_USER_ID.toString(),
@@ -195,6 +234,74 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 			.isInstanceOf(DataIntegrityViolationException.class);
 		assertThatThrownBy(() -> insertRequestedScope(TenantId.DEFAULT.value(), FIRST_CLIENT_ID,
 				FIRST_AUTHORIZATION_ID, "unregistered"))
+			.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void rejectsMixedAuthorizationGrantShapes() {
+		this.jdbcClient.sql("DELETE FROM oauth_client_redirect_uris WHERE client_id = :clientId")
+			.param("clientId", FIRST_CLIENT_ID)
+			.update();
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				UPDATE oauth_clients
+				SET authorization_grant_type = 'client_credentials'
+				WHERE client_id = :clientId
+				""").param("clientId", FIRST_CLIENT_ID).update())
+			.isInstanceOf(DataIntegrityViolationException.class);
+
+		insertAuthorization(SECOND_TENANT_ID, SECOND_CLIENT_ID, SECOND_USER_ID, SECOND_SESSION_ID,
+				SECOND_AUTHORIZATION_ID, "authorization-schema-second", SECOND_USER_ID.toString(), REQUEST_PARAMETERS);
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				UPDATE oauth_authorizations
+				SET authorization_uri = NULL
+				WHERE authorization_id = :authorizationId
+				""").param("authorizationId", SECOND_AUTHORIZATION_ID).update())
+			.isInstanceOf(DataIntegrityViolationException.class);
+
+		configureClientCredentialsGrant(FIRST_CLIENT_ID);
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				INSERT INTO oauth_client_redirect_uris (tenant_id, client_id, redirect_uri)
+				VALUES (:tenantId, :clientId, :redirectUri)
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("clientId", FIRST_CLIENT_ID)
+			.param("redirectUri", REDIRECT_URI)
+			.update()).isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				INSERT INTO oauth_client_post_logout_redirect_uris
+				    (tenant_id, client_id, post_logout_redirect_uri)
+				VALUES (:tenantId, :clientId, :redirectUri)
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("clientId", FIRST_CLIENT_ID)
+			.param("redirectUri", "https://client.example.test/logout/callback")
+			.update()).isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertAuthorization(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_USER_ID,
+				FIRST_SESSION_ID, FIRST_AUTHORIZATION_ID, "authorization-schema-first", FIRST_USER_ID.toString(),
+				REQUEST_PARAMETERS)).isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> this.jdbcClient.sql("""
+				INSERT INTO oauth_authorizations
+				    (authorization_id, tenant_id, client_id, user_id, session_id, client_identifier,
+				     principal_name, authorization_grant_type, request_parameters, purge_at)
+				VALUES
+				    (:authorizationId, :tenantId, :clientId, :userId, :sessionId, 'authorization-schema-first',
+				     'authorization-schema-first', 'client_credentials', '{}'::jsonb, now() + interval '1 hour')
+				""")
+			.param("authorizationId", FIRST_AUTHORIZATION_ID)
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("clientId", FIRST_CLIENT_ID)
+			.param("userId", FIRST_USER_ID)
+			.param("sessionId", FIRST_SESSION_ID)
+			.update()).isInstanceOf(DataIntegrityViolationException.class);
+
+		insertClientCredentialsAuthorization(FIRST_AUTHORIZATION_ID);
+		assertThatThrownBy(() -> insertToken(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_AUTHORIZATION_ID,
+				FIRST_TOKEN_ID, "client_credentials", "refresh_token", bytes(32, (byte) 34), bytes(12, (byte) 35),
+				bytes(17, (byte) 36), null, null, "test-v1"))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertToken(TenantId.DEFAULT.value(), FIRST_CLIENT_ID, FIRST_AUTHORIZATION_ID,
+				FIRST_TOKEN_ID, "authorization_code", "access_token", bytes(32, (byte) 37), bytes(12, (byte) 38),
+				bytes(17, (byte) 39), "Bearer", "{}", "test-v1"))
 			.isInstanceOf(DataIntegrityViolationException.class);
 	}
 
@@ -339,6 +446,24 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 		}
 	}
 
+	private void configureClientCredentialsGrant(UUID clientId) {
+		this.jdbcClient.sql("DELETE FROM oauth_client_redirect_uris WHERE client_id = :clientId")
+			.param("clientId", clientId)
+			.update();
+		this.jdbcClient.sql("""
+				UPDATE oauth_clients
+				SET client_type = 'confidential',
+				    authentication_method = 'client_secret_basic',
+				    encoded_client_secret = '{test}abcdefghijklmnopqrstuvwxyz0123456789',
+				    client_secret_issued_at = created_at,
+				    client_secret_expires_at = created_at + interval '1 day',
+				    authorization_grant_type = 'client_credentials'
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", clientId)
+			.update();
+	}
+
 	private void insertAuthorization(UUID tenantId, UUID clientId, UUID userId, UUID sessionId,
 			UUID authorizationId, String identifier, String principalName, String requestParameters) {
 		this.jdbcClient.sql("""
@@ -360,6 +485,24 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 			.param("principalName", principalName)
 			.param("redirectUri", REDIRECT_URI)
 			.param("requestParameters", requestParameters)
+			.param("issuedAt", ISSUED_AT)
+			.param("purgeAt", ISSUED_AT.plusDays(1))
+			.update();
+	}
+
+	private void insertClientCredentialsAuthorization(UUID authorizationId) {
+		this.jdbcClient.sql("""
+				INSERT INTO oauth_authorizations
+				    (authorization_id, tenant_id, client_id, client_identifier, principal_name,
+				     authorization_grant_type, request_parameters, created_at, updated_at, purge_at)
+				VALUES
+				    (:authorizationId, :tenantId, :clientId, 'authorization-schema-first',
+				     'authorization-schema-first', 'client_credentials', '{}'::jsonb,
+				     :issuedAt, :issuedAt, :purgeAt)
+				""")
+			.param("authorizationId", authorizationId)
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("clientId", FIRST_CLIENT_ID)
 			.param("issuedAt", ISSUED_AT)
 			.param("purgeAt", ISSUED_AT.plusDays(1))
 			.update();
@@ -413,13 +556,22 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 	private void insertToken(UUID tenantId, UUID clientId, UUID authorizationId, UUID tokenId, String tokenType,
 			byte[] digest, byte[] initializationVector, byte[] ciphertext, String accessTokenType, String claims,
 			String encryptionKeyId) {
+		insertToken(tenantId, clientId, authorizationId, tokenId, "authorization_code", tokenType, digest,
+				initializationVector, ciphertext, accessTokenType, claims, encryptionKeyId);
+	}
+
+	private void insertToken(UUID tenantId, UUID clientId, UUID authorizationId, UUID tokenId,
+			String authorizationGrantType, String tokenType, byte[] digest, byte[] initializationVector,
+			byte[] ciphertext, String accessTokenType, String claims, String encryptionKeyId) {
 		this.jdbcClient.sql("""
 				INSERT INTO oauth_authorization_tokens
-				    (token_id, tenant_id, client_id, authorization_id, token_type, token_digest,
+				    (token_id, tenant_id, client_id, authorization_id, authorization_grant_type,
+				     token_type, token_digest,
 				     encryption_key_id, initialization_vector, ciphertext, access_token_type,
 				     claims_version, claims, issued_at, expires_at, created_at, updated_at)
 				VALUES
-				    (:tokenId, :tenantId, :clientId, :authorizationId, :tokenType, :digest,
+				    (:tokenId, :tenantId, :clientId, :authorizationId, :authorizationGrantType,
+				     :tokenType, :digest,
 				     :encryptionKeyId, :initializationVector, :ciphertext, :accessTokenType,
 				     CASE WHEN CAST(:claims AS text) IS NULL THEN NULL ELSE 1 END,
 				     CAST(:claims AS jsonb), :issuedAt, :expiresAt, :issuedAt, :issuedAt)
@@ -428,6 +580,7 @@ class OAuthAuthorizationSchemaIntegrationTests extends ApplicationIntegrationTes
 			.param("tenantId", tenantId)
 			.param("clientId", clientId)
 			.param("authorizationId", authorizationId)
+			.param("authorizationGrantType", authorizationGrantType)
 			.param("tokenType", tokenType)
 			.param("digest", digest)
 			.param("encryptionKeyId", encryptionKeyId)

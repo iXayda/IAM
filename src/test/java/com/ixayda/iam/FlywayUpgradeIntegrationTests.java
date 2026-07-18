@@ -21,6 +21,12 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
 	private static final UUID GROUP_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742904");
 
+	private static final UUID SESSION_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742905");
+
+	private static final UUID AUTHORIZATION_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742906");
+
+	private static final UUID TOKEN_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742907");
+
 	@Autowired
 	private DataSource dataSource;
 
@@ -34,10 +40,10 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalData(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(13);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(14);
 
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(16);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
 			assertThat(count(jdbc, schema, "tenants")).isEqualTo(2);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(identifier(jdbc, schema)).isEqualTo("Alice@example.com|alice@example.com");
@@ -66,7 +72,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(4);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(5);
 			assertThat(jdbc.sql("""
 					SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
 					FROM %s.oauth_clients
@@ -74,7 +80,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).query(String.class).single())
 				.isEqualTo("false|3600");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(16);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -91,9 +97,9 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			assertThat(historical.migrate().migrationsExecuted).isEqualTo(14);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(3);
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(16);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
 			assertThat(count(jdbc, schema, "groups")).isZero();
 			jdbc.sql("""
 					INSERT INTO %s.groups (group_id, tenant_id, display_name)
@@ -126,9 +132,9 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("groupId", GROUP_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(16);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(count(jdbc, schema, "groups")).isOne();
 			assertThat(count(jdbc, schema, "group_memberships")).isZero();
@@ -140,6 +146,48 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				.param("userId", USER_ID)
 				.update();
 			assertThat(count(jdbc, schema, "group_memberships")).isOne();
+			assertThat(current.migrate().migrationsExecuted).isZero();
+		}
+		finally {
+			jdbc.sql("DROP SCHEMA IF EXISTS " + schema + " CASCADE").update();
+		}
+	}
+
+	@Test
+	void upgradesExistingAuthorizationsToExplicitAuthorizationCodeGrants() {
+		String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		JdbcClient jdbc = JdbcClient.create(this.dataSource);
+		try {
+			Flyway historical = flyway(schema, "16");
+			assertThat(historical.migrate().migrationsExecuted).isEqualTo(16);
+			insertHistoricalAuthorization(jdbc, schema);
+
+			Flyway current = flyway(schema, null);
+			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(jdbc.sql("""
+					SELECT clients.authorization_grant_type || '|' || authorizations.authorization_grant_type
+					       || '|' || tokens.authorization_grant_type
+					FROM %s.oauth_clients clients
+					JOIN %s.oauth_authorizations authorizations USING (tenant_id, client_id)
+					JOIN %s.oauth_authorization_tokens tokens USING (tenant_id, client_id, authorization_id)
+					WHERE clients.client_id = :clientId
+					""".formatted(schema, schema, schema))
+				.param("clientId", CLIENT_ID)
+				.query(String.class)
+				.single()).isEqualTo("authorization_code|authorization_code|authorization_code");
+			assertThat(jdbc.sql("""
+					SELECT redirect_uris.authorization_grant_type || '|'
+					       || post_logout_uris.authorization_grant_type
+					FROM %s.oauth_client_redirect_uris redirect_uris
+					JOIN %s.oauth_client_post_logout_redirect_uris post_logout_uris
+					  USING (tenant_id, client_id)
+					WHERE redirect_uris.client_id = :clientId
+					""".formatted(schema, schema))
+				.param("clientId", CLIENT_ID)
+				.query(String.class)
+				.single()).isEqualTo("authorization_code|authorization_code");
+			assertThat(current.validateWithResult().validationSuccessful).isTrue();
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -180,6 +228,71 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				VALUES
 				    (:tenantId, :userId, 'email', 'Alice@example.com', 'alice@example.com')
 				""").formatted(schema)).param("tenantId", TENANT_ID).param("userId", USER_ID).update();
+	}
+
+	private static void insertHistoricalAuthorization(JdbcClient jdbc, String schema) {
+		jdbc.sql("""
+				INSERT INTO %s.users (user_id, tenant_id)
+				VALUES (:userId, '00000000-0000-0000-0000-000000000001')
+				""".formatted(schema)).param("userId", USER_ID).update();
+		jdbc.sql("""
+				INSERT INTO %s.user_sessions
+				    (tenant_id, session_id, user_id, authentication_method, status,
+				     issued_tenant_version, issued_user_version, authenticated_at, expires_at)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :sessionId, :userId, 'password', 'active',
+				     0, 0, now(), now() + interval '1 hour')
+				""".formatted(schema)).param("sessionId", SESSION_ID).param("userId", USER_ID).update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_clients
+				    (client_id, tenant_id, client_identifier, display_name, client_type, authentication_method)
+				VALUES
+				    (:clientId, '00000000-0000-0000-0000-000000000001',
+				     'historical-authorization-client', 'Historical Authorization Client', 'public', 'none')
+				""".formatted(schema)).param("clientId", CLIENT_ID).update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_client_redirect_uris (tenant_id, client_id, redirect_uri)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :clientId,
+				     'https://client.example.test/callback')
+				""".formatted(schema)).param("clientId", CLIENT_ID).update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_client_post_logout_redirect_uris
+				    (tenant_id, client_id, post_logout_redirect_uri)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :clientId,
+				     'https://client.example.test/logout/callback')
+				""".formatted(schema)).param("clientId", CLIENT_ID).update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorizations
+				    (authorization_id, tenant_id, client_id, user_id, session_id, client_identifier,
+				     principal_name, authorization_uri, request_parameters, purge_at)
+				VALUES
+				    (:authorizationId, '00000000-0000-0000-0000-000000000001', :clientId, :userId,
+				     :sessionId, 'historical-authorization-client', :principalName,
+				     'https://issuer.example.test/oauth2/authorize',
+				     '{"code_challenge":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code_challenge_method":"S256"}',
+				     now() + interval '1 hour')
+				""".formatted(schema))
+			.param("authorizationId", AUTHORIZATION_ID)
+			.param("clientId", CLIENT_ID)
+			.param("userId", USER_ID)
+			.param("sessionId", SESSION_ID)
+			.param("principalName", USER_ID.toString())
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorization_tokens
+				    (token_id, tenant_id, client_id, authorization_id, token_type, token_digest,
+				     encryption_key_id, initialization_vector, ciphertext, issued_at, expires_at)
+				VALUES
+				    (:tokenId, '00000000-0000-0000-0000-000000000001', :clientId, :authorizationId,
+				     'state', decode(repeat('01', 32), 'hex'), 'test-key', decode(repeat('02', 12), 'hex'),
+				     decode(repeat('03', 17), 'hex'), now(), now() + interval '5 minutes')
+				""".formatted(schema))
+			.param("tokenId", TOKEN_ID)
+			.param("clientId", CLIENT_ID)
+			.param("authorizationId", AUTHORIZATION_ID)
+			.update();
 	}
 
 	private static int count(JdbcClient jdbc, String schema, String table) {

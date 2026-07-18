@@ -38,6 +38,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
@@ -285,6 +286,78 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 	}
 
 	@Test
+	void roundTripsTheOfficialClientCredentialsAuthorization() {
+		configureClientCredentialsGrant();
+		UUID authorizationId = UUID.randomUUID();
+		OAuth2Authorization issued = clientCredentialsAuthorization(authorizationId, "service-access-token");
+
+		this.authorizations.save(issued);
+
+		OAuth2Authorization stored = this.authorizations.findByToken("service-access-token",
+				OAuth2TokenType.ACCESS_TOKEN);
+		assertThat(stored).isNotNull();
+		assertThat(stored.getAuthorizationGrantType()).isEqualTo(AuthorizationGrantType.CLIENT_CREDENTIALS);
+		assertThat(stored.getPrincipalName()).isEqualTo(CLIENT_IDENTIFIER);
+		assertThat(stored.getAuthorizedScopes()).containsExactly("api.read");
+		assertThat(stored.getAccessToken().getClaims()).containsEntry("sub", CLIENT_IDENTIFIER);
+		assertThat(stored.<Long>getAttribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE)).isZero();
+		assertThat(stored.<Object>getAttribute(Principal.class.getName())).isNull();
+		assertThat(stored.<Object>getAttribute(OAuth2AuthorizationRequest.class.getName())).isNull();
+		assertThat(stored.getRefreshToken()).isNull();
+		assertThat(stored.getToken(OAuth2AuthorizationCode.class)).isNull();
+		assertThat(stored.getToken(OidcIdToken.class)).isNull();
+		assertThat(this.authorizations.findById(authorizationId.toString())).isEqualTo(stored);
+		assertThat(this.authorizations.findByToken("service-access-token", null)).isEqualTo(stored);
+		assertProtected("service-access-token", "access_token");
+		assertThat(this.jdbcClient.sql("""
+				SELECT user_id IS NULL AND session_id IS NULL AND authorization_uri IS NULL
+				       AND redirect_uri IS NULL AND client_state IS NULL
+				       AND request_parameters = '{}'::jsonb
+				       AND authorization_grant_type = 'client_credentials'
+				FROM oauth_authorizations
+				WHERE authorization_id = :authorizationId
+				""")
+			.param("authorizationId", authorizationId)
+			.query(Boolean.class)
+			.single()).isTrue();
+
+		this.authorizations.save(stored);
+		OAuth2Authorization resaved = this.authorizations.findById(authorizationId.toString());
+		assertThat(resaved.<Long>getAttribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE)).isOne();
+		assertThat(resaved.getAccessToken().getToken()).isEqualTo(stored.getAccessToken().getToken());
+		assertThat(resaved.getAccessToken().getClaims()).isEqualTo(stored.getAccessToken().getClaims());
+
+		OAuth2AccessToken persistedAccessToken = resaved.getAccessToken().getToken();
+		this.authorizations.save(OAuth2Authorization.from(resaved).invalidate(persistedAccessToken).build());
+		OAuth2Authorization invalidated = this.authorizations.findById(authorizationId.toString());
+		assertThat(invalidated.<Long>getAttribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE)).isEqualTo(2);
+		assertThat(invalidated.getAccessToken().isInvalidated()).isTrue();
+
+		this.authorizations.remove(invalidated);
+		assertThat(this.authorizations.findById(authorizationId.toString())).isNull();
+		assertThat(this.authorizations.findByToken("service-access-token", OAuth2TokenType.ACCESS_TOKEN)).isNull();
+	}
+
+	@Test
+	void rejectsClientCredentialsWritesForMismatchedOrInactiveOwners() {
+		OAuth2Authorization mismatched = clientCredentialsAuthorization(UUID.randomUUID(), "mismatched-token");
+		assertThatThrownBy(() -> this.authorizations.save(mismatched))
+			.isInstanceOf(OAuth2AuthenticationException.class)
+			.satisfies(exception -> assertThat(((OAuth2AuthenticationException) exception).getError().getErrorCode())
+				.isEqualTo(OAuth2ErrorCodes.INVALID_GRANT));
+
+		configureClientCredentialsGrant();
+		this.jdbcClient.sql("UPDATE oauth_clients SET status = 'disabled' WHERE client_id = :clientId")
+			.param("clientId", CLIENT_ID)
+			.update();
+		OAuth2Authorization inactive = clientCredentialsAuthorization(UUID.randomUUID(), "inactive-token");
+		assertThatThrownBy(() -> this.authorizations.save(inactive))
+			.isInstanceOf(OAuth2AuthenticationException.class)
+			.satisfies(exception -> assertThat(((OAuth2AuthenticationException) exception).getError().getErrorCode())
+				.isEqualTo(OAuth2ErrorCodes.INVALID_GRANT));
+	}
+
+	@Test
 	void allowsOnlyOneConcurrentCodeExchangeToCommit() throws Exception {
 		UUID authorizationId = UUID.randomUUID();
 		Instant codeIssuedAt = Instant.now();
@@ -508,6 +581,42 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 			.build();
 	}
 
+	private OAuth2Authorization clientCredentialsAuthorization(UUID authorizationId, String tokenValue) {
+		Instant issuedAt = AuthorizationTime.toDatabasePrecision(Instant.now());
+		Map<String, Object> claims = Map.of("sub", CLIENT_IDENTIFIER, "iat", issuedAt,
+				"tenant_id", TenantId.DEFAULT.value().toString());
+		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, tokenValue,
+				issuedAt, issuedAt.plusSeconds(300), Set.of("api.read"));
+		return OAuth2Authorization.withRegisteredClient(serviceRegisteredClient())
+			.id(authorizationId.toString())
+			.principalName(CLIENT_IDENTIFIER)
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+			.authorizedScopes(Set.of("api.read"))
+			.token(accessToken, metadata -> {
+				metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, claims);
+				metadata.put(OAuth2TokenFormat.class.getName(), OAuth2TokenFormat.SELF_CONTAINED.getValue());
+			})
+			.build();
+	}
+
+	private void configureClientCredentialsGrant() {
+		this.jdbcClient.sql("DELETE FROM oauth_client_redirect_uris WHERE client_id = :clientId")
+			.param("clientId", CLIENT_ID)
+			.update();
+		this.jdbcClient.sql("""
+				UPDATE oauth_clients
+				SET client_type = 'confidential',
+				    authentication_method = 'client_secret_basic',
+				    encoded_client_secret = '{test}abcdefghijklmnopqrstuvwxyz0123456789',
+				    client_secret_issued_at = created_at,
+				    client_secret_expires_at = created_at + interval '1 day',
+				    authorization_grant_type = 'client_credentials'
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", CLIENT_ID)
+			.update();
+	}
+
 	private static OAuth2Authorization approve(OAuth2Authorization pending, String codeValue) {
 		Instant issuedAt = Instant.now();
 		OAuth2AuthorizationCode code = new OAuth2AuthorizationCode(codeValue, issuedAt, issuedAt.plusSeconds(300));
@@ -561,6 +670,16 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 			.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
 			.redirectUri(REDIRECT_URI)
 			.scope("openid")
+			.scope("api.read")
+			.build();
+	}
+
+	private static RegisteredClient serviceRegisteredClient() {
+		return RegisteredClient.withId(CLIENT_ID.toString())
+			.clientId(CLIENT_IDENTIFIER)
+			.clientAuthenticationMethod(
+					org.springframework.security.oauth2.core.ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
 			.scope("api.read")
 			.build();
 	}

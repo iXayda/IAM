@@ -83,7 +83,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	@Override
 	@Transactional
 	public void save(OAuth2Authorization authorization) {
-		AuthorizationSnapshot snapshot = this.mapper.toSnapshot(authorization);
+		AuthorizationSnapshot snapshot = snapshot(authorization);
 		Instant now = AuthorizationTime.toDatabasePrecision(this.clock.instant());
 		StoredAuthorization current = lock(snapshot.authorizationId());
 		if (current == null) {
@@ -101,7 +101,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 
 	@Transactional
 	public boolean removeIfCurrent(OAuth2Authorization authorization) {
-		AuthorizationSnapshot snapshot = this.mapper.toSnapshot(authorization);
+		AuthorizationSnapshot snapshot = snapshot(authorization);
 		StoredAuthorization current = lock(snapshot.authorizationId());
 		if (current == null) {
 			return false;
@@ -124,6 +124,33 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	public OAuth2Authorization findById(String id) {
 		UUID authorizationId = parseOptionalUuid(id);
 		return authorizationId == null ? null : load(authorizationId);
+	}
+
+	private AuthorizationSnapshot snapshot(OAuth2Authorization authorization) {
+		if (!AuthorizationGrantType.CLIENT_CREDENTIALS.equals(authorization.getAuthorizationGrantType())) {
+			return this.mapper.toSnapshot(authorization);
+		}
+		UUID clientId = parseOptionalUuid(authorization.getRegisteredClientId());
+		String clientIdentifier = authorization.getPrincipalName();
+		if (clientId == null || clientIdentifier == null || clientIdentifier.isEmpty()) {
+			throw new IllegalArgumentException("Client-credentials authorization identity is invalid");
+		}
+		UUID tenantId = this.jdbcClient.sql("""
+				SELECT tenant_id
+				FROM oauth_clients
+				WHERE client_id = :clientId
+				  AND client_identifier = :clientIdentifier
+				  AND authorization_grant_type = 'client_credentials'
+				""")
+			.param("clientId", clientId)
+			.param("clientIdentifier", clientIdentifier)
+			.query(UUID.class)
+			.optional()
+			.orElse(null);
+		if (tenantId == null) {
+			throw new OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_GRANT);
+		}
+		return this.mapper.toSnapshot(authorization, tenantId);
 	}
 
 	@Override
@@ -168,18 +195,19 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				     authorization_uri, redirect_uri, client_state, request_version,
 				     request_parameters, version, created_at, updated_at, purge_at)
 				VALUES
-				    (:authorizationId, :tenantId, :clientId, :userId, :sessionId,
-				     :clientIdentifier, :principalName, 'authorization_code',
-				     :authorizationUri, :redirectUri, :clientState, :requestVersion,
+				    (:authorizationId, :tenantId, :clientId, CAST(:userId AS uuid), CAST(:sessionId AS uuid),
+				     :clientIdentifier, :principalName, :authorizationGrantType,
+				     CAST(:authorizationUri AS text), :redirectUri, :clientState, :requestVersion,
 				     CAST(:requestParameters AS jsonb), 0, :now, :now, :purgeAt)
 				""")
 			.param("authorizationId", snapshot.authorizationId())
 			.param("tenantId", snapshot.tenantId())
 			.param("clientId", snapshot.clientId())
-			.param("userId", snapshot.principal().userId().value())
-			.param("sessionId", snapshot.principal().sessionId().value())
+			.param("userId", snapshot.principal() == null ? null : snapshot.principal().userId().value())
+			.param("sessionId", snapshot.principal() == null ? null : snapshot.principal().sessionId().value())
 			.param("clientIdentifier", snapshot.clientIdentifier())
-			.param("principalName", snapshot.principal().getName())
+			.param("principalName", snapshot.principalName())
+			.param("authorizationGrantType", snapshot.grantType().databaseValue())
 			.param("authorizationUri", snapshot.authorizationUri())
 			.param("redirectUri", snapshot.redirectUri())
 			.param("clientState", snapshot.clientState())
@@ -230,6 +258,13 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	}
 
 	private void ensureOwnerIsUsable(AuthorizationSnapshot snapshot, Instant now) {
+		switch (snapshot.grantType()) {
+			case AUTHORIZATION_CODE -> ensureUserOwnerIsUsable(snapshot, now);
+			case CLIENT_CREDENTIALS -> ensureClientOwnerIsUsable(snapshot);
+		}
+	}
+
+	private void ensureUserOwnerIsUsable(AuthorizationSnapshot snapshot, Instant now) {
 		Integer usable = this.jdbcClient.sql("""
 				SELECT 1
 				FROM oauth_clients clients
@@ -271,21 +306,53 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		}
 	}
 
+	private void ensureClientOwnerIsUsable(AuthorizationSnapshot snapshot) {
+		Integer usable = this.jdbcClient.sql("""
+				SELECT 1
+				FROM oauth_clients clients
+				JOIN tenants ON tenants.tenant_id = clients.tenant_id
+				WHERE clients.tenant_id = :tenantId
+				  AND clients.client_id = :clientId
+				  AND clients.client_identifier = :clientIdentifier
+				  AND clients.authorization_grant_type = 'client_credentials'
+				  AND clients.status = 'active'
+				  AND tenants.status = 'active'
+				FOR SHARE OF clients, tenants
+				""")
+			.param("tenantId", snapshot.tenantId())
+			.param("clientId", snapshot.clientId())
+			.param("clientIdentifier", snapshot.clientIdentifier())
+			.query(Integer.class)
+			.optional()
+			.orElse(null);
+		if (usable == null) {
+			throw new OAuth2AuthenticationException(OAuth2ErrorCodes.INVALID_GRANT);
+		}
+	}
+
 	private boolean hasSameImmutableState(StoredAuthorization current, AuthorizationSnapshot snapshot) {
-		return current.tenantId().equals(snapshot.tenantId()) && current.clientId().equals(snapshot.clientId())
-				&& current.userId().equals(snapshot.principal().userId().value())
-				&& current.sessionId().equals(snapshot.principal().sessionId().value())
-				&& current.clientIdentifier().equals(snapshot.clientIdentifier())
-				&& current.principalName().equals(snapshot.principal().getName())
-				&& current.authorizationUri().equals(snapshot.authorizationUri())
-				&& Objects.equals(current.redirectUri(), snapshot.redirectUri())
-				&& Objects.equals(current.clientState(), snapshot.clientState())
-				&& current.requestVersion() == REQUEST_VERSION
-				&& this.mapper.decodeJson(current.requestParameters()).equals(snapshot.requestParameters())
-				&& loadRequestedScopes(current).equals(snapshot.requestedScopes())
-				&& loadPrincipalAuthorities(current).equals(snapshot.principalAuthorities())
-				&& current.authenticationMethod().equals(snapshot.principal().authenticationMethod().name().toLowerCase())
-				&& current.authenticatedAt().equals(snapshot.principal().authenticatedAt());
+		if (!current.tenantId().equals(snapshot.tenantId()) || !current.clientId().equals(snapshot.clientId())
+				|| current.grantType() != snapshot.grantType()
+				|| !current.clientIdentifier().equals(snapshot.clientIdentifier())
+				|| !current.principalName().equals(snapshot.principalName())
+				|| !Objects.equals(current.authorizationUri(), snapshot.authorizationUri())
+				|| !Objects.equals(current.redirectUri(), snapshot.redirectUri())
+				|| !Objects.equals(current.clientState(), snapshot.clientState())
+				|| current.requestVersion() != REQUEST_VERSION
+				|| !this.mapper.decodeJson(current.requestParameters()).equals(snapshot.requestParameters())
+				|| !loadRequestedScopes(current).equals(snapshot.requestedScopes())
+				|| !loadPrincipalAuthorities(current).equals(snapshot.principalAuthorities())) {
+			return false;
+		}
+		return switch (snapshot.grantType()) {
+			case AUTHORIZATION_CODE -> current.userId().equals(snapshot.principal().userId().value())
+					&& current.sessionId().equals(snapshot.principal().sessionId().value())
+					&& current.authenticationMethod()
+						.equals(snapshot.principal().authenticationMethod().name().toLowerCase())
+					&& current.authenticatedAt().equals(snapshot.principal().authenticatedAt());
+			case CLIENT_CREDENTIALS -> current.userId() == null && current.sessionId() == null
+					&& current.authenticationMethod() == null && current.authenticatedAt() == null;
+		};
 	}
 
 	private void insertRequestedScopes(AuthorizationSnapshot snapshot) {
@@ -434,12 +501,12 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		String claims = token.claims() == null ? null : this.mapper.encodeClaims(token.claims());
 		this.jdbcClient.sql("""
 				INSERT INTO oauth_authorization_tokens
-				    (token_id, tenant_id, client_id, authorization_id, token_type,
+				    (token_id, tenant_id, client_id, authorization_id, authorization_grant_type, token_type,
 				     token_digest, encryption_key_id, initialization_vector, ciphertext,
 				     access_token_type, claims_version, claims, issued_at, expires_at,
 				     invalidated_at, version, created_at, updated_at)
 				VALUES
-				    (:tokenId, :tenantId, :clientId, :authorizationId, :tokenType,
+				    (:tokenId, :tenantId, :clientId, :authorizationId, :authorizationGrantType, :tokenType,
 				     :tokenDigest, :keyId, :initializationVector, :ciphertext,
 				     :accessTokenType, :claimsVersion, CAST(:claims AS jsonb), :issuedAt, :expiresAt,
 				     :invalidatedAt, 0, :now, :now)
@@ -448,6 +515,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 			.param("tenantId", authorization.tenantId())
 			.param("clientId", authorization.clientId())
 			.param("authorizationId", authorization.authorizationId())
+			.param("authorizationGrantType", authorization.grantType().databaseValue())
 			.param("tokenType", kind.databaseValue())
 			.param("tokenDigest", protectedToken.digest())
 			.param("keyId", protectedToken.keyId())
@@ -548,7 +616,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				       authz.version, authz.created_at, authz.updated_at,
 				       authz.purge_at, sessions.authentication_method, sessions.authenticated_at
 				FROM oauth_authorizations authz
-				JOIN user_sessions sessions
+				LEFT JOIN user_sessions sessions
 				  ON sessions.tenant_id = authz.tenant_id
 				 AND sessions.user_id = authz.user_id
 				 AND sessions.session_id = authz.session_id
@@ -564,6 +632,18 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		Set<String> requestedScopes = loadRequestedScopes(stored);
 		Set<String> authorizedScopes = loadAuthorizedScopes(stored);
 		Map<String, Object> requestParameters = this.mapper.decodeJson(stored.requestParameters());
+		Map<AuthorizationTokenKind, StoredToken> tokens = loadTokens(stored);
+		return switch (stored.grantType()) {
+			case AUTHORIZATION_CODE -> toAuthorizationCode(stored, requestedScopes, authorizedScopes, requestParameters,
+					tokens);
+			case CLIENT_CREDENTIALS -> toClientCredentials(stored, requestedScopes, authorizedScopes,
+					requestParameters, tokens);
+		};
+	}
+
+	private OAuth2Authorization toAuthorizationCode(StoredAuthorization stored, Set<String> requestedScopes,
+			Set<String> authorizedScopes, Map<String, Object> requestParameters,
+			Map<AuthorizationTokenKind, StoredToken> tokens) {
 		OAuth2AuthorizationRequest request = OAuth2AuthorizationRequest.authorizationCode()
 			.authorizationUri(stored.authorizationUri())
 			.clientId(stored.clientIdentifier())
@@ -578,7 +658,6 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				stored.authenticatedAt());
 		AuthorizationUserAuthentication authentication = AuthorizationUserAuthentication.authenticated(principal,
 				loadPrincipalAuthorities(stored).stream().map(authority -> storedAuthority(authority, principal)).toList());
-		Map<AuthorizationTokenKind, StoredToken> tokens = loadTokens(stored);
 		RegisteredClient.Builder registeredClient = RegisteredClient.withId(stored.clientId().toString())
 			.clientId(stored.clientIdentifier())
 			.clientAuthenticationMethod(org.springframework.security.oauth2.core.ClientAuthenticationMethod.NONE)
@@ -640,6 +719,44 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		OAuth2Authorization authorization = builder.build();
 		this.mapper.toSnapshot(authorization);
 		return authorization;
+	}
+
+	private OAuth2Authorization toClientCredentials(StoredAuthorization stored, Set<String> requestedScopes,
+			Set<String> authorizedScopes, Map<String, Object> requestParameters,
+			Map<AuthorizationTokenKind, StoredToken> tokens) {
+		if (!requestParameters.isEmpty() || !requestedScopes.equals(authorizedScopes)
+				|| !loadPrincipalAuthorities(stored).isEmpty()
+				|| !tokens.keySet().equals(Set.of(AuthorizationTokenKind.ACCESS_TOKEN))) {
+			throw new DataRetrievalFailureException("Stored client-credentials authorization has invalid protocol state");
+		}
+		RegisteredClient.Builder registeredClient = RegisteredClient.withId(stored.clientId().toString())
+			.clientId(stored.clientIdentifier())
+			.clientAuthenticationMethod(
+					org.springframework.security.oauth2.core.ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS);
+		requestedScopes.forEach(registeredClient::scope);
+		OAuth2Authorization.Builder builder = OAuth2Authorization.withRegisteredClient(registeredClient.build())
+			.id(stored.authorizationId().toString())
+			.principalName(stored.principalName())
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+			.authorizedScopes(authorizedScopes)
+			.attribute(AuthorizationSnapshotMapper.REVISION_ATTRIBUTE, stored.version());
+		addAccessToken(builder, stored, tokens.get(AuthorizationTokenKind.ACCESS_TOKEN));
+		OAuth2Authorization authorization = builder.build();
+		this.mapper.toSnapshot(authorization, stored.tenantId());
+		return authorization;
+	}
+
+	private void addAccessToken(OAuth2Authorization.Builder builder, StoredAuthorization stored, StoredToken access) {
+		OAuth2AccessToken.TokenType type = OAuth2AccessToken.TokenType.BEARER.getValue()
+			.equals(access.accessTokenType()) ? OAuth2AccessToken.TokenType.BEARER : OAuth2AccessToken.TokenType.DPOP;
+		OAuth2AccessToken value = new OAuth2AccessToken(type, reveal(stored, access), access.issuedAt(),
+				access.expiresAt(), access.scopes());
+		builder.token(value, metadata -> {
+			metadata.put(OAuth2Authorization.Token.INVALIDATED_METADATA_NAME, access.invalidated());
+			metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, access.claims());
+			metadata.put(OAuth2TokenFormat.class.getName(), OAuth2TokenFormat.SELF_CONTAINED.getValue());
+		});
 	}
 
 	private String reveal(StoredAuthorization authorization, StoredToken token) {
@@ -733,7 +850,11 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 
 	private static StoredAuthorization storedAuthorization(ResultSet resultSet) throws SQLException {
 		String grantType = resultSet.getString("authorization_grant_type");
-		if (!AuthorizationGrantType.AUTHORIZATION_CODE.getValue().equals(grantType)) {
+		AuthorizationGrantKind grant;
+		try {
+			grant = AuthorizationGrantKind.fromDatabaseValue(grantType);
+		}
+		catch (IllegalArgumentException exception) {
 			throw new DataRetrievalFailureException("Stored authorization has an unsupported grant type: " + grantType);
 		}
 		short requestVersion = resultSet.getShort("request_version");
@@ -741,15 +862,24 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 			throw new DataRetrievalFailureException(
 					"Stored authorization has an unsupported request version: " + requestVersion);
 		}
+		UUID userId = resultSet.getObject("user_id", UUID.class);
+		UUID sessionId = resultSet.getObject("session_id", UUID.class);
+		String authenticationMethod = resultSet.getString("authentication_method");
+		Instant authenticatedAt = instantOrNull(resultSet, "authenticated_at");
+		if ((grant == AuthorizationGrantKind.AUTHORIZATION_CODE
+				&& (userId == null || sessionId == null || authenticationMethod == null || authenticatedAt == null))
+				|| (grant == AuthorizationGrantKind.CLIENT_CREDENTIALS
+						&& (userId != null || sessionId != null || authenticationMethod != null || authenticatedAt != null))) {
+			throw new DataRetrievalFailureException("Stored authorization owner does not match its grant type");
+		}
 		return new StoredAuthorization(resultSet.getObject("authorization_id", UUID.class),
 				resultSet.getObject("tenant_id", UUID.class), resultSet.getObject("client_id", UUID.class),
-				resultSet.getObject("user_id", UUID.class), resultSet.getObject("session_id", UUID.class),
-				resultSet.getString("client_identifier"), resultSet.getString("principal_name"),
+				userId, sessionId, resultSet.getString("client_identifier"), resultSet.getString("principal_name"), grant,
 				resultSet.getString("authorization_uri"), resultSet.getString("redirect_uri"),
 				resultSet.getString("client_state"), requestVersion,
 				resultSet.getString("request_parameters"), resultSet.getLong("version"),
 				instant(resultSet, "created_at"), instant(resultSet, "updated_at"), instant(resultSet, "purge_at"),
-				resultSet.getString("authentication_method"), instant(resultSet, "authenticated_at"));
+				authenticationMethod, authenticatedAt);
 	}
 
 	private static StoredToken storedToken(ResultSet resultSet) throws SQLException {
@@ -816,6 +946,11 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		return resultSet.getObject(column, OffsetDateTime.class).toInstant();
 	}
 
+	private static Instant instantOrNull(ResultSet resultSet, String column) throws SQLException {
+		OffsetDateTime value = resultSet.getObject(column, OffsetDateTime.class);
+		return value == null ? null : value.toInstant();
+	}
+
 	private static OffsetDateTime offset(Instant value) {
 		return value == null ? null : OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
 	}
@@ -831,8 +966,8 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	}
 
 	private record StoredAuthorization(UUID authorizationId, UUID tenantId, UUID clientId, UUID userId,
-			UUID sessionId, String clientIdentifier, String principalName, String authorizationUri, String redirectUri,
-			String clientState, short requestVersion, String requestParameters, long version, Instant createdAt,
+			UUID sessionId, String clientIdentifier, String principalName, AuthorizationGrantKind grantType,
+			String authorizationUri, String redirectUri, String clientState, short requestVersion, String requestParameters, long version, Instant createdAt,
 			Instant updatedAt, Instant purgeAt, String authenticationMethod, Instant authenticatedAt) {
 	}
 

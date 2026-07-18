@@ -77,6 +77,31 @@ class AuthorizationSnapshotMapperTests {
 				AuthorizationTokenKind.ACCESS_TOKEN, AuthorizationTokenKind.REFRESH_TOKEN,
 				AuthorizationTokenKind.ID_TOKEN);
 		assertThat(snapshot.tokens().get(AuthorizationTokenKind.ACCESS_TOKEN).claims()).isEqualTo(accessClaims);
+		assertThat(snapshot.toString()).doesNotContain("access-token", "authorization-code", "client-state");
+	}
+
+	@Test
+	void mapsTheOfficialClientCredentialsAggregate() {
+		OAuth2Authorization authorization = clientCredentialsAuthorization(Set.of("scim.read"), Set.of("scim.read"));
+
+		AuthorizationSnapshot snapshot = this.mapper.toSnapshot(authorization, TenantId.DEFAULT.value());
+
+		assertThat(snapshot.tenantId()).isEqualTo(TenantId.DEFAULT.value());
+		assertThat(snapshot.clientId()).isEqualTo(CLIENT_ID);
+		assertThat(snapshot.clientIdentifier()).isEqualTo("mapper-service-client");
+		assertThat(snapshot.grantType()).isEqualTo(AuthorizationGrantKind.CLIENT_CREDENTIALS);
+		assertThat(snapshot.principal()).isNull();
+		assertThat(snapshot.principalAuthorities()).isEmpty();
+		assertThat(snapshot.authorizationUri()).isNull();
+		assertThat(snapshot.requestParameters()).isEmpty();
+		assertThat(snapshot.requestedScopes()).containsExactly("scim.read");
+		assertThat(snapshot.authorizedScopes()).containsExactly("scim.read");
+		assertThat(snapshot.tokens()).containsOnlyKeys(AuthorizationTokenKind.ACCESS_TOKEN);
+		assertThat(snapshot.tokens().get(AuthorizationTokenKind.ACCESS_TOKEN).claims())
+			.containsEntry("sub", "mapper-service-client");
+		assertThat(snapshot.toString()).doesNotContain("service-access-token", "tenant_id");
+		assertThat(snapshot.tokens().get(AuthorizationTokenKind.ACCESS_TOKEN).toString())
+			.doesNotContain("service-access-token", "mapper-service-client");
 	}
 
 	@Test
@@ -197,6 +222,47 @@ class AuthorizationSnapshotMapperTests {
 			.hasMessage("Access token scopes must be a subset of the authorized scopes");
 	}
 
+	@Test
+	void rejectsInvalidClientCredentialsAggregateState() {
+		OAuth2Authorization valid = clientCredentialsAuthorization(Set.of("scim.read"), Set.of("scim.read"));
+		OAuth2Authorization unscoped = clientCredentialsAuthorization(Set.of(), Set.of());
+		OAuth2Authorization unsupportedAttribute = OAuth2Authorization.from(valid)
+			.attribute(Principal.class.getName(), "unexpected")
+			.build();
+		OAuth2Authorization mismatchedScopes = clientCredentialsAuthorization(Set.of("scim.read"), Set.of("scim.write"));
+		OAuth2Authorization withRefreshToken = OAuth2Authorization.from(valid)
+			.refreshToken(new OAuth2RefreshToken("refresh-token", ISSUED_AT, ISSUED_AT.plusSeconds(600)))
+			.build();
+
+		assertThatThrownBy(() -> this.mapper.toSnapshot(valid))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessage("Client-credentials tenant ID is required");
+		assertThatThrownBy(() -> this.mapper.toSnapshot(unsupportedAttribute, TenantId.DEFAULT.value()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessage("Client-credentials authorization contains unsupported attributes");
+		assertThat(this.mapper.toSnapshot(unscoped, TenantId.DEFAULT.value()).authorizedScopes()).isEmpty();
+		assertThatThrownBy(() -> this.mapper.toSnapshot(mismatchedScopes, TenantId.DEFAULT.value()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessage("Client-credentials authorization must contain one scoped access token");
+		assertThatThrownBy(() -> this.mapper.toSnapshot(withRefreshToken, TenantId.DEFAULT.value()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessage("Client-credentials authorization must contain one scoped access token");
+	}
+
+	private static OAuth2Authorization clientCredentialsAuthorization(Set<String> authorizedScopes,
+			Set<String> tokenScopes) {
+		Map<String, Object> claims = Map.of("sub", "mapper-service-client", "iat", ISSUED_AT);
+		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
+				"service-access-token", ISSUED_AT, ISSUED_AT.plusSeconds(300), tokenScopes);
+		return OAuth2Authorization.withRegisteredClient(serviceRegisteredClient())
+			.id(UUID.randomUUID().toString())
+			.principalName("mapper-service-client")
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+			.authorizedScopes(authorizedScopes)
+			.token(accessToken, metadata -> officialAccessTokenMetadata(metadata, claims))
+			.build();
+	}
+
 	private static OAuth2Authorization.Builder baseAuthorization(OAuth2AuthorizationRequest request) {
 		AuthorizationPrincipal principal = new AuthorizationPrincipal(TenantId.DEFAULT, new UserId(USER_ID),
 				new SessionId(SESSION_ID), SessionAuthenticationMethod.PASSWORD, ISSUED_AT.minusSeconds(60));
@@ -221,6 +287,17 @@ class AuthorizationSnapshotMapperTests {
 			.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
 			.redirectUri("https://client.example.test/callback")
 			.scope("openid")
+			.build();
+	}
+
+	private static RegisteredClient serviceRegisteredClient() {
+		return RegisteredClient.withId(CLIENT_ID.toString())
+			.clientId("mapper-service-client")
+			.clientAuthenticationMethod(
+					org.springframework.security.oauth2.core.ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+			.scope("scim.read")
+			.scope("scim.write")
 			.build();
 	}
 

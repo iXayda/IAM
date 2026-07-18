@@ -37,6 +37,8 @@ final class AuthorizationSnapshotMapper {
 	private static final Set<String> ALLOWED_ATTRIBUTES = Set.of(Principal.class.getName(),
 			OAuth2AuthorizationRequest.class.getName(), OAuth2ParameterNames.STATE, REVISION_ATTRIBUTE);
 
+	private static final Set<String> ALLOWED_SERVICE_ATTRIBUTES = Set.of(REVISION_ATTRIBUTE);
+
 	private static final Set<String> ALLOWED_REQUEST_PARAMETERS =
 			Set.of("code_challenge", "code_challenge_method", "nonce", "prompt");
 
@@ -51,12 +53,23 @@ final class AuthorizationSnapshotMapper {
 	}
 
 	AuthorizationSnapshot toSnapshot(OAuth2Authorization authorization) {
+		return toSnapshot(authorization, null);
+	}
+
+	AuthorizationSnapshot toSnapshot(OAuth2Authorization authorization, UUID clientCredentialsTenantId) {
 		Objects.requireNonNull(authorization, "Authorization must not be null");
 		UUID authorizationId = parseUuid(authorization.getId(), "Authorization ID");
 		UUID clientId = parseUuid(authorization.getRegisteredClientId(), "Registered client ID");
-		if (!AuthorizationGrantType.AUTHORIZATION_CODE.equals(authorization.getAuthorizationGrantType())) {
-			throw new IllegalArgumentException("Only the authorization_code grant is supported");
-		}
+		AuthorizationGrantKind grantType = AuthorizationGrantKind.from(authorization.getAuthorizationGrantType());
+		return switch (grantType) {
+			case AUTHORIZATION_CODE -> authorizationCodeSnapshot(authorization, authorizationId, clientId);
+			case CLIENT_CREDENTIALS -> clientCredentialsSnapshot(authorization, authorizationId, clientId,
+					clientCredentialsTenantId);
+		};
+	}
+
+	private AuthorizationSnapshot authorizationCodeSnapshot(OAuth2Authorization authorization, UUID authorizationId,
+			UUID clientId) {
 		if (!ALLOWED_ATTRIBUTES.containsAll(authorization.getAttributes().keySet())) {
 			throw new IllegalArgumentException("Authorization contains unsupported attributes");
 		}
@@ -89,15 +102,46 @@ final class AuthorizationSnapshotMapper {
 				principal.sessionId(), principal.authenticationMethod(),
 				AuthorizationTime.toDatabasePrecision(principal.authenticatedAt()));
 		AuthorizationSnapshot snapshot = new AuthorizationSnapshot(authorizationId, principal.tenantId().value(),
-				clientId, request.getClientId(), persistedPrincipal, authorities(authentication, principal),
+				clientId, request.getClientId(), AuthorizationGrantKind.AUTHORIZATION_CODE, persistedPrincipal,
+				authorities(authentication, principal),
 				request.getAuthorizationUri(), request.getRedirectUri(), request.getState(), requestParameters, request.getScopes(),
 				authorization.getAuthorizedScopes(), consentState, revision, tokens);
 
 		this.jsonCodec.write(snapshot.requestParameters());
 		snapshot.tokens().values().stream().map(AuthorizationTokenSnapshot::claims).filter(Objects::nonNull)
 				.forEach(this.jsonCodec::write);
-		if (!sanitizedAuthorization(authorization, snapshot, authentication, request).equals(authorization)) {
+		if (!sanitizedAuthorizationCode(authorization, snapshot, authentication, request).equals(authorization)) {
 			throw new IllegalArgumentException("Authorization contains unsupported token state");
+		}
+		return snapshot;
+	}
+
+	private AuthorizationSnapshot clientCredentialsSnapshot(OAuth2Authorization authorization, UUID authorizationId,
+			UUID clientId, UUID tenantId) {
+		if (!ALLOWED_SERVICE_ATTRIBUTES.containsAll(authorization.getAttributes().keySet())) {
+			throw new IllegalArgumentException("Client-credentials authorization contains unsupported attributes");
+		}
+		if (tenantId == null) {
+			throw new IllegalArgumentException("Client-credentials tenant ID is required");
+		}
+		String clientIdentifier = authorization.getPrincipalName();
+		if (clientIdentifier == null || clientIdentifier.isEmpty()) {
+			throw new IllegalArgumentException("Client-credentials principal name must be the client identifier");
+		}
+		Set<String> authorizedScopes = authorization.getAuthorizedScopes();
+		Map<AuthorizationTokenKind, AuthorizationTokenSnapshot> tokens = tokens(authorization);
+		if (!tokens.keySet().equals(Set.of(AuthorizationTokenKind.ACCESS_TOKEN))
+				|| !tokens.get(AuthorizationTokenKind.ACCESS_TOKEN).scopes().equals(authorizedScopes)) {
+			throw new IllegalArgumentException("Client-credentials authorization must contain one scoped access token");
+		}
+		Long revision = revision(authorization.getAttribute(REVISION_ATTRIBUTE));
+		AuthorizationSnapshot snapshot = new AuthorizationSnapshot(authorizationId, tenantId, clientId, clientIdentifier,
+				AuthorizationGrantKind.CLIENT_CREDENTIALS, null, Set.of(), null, null, null, Map.of(), authorizedScopes,
+				authorizedScopes, null, revision, tokens);
+		snapshot.tokens().values().stream().map(AuthorizationTokenSnapshot::claims).filter(Objects::nonNull)
+			.forEach(this.jsonCodec::write);
+		if (!sanitizedClientCredentialsAuthorization(authorization, snapshot).equals(authorization)) {
+			throw new IllegalArgumentException("Client-credentials authorization contains unsupported token state");
 		}
 		return snapshot;
 	}
@@ -335,7 +379,7 @@ final class AuthorizationSnapshotMapper {
 		}
 	}
 
-	private static OAuth2Authorization sanitizedAuthorization(OAuth2Authorization original,
+	private static OAuth2Authorization sanitizedAuthorizationCode(OAuth2Authorization original,
 			AuthorizationSnapshot snapshot, AuthorizationUserAuthentication authentication,
 			OAuth2AuthorizationRequest request) {
 		RegisteredClient.Builder registeredClient = RegisteredClient.withId(original.getRegisteredClientId())
@@ -378,6 +422,29 @@ final class AuthorizationSnapshotMapper {
 		OAuth2Authorization.Token<OidcIdToken> id = original.getToken(OidcIdToken.class);
 		if (id != null) {
 			builder.token(id.getToken(), metadata -> metadata.putAll(id.getMetadata()));
+		}
+		return builder.build();
+	}
+
+	private static OAuth2Authorization sanitizedClientCredentialsAuthorization(OAuth2Authorization original,
+			AuthorizationSnapshot snapshot) {
+		RegisteredClient.Builder registeredClient = RegisteredClient.withId(original.getRegisteredClientId())
+			.clientId(snapshot.clientIdentifier())
+			.clientAuthenticationMethod(
+					org.springframework.security.oauth2.core.ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS);
+		snapshot.requestedScopes().forEach(registeredClient::scope);
+		OAuth2Authorization.Builder builder = OAuth2Authorization.withRegisteredClient(registeredClient.build())
+			.id(snapshot.authorizationId().toString())
+			.principalName(snapshot.principalName())
+			.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+			.authorizedScopes(snapshot.authorizedScopes());
+		if (snapshot.expectedVersion() != null) {
+			builder.attribute(REVISION_ATTRIBUTE, snapshot.expectedVersion());
+		}
+		OAuth2Authorization.Token<OAuth2AccessToken> access = original.getAccessToken();
+		if (access != null) {
+			builder.token(access.getToken(), metadata -> metadata.putAll(access.getMetadata()));
 		}
 		return builder.build();
 	}
