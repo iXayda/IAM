@@ -3,6 +3,7 @@ package com.ixayda.iam.authorization.internal;
 import java.util.List;
 import java.util.Set;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -10,6 +11,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationConsentAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.web.SecurityFilterChain;
@@ -31,7 +33,8 @@ class AuthorizationServerWebSecurityConfiguration {
 	@Order(Ordered.HIGHEST_PRECEDENCE)
 	SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http,
 			HttpSessionRequestCache authorizationRequestCache, PlatformTransactionManager transactionManager,
-			AuthorizationServerSettings settings) {
+			AuthorizationServerSettings settings,
+			@Qualifier("authorizationJwtDecoder") JwtDecoder jwtDecoder) {
 		http.oauth2AuthorizationServer((authorizationServer) -> {
 			http.securityMatcher(authorizationServer.getEndpointsMatcher());
 			authorizationServer.authorizationEndpoint((authorizationEndpoint) -> authorizationEndpoint
@@ -44,7 +47,7 @@ class AuthorizationServerWebSecurityConfiguration {
 		});
 		http.authorizeHttpRequests((authorize) -> authorize.anyRequest().authenticated());
 		http.requestCache((requestCache) -> requestCache.requestCache(authorizationRequestCache));
-		http.oauth2ResourceServer((resourceServer) -> resourceServer.jwt(withDefaults()));
+		http.oauth2ResourceServer((resourceServer) -> resourceServer.jwt((jwt) -> jwt.decoder(jwtDecoder)));
 		http.exceptionHandling((exceptions) -> exceptions.defaultAuthenticationEntryPointFor(
 				new LoginUrlAuthenticationEntryPoint("/login"), htmlRequestMatcher()));
 		return http.build();

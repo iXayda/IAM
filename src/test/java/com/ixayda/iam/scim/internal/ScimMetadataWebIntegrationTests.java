@@ -133,15 +133,15 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void keepsProvisioningAndWriteRequestsClosed() throws Exception {
-		this.mockMvc.perform(get("/scim/v2/Users").accept(SCIM_JSON)).andExpect(status().isForbidden())
+		this.mockMvc.perform(get("/scim/v2/Users").accept(SCIM_JSON)).andExpect(status().isUnauthorized())
 			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
 			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
-			.andExpect(jsonPath("$.status").value("403"));
+			.andExpect(jsonPath("$.status").value("401"));
 
 		this.mockMvc.perform(post("/scim/v2/ServiceProviderConfig").accept(SCIM_JSON))
-			.andExpect(status().isForbidden())
+			.andExpect(status().isUnauthorized())
 			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
-			.andExpect(jsonPath("$.status").value("403"));
+			.andExpect(jsonPath("$.status").value("401"));
 	}
 
 	@Test

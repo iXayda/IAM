@@ -349,9 +349,9 @@ request_scim /scim/v2/Schemas/unknown 404
 jq -e \
 	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "404"' \
 	"${scim_body_file}" >/dev/null || fail "SCIM not-found response is invalid"
-request_scim /scim/v2/Users 403
+request_scim /scim/v2/Users 401
 jq -e \
-	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "403"' \
+	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "401"' \
 	"${scim_body_file}" >/dev/null || fail "Closed SCIM provisioning response is invalid"
 
 curl --fail --silent --show-error --max-time 5 \

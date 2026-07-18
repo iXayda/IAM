@@ -1,5 +1,6 @@
 package com.ixayda.iam.authorization.internal;
 
+import java.time.Clock;
 import java.util.ArrayList;
 
 import com.nimbusds.jose.jwk.JWK;
@@ -11,10 +12,14 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
@@ -71,12 +76,26 @@ class AuthorizationPersistenceConfiguration {
 	}
 
 	@Bean
+	@Primary
 	JwtDecoder authorizationJwtDecoder(JWKSource<SecurityContext> jwkSource,
 			AuthorizationServerProperties properties) {
-		NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSource(jwkSource)
-			.jwsAlgorithm(SignatureAlgorithm.RS256)
-			.build();
+		NimbusJwtDecoder decoder = jwtDecoder(jwkSource);
 		decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(properties.issuer().toASCIIString()));
+		return decoder;
+	}
+
+	@Bean
+	JwtDecoder serviceJwtDecoder(JWKSource<SecurityContext> jwkSource, AuthorizationServerProperties properties) {
+		Clock clock = Clock.systemUTC();
+		JwtTimestampValidator timestampValidator =
+				new JwtTimestampValidator(ServiceTokenJwtValidator.ALLOWED_CLOCK_SKEW);
+		timestampValidator.setAllowEmptyExpiryClaim(false);
+		timestampValidator.setAllowEmptyNotBeforeClaim(false);
+		timestampValidator.setClock(clock);
+		NimbusJwtDecoder decoder = jwtDecoder(jwkSource);
+		decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+				new JwtIssuerValidator(properties.issuer().toASCIIString()), timestampValidator,
+				new ServiceTokenJwtValidator(properties.serviceTokenAudience(), clock)));
 		return decoder;
 	}
 
@@ -109,6 +128,12 @@ class AuthorizationPersistenceConfiguration {
 	@Bean
 	OAuth2AuthorizationConsentService oauth2AuthorizationConsentService(JdbcClient jdbcClient) {
 		return new JdbcOAuth2AuthorizationConsentService(jdbcClient);
+	}
+
+	private static NimbusJwtDecoder jwtDecoder(JWKSource<SecurityContext> jwkSource) {
+		return NimbusJwtDecoder.withJwkSource(jwkSource)
+			.jwsAlgorithm(SignatureAlgorithm.RS256)
+			.build();
 	}
 
 }

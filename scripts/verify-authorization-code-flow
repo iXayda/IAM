@@ -374,4 +374,30 @@ service_scope_state="$(database --tuples-only --no-align --command "
 [[ "${service_scope_state}" == "1:1:1" ]] \
 	|| fail "Persisted Client Credentials scope state is invalid: ${service_scope_state}"
 
+log "Checking the SCIM resource-server boundary"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Users")"
+[[ "${status}" == "404" ]] || fail "SCIM read token did not pass the resource-server boundary: HTTP ${status}"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request POST --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_access_token}" "${base_url}/scim/v2/Users")"
+[[ "${status}" == "403" ]] && jq -e '.status == "403"' "${body}" >/dev/null \
+	|| fail "SCIM write request was not rejected for a read-only token"
+
+status="$(curl --silent --show-error --max-time 10 --output "${service_token_response}" --write-out '%{http_code}' \
+	--user "${SERVICE_CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST \
+	--data-urlencode 'grant_type=client_credentials' --data-urlencode 'scope=scim.write' \
+	"${base_url}/oauth2/token")"
+[[ "${status}" == "200" ]] || fail "Client Credentials write-token exchange returned HTTP ${status}"
+jq -e \
+	'.token_type == "Bearer" and .expires_in > 0 and .expires_in <= 300 and .scope == "scim.write"
+	 and (.refresh_token | not) and (.id_token | not)' \
+	"${service_token_response}" >/dev/null || fail "Client Credentials write-token response is invalid"
+service_write_access_token="$(jq -er '.access_token' "${service_token_response}")"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request POST --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" "${base_url}/scim/v2/Groups")"
+[[ "${status}" == "404" ]] || fail "SCIM write token did not pass the resource-server boundary: HTTP ${status}"
+
 log "Authorization Code + PKCE + OIDC + Refresh Token + Client Credentials flows passed"

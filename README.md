@@ -122,6 +122,7 @@ IAM 不负责：
 - 租户隔离的用户资料、目录组和直接用户组成员关系
 - OAuth 2.0 Authorization Code、PKCE、OpenID Connect、Refresh Token 和 Client Credentials
 - 租户绑定的机器客户端、短期 SCIM audience JWT 和可信 `tenant_id` claim
+- SCIM Users/Groups 资源命名空间的专用 JWT profile 校验与 `scim.read` / `scim.write` 授权边界
 - SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
@@ -230,8 +231,9 @@ GET /scim/v2/ResourceTypes
 GET /scim/v2/ResourceTypes/{id}
 ```
 
-当前仅开放匿名 discovery。机器客户端认证和可信租户 token 已具备；SCIM 用户和组 provisioning
-尚未实现，因此对应资源端点继续保持关闭。
+当前仅开放匿名 discovery。机器客户端认证、可信租户 token 和 Users/Groups 资源命名空间的 scope
+授权边界已具备；SCIM 用户和组 provisioning adapter 尚未实现，因此有效 token 通过安全边界后仍不会
+获得资源响应。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：
@@ -340,6 +342,10 @@ Authorization Server 使用固定 issuer。`local` profile 默认使用 `http://
 Client Credentials access token 使用 `IAM_AUTHORIZATION_SERVICE_TOKEN_AUDIENCE` 配置稳定的 HTTPS
 resource audience。机器 token 的 `tenant_id` 只从持久化 client owner 映射读取，不接受 token 请求中的
 tenant 或 audience 参数覆盖；service client 不支持浏览器 redirect、OIDC scope 或 Refresh Token。
+SCIM resource server 还会校验固定 issuer、RS256 签名、单一 audience、token 时间窗口、canonical tenant
+UUID、合法 client identifier 以及 `sub == client_id`。已签发 JWT 不执行在线撤销查询；token 声明周期
+最多 5 分钟，并允许 30 秒验证时钟偏差。考虑签发端与资源端允许的相对时钟偏差，禁用 client 后的
+运维处置窗口按最坏约 6 分钟计算。
 
 首次启动会在 PostgreSQL 中并发安全地创建一把 RSA-3072 active signing key。`kid` 使用 RFC 7638
 thumbprint，私钥以 PKCS#8 编码并由独立的 AES-256-GCM key ring 加密，数据库不保存明文私钥。生产环境

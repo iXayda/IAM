@@ -11,7 +11,7 @@
 - 本地密码认证领域能力、LDAP credential verifier；
 - Redis 登录限流和一次性安全状态；
 - OAuth 2.0 Authorization Code、PKCE、OpenID Connect、Refresh Token 和 Client Credentials；
-- 匿名 SCIM 2.0 discovery；
+- 匿名 SCIM 2.0 discovery 和受 scope 保护的 Users/Groups 资源命名空间；
 - 健康探针、Prometheus 指标、OpenTelemetry 和告警规则。
 
 OAuth 2.0/OIDC 和 SCIM discovery 已提供 HTTP 入口并纳入发布门禁。SCIM 用户和组 provisioning、
@@ -34,7 +34,7 @@ GitHub Actions 在 pull request、`master` push、手动触发和每周定时任
 2. Prometheus 告警规则单元测试；
 3. GraalVM Native Image 构建；
 4. 全新数据库迁移、探针、指标和 schema history 检查；
-5. SCIM discovery、OAuth 2.0 Authorization Code、PKCE、OIDC、Refresh Token 和 Client Credentials HTTP smoke；
+5. SCIM discovery、service JWT read/write 边界、OAuth 2.0 Authorization Code、PKCE、OIDC、Refresh Token 和 Client Credentials HTTP smoke；
 6. Redis/PostgreSQL 中断、readiness 降级、liveness 保持和恢复；
 7. 缺少安全 secret 时的 fail-closed readiness；
 8. 重启迁移幂等性和 SIGTERM 优雅关闭。
@@ -79,6 +79,10 @@ PostgreSQL 运行账号不得拥有创建数据库、超级用户或修改历史
 Redis ACL 至少允许应用 key 前缀所需的连接、脚本、`SET` 和 `GETDEL` 操作。验证环境使用官方
 `latest` 镜像发现兼容性变化；生产环境应使用通过验收并记录的版本或 digest，不应依赖本地缓存中的
 可变标签。
+
+SCIM service JWT 使用离线签名校验，不在每次请求时查询 client 状态。token 声明周期最多 5 分钟，
+资源端允许 30 秒验证时钟偏差；考虑签发端与资源端允许的相对时钟偏差，client 或 tenant 被禁用后的
+运维处置窗口按最坏约 6 分钟计算。当前版本不提供单 token 即时撤销。
 
 LDAP 默认关闭。启用时必须额外验证 LDAPS 或 StartTLS、证书信任、tenant allowlist、稳定 subject、
 目录超时和独立 synthetic probe。LDAP 不属于应用 readiness group。
