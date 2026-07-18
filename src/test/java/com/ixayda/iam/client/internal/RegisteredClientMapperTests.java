@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.Set;
 
 import com.ixayda.iam.client.ClientAuthenticationMethod;
+import com.ixayda.iam.client.ClientAuthorizationGrant;
 import com.ixayda.iam.client.ClientId;
 import com.ixayda.iam.client.ClientIdentifier;
 import com.ixayda.iam.client.ClientRedirectUri;
@@ -73,6 +74,37 @@ class RegisteredClientMapperTests {
 		assertThat(registeredClient.getTokenSettings().getIdTokenSignatureAlgorithm())
 			.isEqualTo(SignatureAlgorithm.RS256);
 		assertThat(registeredClient.toString()).doesNotContain(encodedSecret);
+	}
+
+	@Test
+	void mapsAClientCredentialsClientToTheMachineAuthorizationContract() {
+		ClientSecretMetadata secretMetadata =
+				new ClientSecretMetadata(CREATED_AT, CREATED_AT.plus(Duration.ofDays(90)));
+		OAuthClient client = new OAuthClient(ClientId.random(), TenantId.DEFAULT,
+				new ClientIdentifier("scim-service-client"), "SCIM Service Client", ClientType.CONFIDENTIAL,
+				ClientAuthenticationMethod.CLIENT_SECRET_BASIC, ClientAuthorizationGrant.CLIENT_CREDENTIALS,
+				ClientStatus.ACTIVE, secretMetadata, Set.of(), Set.of(),
+				Set.of(new ClientScope("scim.read"), new ClientScope("scim.write")),
+				new ClientTokenPolicy(Duration.ofMinutes(4), Duration.ofMinutes(5)), 0, CREATED_AT, CREATED_AT);
+		String encodedSecret = "{bcrypt}" + "a".repeat(60);
+
+		RegisteredClient registeredClient =
+				this.mapper.toRegisteredClient(new StoredOAuthClient(client, encodedSecret));
+
+		assertThat(registeredClient.getAuthorizationGrantTypes())
+			.containsExactly(AuthorizationGrantType.CLIENT_CREDENTIALS);
+		assertThat(registeredClient.getClientAuthenticationMethods())
+			.containsExactly(org.springframework.security.oauth2.core.ClientAuthenticationMethod.CLIENT_SECRET_BASIC);
+		assertThat(registeredClient.getRedirectUris()).isEmpty();
+		assertThat(registeredClient.getPostLogoutRedirectUris()).isEmpty();
+		assertThat(registeredClient.getScopes()).containsExactlyInAnyOrder("scim.read", "scim.write");
+		assertThat(registeredClient.getClientSettings().isRequireProofKey()).isFalse();
+		assertThat(registeredClient.getClientSettings().isRequireAuthorizationConsent()).isFalse();
+		assertThat((String) registeredClient.getClientSettings().getSetting(RegisteredClientMapper.TENANT_ID_SETTING))
+			.isEqualTo(TenantId.DEFAULT.toString());
+		assertThat(registeredClient.getTokenSettings().getAccessTokenTimeToLive()).isEqualTo(Duration.ofMinutes(5));
+		assertThat(registeredClient.getTokenSettings().getAccessTokenFormat())
+			.isEqualTo(OAuth2TokenFormat.SELF_CONTAINED);
 	}
 
 	@Test

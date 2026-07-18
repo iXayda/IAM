@@ -43,6 +43,10 @@ public record ClientTokenPolicy(Duration authorizationCodeTtl, Duration accessTo
 		return new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5), true, Duration.ofHours(1));
 	}
 
+	public static ClientTokenPolicy serviceDefaults() {
+		return new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(5));
+	}
+
 	private static Duration validateTtl(Duration value, Duration minimum, Duration maximum, String name) {
 		Objects.requireNonNull(value, name + " must not be null");
 		if (value.getNano() != 0 || value.compareTo(minimum) < 0 || value.compareTo(maximum) > 0) {

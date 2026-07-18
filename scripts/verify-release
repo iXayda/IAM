@@ -179,6 +179,7 @@ start_app() {
 		SPRING_DATA_REDIS_HOST=127.0.0.1 \
 		SPRING_DATA_REDIS_PORT="${redis_port}" \
 		IAM_AUTHORIZATION_ISSUER=https://issuer.release-check.invalid \
+		IAM_AUTHORIZATION_SERVICE_TOKEN_AUDIENCE=https://scim.release-check.invalid/scim/v2 \
 		IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID=v1 \
 		IAM_AUTHORIZATION_SIGNING_KEY_V1="${authorization_signing_key_secret}" \
 		IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID=v1 \
@@ -359,11 +360,12 @@ grep -q 'http_server_requests_seconds_bucket' "${metrics_file}" || fail "HTTP la
 grep -q 'application="iam-core-service"' "${metrics_file}" || fail "Application metric tag is missing"
 grep -q 'environment="release-check"' "${metrics_file}" || fail "Environment metric tag is missing"
 
-log "Checking native Authorization Code, PKCE, OpenID Connect, and Refresh Token flow"
+log "Checking native Authorization Code, PKCE, OpenID Connect, Refresh Token, and Client Credentials flows"
 postgres_container="$(compose ps --quiet postgres)"
 [[ -n "${postgres_container}" ]] || fail "Unable to resolve the PostgreSQL container"
 IAM_VERIFY_BASE_URL="http://127.0.0.1:${app_port}" \
 	IAM_VERIFY_ISSUER="https://issuer.release-check.invalid" \
+	IAM_VERIFY_SERVICE_TOKEN_AUDIENCE="https://scim.release-check.invalid/scim/v2" \
 	IAM_VERIFY_POSTGRES_CONTAINER="${postgres_container}" \
 	IAM_DB_NAME="${db_name}" \
 	IAM_DB_USERNAME="${db_username}" \

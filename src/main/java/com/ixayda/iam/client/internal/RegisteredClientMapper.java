@@ -8,6 +8,7 @@ import java.util.HexFormat;
 import com.ixayda.iam.client.ClientRedirectUri;
 import com.ixayda.iam.client.ClientScope;
 import com.ixayda.iam.client.OAuthClient;
+import com.ixayda.iam.client.OAuthClientSettings;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
@@ -19,7 +20,7 @@ import org.springframework.stereotype.Component;
 @Component
 class RegisteredClientMapper {
 
-	static final String TENANT_ID_SETTING = "com.ixayda.iam.tenant-id";
+	static final String TENANT_ID_SETTING = OAuthClientSettings.TENANT_ID;
 
 	static final String SECRET_ENCODING_FINGERPRINT_SETTING = "com.ixayda.iam.client-secret-encoding-fingerprint";
 
@@ -37,7 +38,7 @@ class RegisteredClientMapper {
 			.clientIdIssuedAt(client.createdAt())
 			.clientName(client.displayName())
 			.clientAuthenticationMethod(authenticationMethod(client))
-			.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+			.authorizationGrantType(authorizationGrantType(client))
 			.clientSettings(clientSettings.build())
 			.tokenSettings(TokenSettings.builder()
 				.authorizationCodeTimeToLive(client.tokenPolicy().authorizationCodeTtl())
@@ -79,6 +80,13 @@ class RegisteredClientMapper {
 			case NONE -> org.springframework.security.oauth2.core.ClientAuthenticationMethod.NONE;
 			case CLIENT_SECRET_BASIC ->
 				org.springframework.security.oauth2.core.ClientAuthenticationMethod.CLIENT_SECRET_BASIC;
+		};
+	}
+
+	private static AuthorizationGrantType authorizationGrantType(OAuthClient client) {
+		return switch (client.authorizationGrant()) {
+			case AUTHORIZATION_CODE -> AuthorizationGrantType.AUTHORIZATION_CODE;
+			case CLIENT_CREDENTIALS -> AuthorizationGrantType.CLIENT_CREDENTIALS;
 		};
 	}
 

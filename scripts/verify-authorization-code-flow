@@ -6,6 +6,8 @@ readonly TENANT_ID="00000000-0000-0000-0000-000000000001"
 readonly USER_ID="00000000-0000-0000-0000-000000000101"
 readonly CLIENT_ID="00000000-0000-0000-0000-000000000102"
 readonly CLIENT_IDENTIFIER="release-check-client"
+readonly SERVICE_CLIENT_ID="00000000-0000-0000-0000-000000000103"
+readonly SERVICE_CLIENT_IDENTIFIER="release-check-service-client"
 readonly USERNAME="release-check-user"
 readonly PASSWORD="password"
 readonly ENCODED_PASSWORD='{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG'
@@ -16,6 +18,7 @@ readonly CODE_VERIFIER="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123
 
 base_url="${IAM_VERIFY_BASE_URL:?IAM_VERIFY_BASE_URL is required}"
 issuer="${IAM_VERIFY_ISSUER:?IAM_VERIFY_ISSUER is required}"
+service_token_audience="${IAM_VERIFY_SERVICE_TOKEN_AUDIENCE:?IAM_VERIFY_SERVICE_TOKEN_AUDIENCE is required}"
 postgres_container="${IAM_VERIFY_POSTGRES_CONTAINER:?IAM_VERIFY_POSTGRES_CONTAINER is required}"
 db_name="${IAM_DB_NAME:-iam}"
 db_username="${IAM_DB_USERNAME:-iam}"
@@ -97,8 +100,10 @@ decode_jwt_payload() {
 
 seed_fixture() {
 	database --set=user_id="${USER_ID}" --set=client_id="${CLIENT_ID}" \
+		--set=service_client_id="${SERVICE_CLIENT_ID}" \
 		--set=tenant_id="${TENANT_ID}" --set=username="${USERNAME}" \
 		--set=encoded_password="${ENCODED_PASSWORD}" --set=client_identifier="${CLIENT_IDENTIFIER}" \
+		--set=service_client_identifier="${SERVICE_CLIENT_IDENTIFIER}" \
 		--set=encoded_client_secret="${ENCODED_CLIENT_SECRET}" \
 		--set=redirect_uri="${REDIRECT_URI}" >/dev/null <<'SQL'
 BEGIN;
@@ -122,6 +127,18 @@ INSERT INTO oauth_client_redirect_uris (tenant_id, client_id, redirect_uri)
 VALUES (:'tenant_id', :'client_id', :'redirect_uri');
 INSERT INTO oauth_client_scopes (tenant_id, client_id, scope)
 VALUES (:'tenant_id', :'client_id', 'openid'), (:'tenant_id', :'client_id', 'profile');
+INSERT INTO oauth_clients
+	    (client_id, tenant_id, client_identifier, display_name, client_type, authentication_method,
+	     authorization_grant_type, encoded_client_secret, client_secret_issued_at,
+	     client_secret_expires_at, access_token_ttl_seconds)
+VALUES
+	    (:'service_client_id', :'tenant_id', :'service_client_identifier', 'Release Check Service Client',
+	     'confidential', 'client_secret_basic', 'client_credentials', :'encoded_client_secret', now(),
+	     now() + interval '90 days', 300);
+INSERT INTO oauth_client_scopes (tenant_id, client_id, authorization_grant_type, scope)
+VALUES
+	    (:'tenant_id', :'service_client_id', 'client_credentials', 'scim.read'),
+	    (:'tenant_id', :'service_client_id', 'client_credentials', 'scim.write');
 COMMIT;
 SQL
 }
@@ -142,6 +159,8 @@ token_response="${work_dir}/token-response.json"
 refresh_response="${work_dir}/refresh-response.json"
 userinfo="${work_dir}/userinfo.json"
 id_payload="${work_dir}/id-token.json"
+service_token_response="${work_dir}/service-token-response.json"
+service_token_payload="${work_dir}/service-token.json"
 client_state="release-check-state"
 nonce="release-check-nonce"
 code_challenge="$(printf '%s' "${CODE_VERIFIER}" | openssl dgst -sha256 -binary \
@@ -309,4 +328,50 @@ password_encoding="$(database --tuples-only --no-align --command \
 [[ "${password_encoding}" == "{pbkdf2@SpringSecurity_v5_8}" ]] \
 	|| fail "Legacy password hash was not upgraded during native authentication"
 
-log "Authorization Code + PKCE + OIDC + Refresh Token flow passed"
+log "Issuing a tenant-bound Client Credentials access token"
+status="$(curl --silent --show-error --max-time 10 --output "${service_token_response}" --write-out '%{http_code}' \
+	--user "${SERVICE_CLIENT_IDENTIFIER}:${CLIENT_SECRET}" --request POST \
+	--data-urlencode 'grant_type=client_credentials' --data-urlencode 'scope=scim.read' \
+	--data-urlencode 'tenant_id=00000000-0000-0000-0000-000000000999' \
+	--data-urlencode 'audience=https://attacker.release-check.invalid' "${base_url}/oauth2/token")"
+[[ "${status}" == "200" ]] || fail "Client Credentials exchange returned HTTP ${status}"
+jq -e \
+	'.token_type == "Bearer" and .expires_in > 0 and .expires_in <= 300 and .scope == "scim.read"
+	 and (.refresh_token | not) and (.id_token | not)' \
+	"${service_token_response}" >/dev/null || fail "Client Credentials token response is invalid"
+service_access_token="$(jq -er '.access_token' "${service_token_response}")"
+decode_jwt_payload "${service_access_token}" >"${service_token_payload}" \
+	|| fail "Service access token payload is not valid base64url"
+jq -e --arg issuer "${issuer}" --arg subject "${SERVICE_CLIENT_IDENTIFIER}" \
+	--arg audience "${service_token_audience}" --arg tenant_id "${TENANT_ID}" \
+	'.iss == $issuer and .sub == $subject and (.aud == $audience or .aud == [$audience])
+	 and .client_id == $subject and .tenant_id == $tenant_id and .scope == ["scim.read"]' \
+	"${service_token_payload}" >/dev/null || fail "Service access token claims are invalid"
+service_authorization_count="$(database --tuples-only --no-align --command "
+	SELECT count(*)
+	FROM oauth_authorizations authorizations
+	JOIN oauth_authorization_tokens tokens
+	  USING (tenant_id, client_id, authorization_id, authorization_grant_type)
+	WHERE authorizations.client_id = '${SERVICE_CLIENT_ID}'
+	  AND authorizations.authorization_grant_type = 'client_credentials'
+	  AND authorizations.principal_name = '${SERVICE_CLIENT_IDENTIFIER}'
+	  AND authorizations.user_id IS NULL
+	  AND authorizations.session_id IS NULL
+	  AND authorizations.authorization_uri IS NULL
+	  AND authorizations.redirect_uri IS NULL
+	  AND authorizations.client_state IS NULL
+	  AND authorizations.request_parameters = '{}'::jsonb
+	  AND tokens.token_type = 'access_token'
+	  AND (SELECT count(*) FROM oauth_authorization_tokens service_tokens
+	       WHERE service_tokens.client_id = '${SERVICE_CLIENT_ID}') = 1")"
+[[ "${service_authorization_count}" == "1" ]] \
+	|| fail "Expected one persisted Client Credentials authorization"
+service_scope_state="$(database --tuples-only --no-align --command "
+	SELECT
+	  (SELECT count(*) FROM oauth_authorization_requested_scopes WHERE client_id = '${SERVICE_CLIENT_ID}') || ':' ||
+	  (SELECT count(*) FROM oauth_authorization_scopes WHERE client_id = '${SERVICE_CLIENT_ID}') || ':' ||
+	  (SELECT count(*) FROM oauth_authorization_token_scopes WHERE client_id = '${SERVICE_CLIENT_ID}')")"
+[[ "${service_scope_state}" == "1:1:1" ]] \
+	|| fail "Persisted Client Credentials scope state is invalid: ${service_scope_state}"
+
+log "Authorization Code + PKCE + OIDC + Refresh Token + Client Credentials flows passed"

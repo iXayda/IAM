@@ -27,6 +27,9 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
 	private static final UUID TOKEN_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742907");
 
+	private static final UUID INVALID_SERVICE_CLIENT_ID =
+			UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742908");
+
 	@Autowired
 	private DataSource dataSource;
 
@@ -40,10 +43,10 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalData(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(14);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(15);
 
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
 			assertThat(count(jdbc, schema, "tenants")).isEqualTo(2);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(identifier(jdbc, schema)).isEqualTo("Alice@example.com|alice@example.com");
@@ -72,7 +75,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(5);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(6);
 			assertThat(jdbc.sql("""
 					SELECT refresh_tokens_enabled::text || '|' || refresh_token_ttl_seconds
 					FROM %s.oauth_clients
@@ -80,7 +83,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("clientId", CLIENT_ID).query(String.class).single())
 				.isEqualTo("false|3600");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -97,9 +100,9 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			assertThat(historical.migrate().migrationsExecuted).isEqualTo(14);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(3);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(4);
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
 			assertThat(count(jdbc, schema, "groups")).isZero();
 			jdbc.sql("""
 					INSERT INTO %s.groups (group_id, tenant_id, display_name)
@@ -132,9 +135,9 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("groupId", GROUP_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(3);
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
 			assertThat(count(jdbc, schema, "users")).isOne();
 			assertThat(count(jdbc, schema, "groups")).isOne();
 			assertThat(count(jdbc, schema, "group_memberships")).isZero();
@@ -163,7 +166,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			insertHistoricalAuthorization(jdbc, schema);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
 			assertThat(jdbc.sql("""
 					SELECT clients.authorization_grant_type || '|' || authorizations.authorization_grant_type
 					       || '|' || tokens.authorization_grant_type
@@ -177,17 +180,87 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				.single()).isEqualTo("authorization_code|authorization_code|authorization_code");
 			assertThat(jdbc.sql("""
 					SELECT redirect_uris.authorization_grant_type || '|'
-					       || post_logout_uris.authorization_grant_type
+					       || post_logout_uris.authorization_grant_type || '|'
+					       || scopes.authorization_grant_type
 					FROM %s.oauth_client_redirect_uris redirect_uris
 					JOIN %s.oauth_client_post_logout_redirect_uris post_logout_uris
 					  USING (tenant_id, client_id)
+					JOIN %s.oauth_client_scopes scopes USING (tenant_id, client_id)
 					WHERE redirect_uris.client_id = :clientId
-					""".formatted(schema, schema))
+					""".formatted(schema, schema, schema))
 				.param("clientId", CLIENT_ID)
 				.query(String.class)
-				.single()).isEqualTo("authorization_code|authorization_code");
+				.single()).isEqualTo("authorization_code|authorization_code|authorization_code");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
-			assertThat(migrationCount(jdbc, schema)).isEqualTo(17);
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
+			assertThat(current.migrate().migrationsExecuted).isZero();
+		}
+		finally {
+			jdbc.sql("DROP SCHEMA IF EXISTS " + schema + " CASCADE").update();
+		}
+	}
+
+	@Test
+	void upgradesServiceScopesToGrantAwareTokenPolicy() {
+		String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		JdbcClient jdbc = JdbcClient.create(this.dataSource);
+		try {
+			Flyway historical = flyway(schema, "17");
+			assertThat(historical.migrate().migrationsExecuted).isEqualTo(17);
+			insertHistoricalServiceClient(jdbc, schema);
+
+			Flyway current = flyway(schema, null);
+			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(jdbc.sql("""
+					SELECT status || '|' || authorization_grant_type || '|' || access_token_ttl_seconds
+					FROM %s.oauth_clients
+					WHERE client_id = :clientId
+					""".formatted(schema))
+				.param("clientId", CLIENT_ID)
+				.query(String.class)
+				.single()).isEqualTo("active|client_credentials|300");
+			assertThat(jdbc.sql("""
+					SELECT string_agg(authorization_grant_type || '|' || scope, ',' ORDER BY scope)
+					FROM %s.oauth_client_scopes
+					WHERE client_id = :clientId
+					""".formatted(schema))
+				.param("clientId", CLIENT_ID)
+				.query(String.class)
+				.single()).isEqualTo("client_credentials|scim.read");
+			assertThat(jdbc.sql("""
+					SELECT status || '|' ||
+					       (SELECT count(*) FROM %s.oauth_client_scopes scopes
+					        WHERE scopes.client_id = clients.client_id)
+					FROM %s.oauth_clients clients
+					WHERE client_id = :clientId
+					""".formatted(schema, schema))
+				.param("clientId", INVALID_SERVICE_CLIENT_ID)
+				.query(String.class)
+				.single()).isEqualTo("disabled|0");
+			assertThat(jdbc.sql("""
+					SELECT count(*)
+					FROM %s.oauth_authorizations
+					WHERE client_id = :clientId
+					""".formatted(schema))
+				.param("clientId", CLIENT_ID)
+				.query(Integer.class)
+				.single()).isZero();
+			org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("""
+					UPDATE %s.oauth_clients
+					SET access_token_ttl_seconds = 301
+					WHERE client_id = :clientId
+					""".formatted(schema)).param("clientId", CLIENT_ID).update())
+				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+			org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("""
+					INSERT INTO %s.oauth_client_scopes
+					    (tenant_id, client_id, authorization_grant_type, scope)
+					VALUES
+					    ('00000000-0000-0000-0000-000000000001', :clientId,
+					     'client_credentials', 'openid')
+					""".formatted(schema)).param("clientId", CLIENT_ID).update())
+				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+			assertThat(current.validateWithResult().validationSuccessful).isTrue();
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(18);
 			assertThat(current.migrate().migrationsExecuted).isZero();
 		}
 		finally {
@@ -264,6 +337,10 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				     'https://client.example.test/logout/callback')
 				""".formatted(schema)).param("clientId", CLIENT_ID).update();
 		jdbc.sql("""
+				INSERT INTO %s.oauth_client_scopes (tenant_id, client_id, scope)
+				VALUES ('00000000-0000-0000-0000-000000000001', :clientId, 'openid')
+				""".formatted(schema)).param("clientId", CLIENT_ID).update();
+		jdbc.sql("""
 				INSERT INTO %s.oauth_authorizations
 				    (authorization_id, tenant_id, client_id, user_id, session_id, client_identifier,
 				     principal_name, authorization_uri, request_parameters, purge_at)
@@ -292,6 +369,100 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			.param("tokenId", TOKEN_ID)
 			.param("clientId", CLIENT_ID)
 			.param("authorizationId", AUTHORIZATION_ID)
+			.update();
+	}
+
+	private static void insertHistoricalServiceClient(JdbcClient jdbc, String schema) {
+		jdbc.sql("""
+				INSERT INTO %s.oauth_clients
+				    (client_id, tenant_id, client_identifier, display_name, client_type,
+				     authentication_method, authorization_grant_type, encoded_client_secret,
+				     client_secret_issued_at, client_secret_expires_at)
+				VALUES
+				    (:clientId, '00000000-0000-0000-0000-000000000001', 'historical-service-client',
+				     'Historical Service Client', 'confidential', 'client_secret_basic', 'client_credentials',
+				     '{test}abcdefghijklmnopqrstuvwxyz0123456789', now(), now() + interval '1 day'),
+				    (:invalidClientId, '00000000-0000-0000-0000-000000000001',
+				     'historical-invalid-service-client', 'Historical Invalid Service Client',
+				     'confidential', 'client_secret_basic', 'client_credentials',
+				     '{test}abcdefghijklmnopqrstuvwxyz0123456789', now(), now() + interval '1 day')
+				""".formatted(schema))
+			.param("clientId", CLIENT_ID)
+			.param("invalidClientId", INVALID_SERVICE_CLIENT_ID)
+			.update();
+		jdbc.sql("""
+				UPDATE %s.oauth_clients
+				SET access_token_ttl_seconds = 600
+				WHERE client_id IN (:clientId, :invalidClientId)
+				""".formatted(schema))
+			.param("clientId", CLIENT_ID)
+			.param("invalidClientId", INVALID_SERVICE_CLIENT_ID)
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_client_scopes (tenant_id, client_id, scope)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :clientId, 'scim.read'),
+				    ('00000000-0000-0000-0000-000000000001', :clientId, 'openid'),
+				    ('00000000-0000-0000-0000-000000000001', :clientId, 'profile'),
+				    ('00000000-0000-0000-0000-000000000001', :invalidClientId, 'openid')
+				""".formatted(schema))
+			.param("clientId", CLIENT_ID)
+			.param("invalidClientId", INVALID_SERVICE_CLIENT_ID)
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorizations
+				    (authorization_id, tenant_id, client_id, client_identifier, principal_name,
+				     authorization_grant_type, request_parameters, created_at, updated_at, purge_at)
+				VALUES
+				    (:authorizationId, '00000000-0000-0000-0000-000000000001', :clientId,
+				     'historical-service-client', 'historical-service-client', 'client_credentials',
+				     '{}'::jsonb, now(), now(), now() + interval '1 hour')
+				""".formatted(schema))
+			.param("authorizationId", AUTHORIZATION_ID)
+			.param("clientId", CLIENT_ID)
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorization_requested_scopes
+				    (tenant_id, client_id, authorization_id, scope)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :clientId, :authorizationId, 'openid')
+				""".formatted(schema))
+			.param("clientId", CLIENT_ID)
+			.param("authorizationId", AUTHORIZATION_ID)
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorization_scopes
+				    (tenant_id, client_id, authorization_id, scope)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :clientId, :authorizationId, 'openid')
+				""".formatted(schema))
+			.param("clientId", CLIENT_ID)
+			.param("authorizationId", AUTHORIZATION_ID)
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorization_tokens
+				    (token_id, tenant_id, client_id, authorization_id, authorization_grant_type,
+				     token_type, token_digest, encryption_key_id, initialization_vector, ciphertext,
+				     access_token_type, claims_version, claims, issued_at, expires_at)
+				VALUES
+				    (:tokenId, '00000000-0000-0000-0000-000000000001', :clientId, :authorizationId,
+				     'client_credentials', 'access_token', decode(repeat('11', 32), 'hex'), 'test-key',
+				     decode(repeat('12', 12), 'hex'), decode(repeat('13', 17), 'hex'),
+				     'Bearer', 1, '{}'::jsonb, now(), now() + interval '5 minutes')
+				""".formatted(schema))
+			.param("tokenId", TOKEN_ID)
+			.param("clientId", CLIENT_ID)
+			.param("authorizationId", AUTHORIZATION_ID)
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorization_token_scopes
+				    (tenant_id, client_id, authorization_id, token_id, scope)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :clientId, :authorizationId, :tokenId, 'openid')
+				""".formatted(schema))
+			.param("clientId", CLIENT_ID)
+			.param("authorizationId", AUTHORIZATION_ID)
+			.param("tokenId", TOKEN_ID)
 			.update();
 	}
 

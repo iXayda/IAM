@@ -128,6 +128,36 @@ class ClientOperationsIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void createsAndLoadsClientCredentialsClients() {
+		CreateClientRequest request = new CreateClientRequest(new ClientIdentifier("scim-service-client"),
+				"SCIM Service Client", ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(), Set.of(),
+				Set.of(new ClientScope("scim.read"), new ClientScope("scim.write")),
+				ClientTokenPolicy.serviceDefaults());
+		OAuthClient serviceClient;
+		try (ClientRegistration registration = this.clients.create(TenantId.DEFAULT, request)) {
+			serviceClient = registration.client();
+			this.clientsToDelete.add(serviceClient.id());
+			assertThat(registration.clientSecret()).isPresent();
+		}
+
+		assertThat(serviceClient.authorizationGrant()).isEqualTo(ClientAuthorizationGrant.CLIENT_CREDENTIALS);
+		assertThat(serviceClient.redirectUris()).isEmpty();
+		assertThat(serviceClient.postLogoutRedirectUris()).isEmpty();
+		assertThat(serviceClient.supportsRefreshTokens()).isFalse();
+		assertThat(this.clients.findById(TenantId.DEFAULT, serviceClient.id())).contains(serviceClient);
+		assertThat(this.clients.findByIdentifier(serviceClient.identifier())).contains(serviceClient);
+		assertThat(this.jdbcClient.sql("""
+				SELECT authorization_grant_type
+				FROM oauth_clients
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", serviceClient.id().value())
+			.query(String.class)
+			.single()).isEqualTo("client_credentials");
+	}
+
+	@Test
 	void enforcesGlobalIdentifiersAcrossTenants() {
 		Tenant secondTenant = createTenant("client-identifier-tenant", "Client Identifier Tenant");
 		OAuthClient first = createPublic(TenantId.DEFAULT, "globally-unique");

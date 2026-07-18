@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import com.ixayda.iam.client.ClientAlreadyExistsException;
+import com.ixayda.iam.client.ClientAuthorizationGrant;
 import com.ixayda.iam.client.ClientAuthenticationMethod;
 import com.ixayda.iam.client.ClientConcurrentUpdateException;
 import com.ixayda.iam.client.ClientId;
@@ -40,7 +41,7 @@ class JdbcOAuthClientRepository {
 
 	private static final String CLIENT_COLUMNS = """
 			client_id, tenant_id, client_identifier, display_name, client_type,
-			authentication_method, status, encoded_client_secret, client_secret_issued_at,
+			authentication_method, authorization_grant_type, status, encoded_client_secret, client_secret_issued_at,
 			client_secret_expires_at, authorization_code_ttl_seconds,
 			access_token_ttl_seconds, refresh_tokens_enabled, refresh_token_ttl_seconds,
 			version, created_at, updated_at
@@ -62,14 +63,14 @@ class JdbcOAuthClientRepository {
 		int affected = this.jdbcClient.sql("""
 				INSERT INTO oauth_clients
 				    (client_id, tenant_id, client_identifier, display_name, client_type,
-				     authentication_method, status, encoded_client_secret,
+				     authentication_method, authorization_grant_type, status, encoded_client_secret,
 				     client_secret_issued_at, client_secret_expires_at,
 				     authorization_code_ttl_seconds, access_token_ttl_seconds,
 				     refresh_tokens_enabled, refresh_token_ttl_seconds,
 				     version, created_at, updated_at)
 				VALUES
 				    (:clientId, :tenantId, :identifier, :displayName, :clientType,
-				     :authenticationMethod, :status, :encodedSecret,
+				     :authenticationMethod, :authorizationGrantType, :status, :encodedSecret,
 				     CAST(:secretIssuedAt AS timestamptz), CAST(:secretExpiresAt AS timestamptz),
 				     :authorizationCodeTtl, :accessTokenTtl, :refreshTokensEnabled, :refreshTokenTtl,
 				     :version, :createdAt, :updatedAt)
@@ -81,6 +82,7 @@ class JdbcOAuthClientRepository {
 			.param("displayName", client.displayName())
 			.param("clientType", databaseValue(client.type()))
 			.param("authenticationMethod", databaseValue(client.authenticationMethod()))
+			.param("authorizationGrantType", databaseValue(client.authorizationGrant()))
 			.param("status", databaseValue(client.status()))
 			.param("encodedSecret", stored.encodedSecret())
 			.param("secretIssuedAt", databaseValue(client.secretMetadata(), ClientSecretMetadata::issuedAt))
@@ -198,6 +200,7 @@ class JdbcOAuthClientRepository {
 				|| !current.identifier().equals(changed.identifier()) || !current.displayName().equals(changed.displayName())
 				|| current.type() != changed.type()
 				|| current.authenticationMethod() != changed.authenticationMethod()
+				|| current.authorizationGrant() != changed.authorizationGrant()
 				|| !Objects.equals(current.secretMetadata(), changed.secretMetadata())
 				|| !current.redirectUris().equals(changed.redirectUris())
 				|| !current.postLogoutRedirectUris().equals(changed.postLogoutRedirectUris())
@@ -263,11 +266,13 @@ class JdbcOAuthClientRepository {
 
 	private void insertRedirectUri(OAuthClient client, ClientRedirectUri uri) {
 		int affected = this.jdbcClient.sql("""
-				INSERT INTO oauth_client_redirect_uris (tenant_id, client_id, redirect_uri)
-				VALUES (:tenantId, :clientId, :redirectUri)
+				INSERT INTO oauth_client_redirect_uris
+				    (tenant_id, client_id, authorization_grant_type, redirect_uri)
+				VALUES (:tenantId, :clientId, :authorizationGrantType, :redirectUri)
 				""")
 			.param("tenantId", client.tenantId().value())
 			.param("clientId", client.id().value())
+			.param("authorizationGrantType", databaseValue(client.authorizationGrant()))
 			.param("redirectUri", uri.value())
 			.update();
 		requireSingleInsert("client redirect URI", affected);
@@ -276,11 +281,12 @@ class JdbcOAuthClientRepository {
 	private void insertPostLogoutRedirectUri(OAuthClient client, ClientRedirectUri uri) {
 		int affected = this.jdbcClient.sql("""
 				INSERT INTO oauth_client_post_logout_redirect_uris
-				    (tenant_id, client_id, post_logout_redirect_uri)
-				VALUES (:tenantId, :clientId, :redirectUri)
+				    (tenant_id, client_id, authorization_grant_type, post_logout_redirect_uri)
+				VALUES (:tenantId, :clientId, :authorizationGrantType, :redirectUri)
 				""")
 			.param("tenantId", client.tenantId().value())
 			.param("clientId", client.id().value())
+			.param("authorizationGrantType", databaseValue(client.authorizationGrant()))
 			.param("redirectUri", uri.value())
 			.update();
 		requireSingleInsert("client post-logout redirect URI", affected);
@@ -288,11 +294,13 @@ class JdbcOAuthClientRepository {
 
 	private void insertScope(OAuthClient client, ClientScope scope) {
 		int affected = this.jdbcClient.sql("""
-				INSERT INTO oauth_client_scopes (tenant_id, client_id, scope)
-				VALUES (:tenantId, :clientId, :scope)
+				INSERT INTO oauth_client_scopes
+				    (tenant_id, client_id, authorization_grant_type, scope)
+				VALUES (:tenantId, :clientId, :authorizationGrantType, :scope)
 				""")
 			.param("tenantId", client.tenantId().value())
 			.param("clientId", client.id().value())
+			.param("authorizationGrantType", databaseValue(client.authorizationGrant()))
 			.param("scope", scope.value())
 			.update();
 		requireSingleInsert("client scope", affected);
@@ -350,6 +358,7 @@ class JdbcOAuthClientRepository {
 				new ClientIdentifier(resultSet.getString("client_identifier")), resultSet.getString("display_name"),
 				clientType(resultSet.getString("client_type")),
 				authenticationMethod(resultSet.getString("authentication_method")),
+				authorizationGrant(resultSet.getString("authorization_grant_type")),
 				clientStatus(resultSet.getString("status")), metadata, resultSet.getString("encoded_client_secret"),
 				new ClientTokenPolicy(Duration.ofSeconds(resultSet.getInt("authorization_code_ttl_seconds")),
 						Duration.ofSeconds(resultSet.getInt("access_token_ttl_seconds")),
@@ -394,6 +403,13 @@ class JdbcOAuthClientRepository {
 		};
 	}
 
+	private static String databaseValue(ClientAuthorizationGrant grant) {
+		return switch (grant) {
+			case AUTHORIZATION_CODE -> "authorization_code";
+			case CLIENT_CREDENTIALS -> "client_credentials";
+		};
+	}
+
 	private static String databaseValue(ClientStatus status) {
 		return switch (status) {
 			case ACTIVE -> "active";
@@ -427,6 +443,15 @@ class JdbcOAuthClientRepository {
 		};
 	}
 
+	private static ClientAuthorizationGrant authorizationGrant(String value) {
+		return switch (value) {
+			case "authorization_code" -> ClientAuthorizationGrant.AUTHORIZATION_CODE;
+			case "client_credentials" -> ClientAuthorizationGrant.CLIENT_CREDENTIALS;
+			default -> throw new IllegalStateException(
+					"Unsupported OAuth client authorization grant in the database: " + value);
+		};
+	}
+
 	private static ClientStatus clientStatus(String value) {
 		return switch (value) {
 			case "active" -> ClientStatus.ACTIVE;
@@ -436,14 +461,16 @@ class JdbcOAuthClientRepository {
 	}
 
 	private record ClientRow(ClientId clientId, TenantId tenantId, ClientIdentifier identifier, String displayName,
-			ClientType type, ClientAuthenticationMethod authenticationMethod, ClientStatus status,
+			ClientType type, ClientAuthenticationMethod authenticationMethod, ClientAuthorizationGrant authorizationGrant,
+			ClientStatus status,
 			ClientSecretMetadata secretMetadata, String encodedSecret, ClientTokenPolicy tokenPolicy, long version,
 			Instant createdAt, Instant updatedAt) {
 
 		StoredOAuthClient toStoredClient(Set<ClientRedirectUri> redirectUris,
 				Set<ClientRedirectUri> postLogoutRedirectUris, Set<ClientScope> scopes) {
 			OAuthClient client = new OAuthClient(this.clientId, this.tenantId, this.identifier, this.displayName, this.type,
-					this.authenticationMethod, this.status, this.secretMetadata, redirectUris, postLogoutRedirectUris,
+					this.authenticationMethod, this.authorizationGrant, this.status, this.secretMetadata, redirectUris,
+					postLogoutRedirectUris,
 					scopes, this.tokenPolicy, this.version, this.createdAt, this.updatedAt);
 			return new StoredOAuthClient(client, this.encodedSecret);
 		}

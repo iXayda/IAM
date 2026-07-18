@@ -1,5 +1,6 @@
 package com.ixayda.iam.client;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
@@ -7,7 +8,8 @@ import java.util.Set;
 import com.ixayda.iam.tenant.TenantId;
 
 public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier identifier, String displayName,
-		ClientType type, ClientAuthenticationMethod authenticationMethod, ClientStatus status,
+		ClientType type, ClientAuthenticationMethod authenticationMethod, ClientAuthorizationGrant authorizationGrant,
+		ClientStatus status,
 		ClientSecretMetadata secretMetadata, Set<ClientRedirectUri> redirectUris,
 		Set<ClientRedirectUri> postLogoutRedirectUris, Set<ClientScope> scopes, ClientTokenPolicy tokenPolicy,
 		long version, Instant createdAt, Instant updatedAt) {
@@ -18,6 +20,9 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 
 	private static final ClientScope OFFLINE_ACCESS_SCOPE = new ClientScope("offline_access");
 
+	private static final Set<ClientScope> OIDC_SCOPES = Set.of(OPENID_SCOPE, OFFLINE_ACCESS_SCOPE,
+			new ClientScope("profile"), new ClientScope("email"), new ClientScope("address"), new ClientScope("phone"));
+
 	static final int MAX_REDIRECT_URI_COUNT = 20;
 
 	static final int MAX_SCOPE_COUNT = 50;
@@ -26,14 +31,14 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 		Objects.requireNonNull(id, "Client ID must not be null");
 		Objects.requireNonNull(tenantId, "Client tenant ID must not be null");
 		displayName = normalizeDisplayName(displayName);
-		validateIdentity(identifier, type, authenticationMethod, secretMetadata);
+		validateIdentity(identifier, type, authenticationMethod, authorizationGrant, secretMetadata);
 		Objects.requireNonNull(status, "Client status must not be null");
-		redirectUris = requiredCopy(redirectUris, "Client redirect URIs", MAX_REDIRECT_URI_COUNT);
+		redirectUris = redirectUris(authorizationGrant, redirectUris);
 		postLogoutRedirectUris = optionalCopy(postLogoutRedirectUris, "Client post-logout redirect URIs",
 				MAX_REDIRECT_URI_COUNT);
 		scopes = requiredCopy(scopes, "Client scopes", MAX_SCOPE_COUNT);
-		validateScopes(postLogoutRedirectUris, scopes);
-		validateTokenPolicy(type, tokenPolicy);
+		validateProtocolShape(authorizationGrant, postLogoutRedirectUris, scopes);
+		validateTokenPolicy(type, authorizationGrant, tokenPolicy);
 		Objects.requireNonNull(createdAt, "Client creation time must not be null");
 		Objects.requireNonNull(updatedAt, "Client update time must not be null");
 		if (version < 0) {
@@ -48,11 +53,22 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 		}
 	}
 
+	public OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier identifier, String displayName,
+			ClientType type, ClientAuthenticationMethod authenticationMethod, ClientStatus status,
+			ClientSecretMetadata secretMetadata, Set<ClientRedirectUri> redirectUris,
+			Set<ClientRedirectUri> postLogoutRedirectUris, Set<ClientScope> scopes, ClientTokenPolicy tokenPolicy,
+			long version, Instant createdAt, Instant updatedAt) {
+		this(id, tenantId, identifier, displayName, type, authenticationMethod,
+				ClientAuthorizationGrant.AUTHORIZATION_CODE, status, secretMetadata, redirectUris,
+				postLogoutRedirectUris, scopes, tokenPolicy, version, createdAt, updatedAt);
+	}
+
 	public static OAuthClient create(ClientId id, TenantId tenantId, CreateClientRequest request,
 			ClientSecretMetadata secretMetadata, Instant createdAt) {
 		Objects.requireNonNull(request, "Client creation request must not be null");
 		return new OAuthClient(id, tenantId, request.identifier(), request.displayName(), request.type(),
-				request.authenticationMethod(), ClientStatus.ACTIVE, secretMetadata, request.redirectUris(),
+				request.authenticationMethod(), request.authorizationGrant(), ClientStatus.ACTIVE, secretMetadata,
+				request.redirectUris(),
 				request.postLogoutRedirectUris(), request.scopes(), request.tokenPolicy(), 0, createdAt, createdAt);
 	}
 
@@ -65,7 +81,7 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 	}
 
 	public boolean requiresProofKey() {
-		return true;
+		return this.authorizationGrant == ClientAuthorizationGrant.AUTHORIZATION_CODE;
 	}
 
 	public boolean supportsRefreshTokens() {
@@ -73,7 +89,7 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 	}
 
 	public boolean requiresConsent() {
-		return true;
+		return this.authorizationGrant == ClientAuthorizationGrant.AUTHORIZATION_CODE;
 	}
 
 	public OAuthClient activate(Instant changedAt) {
@@ -87,8 +103,8 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 	@Override
 	public String toString() {
 		return "OAuthClient[id=" + this.id + ", tenantId=" + this.tenantId + ", identifier=" + this.identifier
-				+ ", type=" + this.type + ", authenticationMethod=" + this.authenticationMethod + ", status="
-				+ this.status + ", version=" + this.version
+				+ ", type=" + this.type + ", authenticationMethod=" + this.authenticationMethod
+				+ ", authorizationGrant=" + this.authorizationGrant + ", status=" + this.status + ", version=" + this.version
 				+ ", redirectUriCount=" + this.redirectUris.size() + ", scopeCount=" + this.scopes.size() + "]";
 	}
 
@@ -102,8 +118,13 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 	}
 
 	static void validateIdentity(ClientIdentifier identifier, ClientType type,
-			ClientAuthenticationMethod authenticationMethod, ClientSecretMetadata secretMetadata) {
+			ClientAuthenticationMethod authenticationMethod, ClientAuthorizationGrant authorizationGrant,
+			ClientSecretMetadata secretMetadata) {
 		validateAuthentication(identifier, type, authenticationMethod);
+		Objects.requireNonNull(authorizationGrant, "Client authorization grant must not be null");
+		if (authorizationGrant == ClientAuthorizationGrant.CLIENT_CREDENTIALS && type != ClientType.CONFIDENTIAL) {
+			throw new IllegalArgumentException("Client credentials require a confidential client");
+		}
 		if (type == ClientType.PUBLIC && secretMetadata != null) {
 			throw new IllegalArgumentException("Public client must not have client secret metadata");
 		}
@@ -126,9 +147,17 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 		}
 	}
 
-	static void validateScopes(Set<ClientRedirectUri> postLogoutRedirectUris, Set<ClientScope> scopes) {
+	static void validateProtocolShape(ClientAuthorizationGrant authorizationGrant,
+			Set<ClientRedirectUri> postLogoutRedirectUris, Set<ClientScope> scopes) {
+		if (authorizationGrant == ClientAuthorizationGrant.CLIENT_CREDENTIALS && !postLogoutRedirectUris.isEmpty()) {
+			throw new IllegalArgumentException("Client-credentials clients must not have post-logout redirect URIs");
+		}
 		if (!postLogoutRedirectUris.isEmpty() && !scopes.contains(OPENID_SCOPE)) {
 			throw new IllegalArgumentException("Client post-logout redirect URIs require the openid scope");
+		}
+		if (authorizationGrant == ClientAuthorizationGrant.CLIENT_CREDENTIALS
+				&& scopes.stream().anyMatch(OIDC_SCOPES::contains)) {
+			throw new IllegalArgumentException("Client-credentials clients must not request OpenID Connect scopes");
 		}
 		if (scopes.contains(OFFLINE_ACCESS_SCOPE)) {
 			throw new IllegalArgumentException("Client offline_access scope requires refresh-token support");
@@ -139,11 +168,32 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 		return Objects.requireNonNull(tokenPolicy, "Client token policy must not be null");
 	}
 
-	static void validateTokenPolicy(ClientType type, ClientTokenPolicy tokenPolicy) {
+	static void validateTokenPolicy(ClientType type, ClientAuthorizationGrant authorizationGrant,
+			ClientTokenPolicy tokenPolicy) {
 		requireTokenPolicy(tokenPolicy);
+		if (authorizationGrant == ClientAuthorizationGrant.CLIENT_CREDENTIALS
+				&& tokenPolicy.refreshTokensEnabled()) {
+			throw new IllegalArgumentException("Client-credentials clients must not enable refresh tokens");
+		}
+		if (authorizationGrant == ClientAuthorizationGrant.CLIENT_CREDENTIALS
+				&& tokenPolicy.accessTokenTtl().compareTo(Duration.ofMinutes(5)) > 0) {
+			throw new IllegalArgumentException("Client-credentials access token TTL must not exceed 5 minutes");
+		}
 		if (tokenPolicy.refreshTokensEnabled() && type != ClientType.CONFIDENTIAL) {
 			throw new IllegalArgumentException("Refresh tokens require a confidential client");
 		}
+	}
+
+	static Set<ClientRedirectUri> redirectUris(ClientAuthorizationGrant authorizationGrant,
+			Set<ClientRedirectUri> redirectUris) {
+		Set<ClientRedirectUri> copy = optionalCopy(redirectUris, "Client redirect URIs", MAX_REDIRECT_URI_COUNT);
+		if (authorizationGrant == ClientAuthorizationGrant.AUTHORIZATION_CODE && copy.isEmpty()) {
+			throw new IllegalArgumentException("Client redirect URIs must not be empty");
+		}
+		if (authorizationGrant == ClientAuthorizationGrant.CLIENT_CREDENTIALS && !copy.isEmpty()) {
+			throw new IllegalArgumentException("Client-credentials clients must not have redirect URIs");
+		}
+		return copy;
 	}
 
 	static <T> Set<T> requiredCopy(Set<T> values, String name, int maximumSize) {
@@ -177,8 +227,9 @@ public record OAuthClient(ClientId id, TenantId tenantId, ClientIdentifier ident
 			throw new IllegalArgumentException("Client status change time must not be before its last update");
 		}
 		return new OAuthClient(this.id, this.tenantId, this.identifier, this.displayName, this.type,
-				this.authenticationMethod, targetStatus, this.secretMetadata, this.redirectUris, this.postLogoutRedirectUris,
-				this.scopes, this.tokenPolicy, Math.incrementExact(this.version), this.createdAt, changedAt);
+				this.authenticationMethod, this.authorizationGrant, targetStatus, this.secretMetadata, this.redirectUris,
+				this.postLogoutRedirectUris, this.scopes, this.tokenPolicy, Math.incrementExact(this.version),
+				this.createdAt, changedAt);
 	}
 
 }

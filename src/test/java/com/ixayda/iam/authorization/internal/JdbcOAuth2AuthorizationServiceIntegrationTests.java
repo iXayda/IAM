@@ -603,6 +603,12 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 		this.jdbcClient.sql("DELETE FROM oauth_client_redirect_uris WHERE client_id = :clientId")
 			.param("clientId", CLIENT_ID)
 			.update();
+		this.jdbcClient.sql("DELETE FROM oauth_client_post_logout_redirect_uris WHERE client_id = :clientId")
+			.param("clientId", CLIENT_ID)
+			.update();
+		this.jdbcClient.sql("DELETE FROM oauth_client_scopes WHERE client_id = :clientId")
+			.param("clientId", CLIENT_ID)
+			.update();
 		this.jdbcClient.sql("""
 				UPDATE oauth_clients
 				SET client_type = 'confidential',
@@ -611,6 +617,14 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 				    client_secret_issued_at = created_at,
 				    client_secret_expires_at = created_at + interval '1 day',
 				    authorization_grant_type = 'client_credentials'
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", CLIENT_ID)
+			.update();
+		this.jdbcClient.sql("""
+				INSERT INTO oauth_client_scopes (tenant_id, client_id, authorization_grant_type, scope)
+				SELECT tenant_id, client_id, authorization_grant_type, 'api.read'
+				FROM oauth_clients
 				WHERE client_id = :clientId
 				""")
 			.param("clientId", CLIENT_ID)

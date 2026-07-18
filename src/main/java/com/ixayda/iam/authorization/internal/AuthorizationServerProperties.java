@@ -6,19 +6,25 @@ import java.util.Locale;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("iam.authorization.server")
-record AuthorizationServerProperties(URI issuer) {
+record AuthorizationServerProperties(URI issuer, URI serviceTokenAudience) {
 
 	AuthorizationServerProperties {
-		if (issuer == null || !issuer.isAbsolute() || issuer.getHost() == null || issuer.getRawUserInfo() != null
-				|| issuer.getRawQuery() != null || issuer.getRawFragment() != null) {
-			throw new IllegalArgumentException(
-					"The authorization server issuer must be an absolute HTTP(S) URL without user info, query, or fragment");
+		issuer = trustedUri(issuer, "authorization server issuer");
+		serviceTokenAudience = trustedUri(serviceTokenAudience, "service token audience");
+	}
+
+	private static URI trustedUri(URI value, String name) {
+		if (value == null || !value.isAbsolute() || value.getHost() == null || value.getRawUserInfo() != null
+				|| value.getRawQuery() != null || value.getRawFragment() != null) {
+			throw new IllegalArgumentException("The " + name
+					+ " must be an absolute HTTP(S) URL without user info, query, or fragment");
 		}
-		String scheme = issuer.getScheme().toLowerCase(Locale.ROOT);
-		if (!"https".equals(scheme) && !("http".equals(scheme) && isLoopback(issuer.getHost()))) {
+		String scheme = value.getScheme().toLowerCase(Locale.ROOT);
+		if (!"https".equals(scheme) && !("http".equals(scheme) && isLoopback(value.getHost()))) {
 			throw new IllegalArgumentException(
-					"The authorization server issuer must use HTTPS except for a loopback development address");
+					"The " + name + " must use HTTPS except for a loopback development address");
 		}
+		return value;
 	}
 
 	private static boolean isLoopback(String host) {

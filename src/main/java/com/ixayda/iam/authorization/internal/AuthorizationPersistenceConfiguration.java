@@ -20,6 +20,8 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
+import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({ AuthorizationPersistenceProperties.class,
@@ -81,6 +83,11 @@ class AuthorizationPersistenceConfiguration {
 	@Bean
 	AuthorizationServerSettings authorizationServerSettings(AuthorizationServerProperties properties) {
 		return AuthorizationServerSettings.builder().issuer(properties.issuer().toASCIIString()).build();
+	}
+
+	@Bean
+	OAuth2TokenCustomizer<JwtEncodingContext> authorizationJwtCustomizer(AuthorizationServerProperties properties) {
+		return new ServiceTokenJwtCustomizer(properties.serviceTokenAudience());
 	}
 
 	@Bean

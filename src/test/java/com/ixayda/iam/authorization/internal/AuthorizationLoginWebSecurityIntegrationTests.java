@@ -37,6 +37,7 @@ import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.client.ClientAuthenticationMethod;
+import com.ixayda.iam.client.ClientAuthorizationGrant;
 import com.ixayda.iam.client.ClientId;
 import com.ixayda.iam.client.ClientIdentifier;
 import com.ixayda.iam.client.ClientOperations;
@@ -707,6 +708,81 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		assertThat(consentAuthorities(client)).containsExactlyInAnyOrder("SCOPE_openid", "SCOPE_profile");
 	}
 
+	@Test
+	void issuesTenantBoundClientCredentialsAccessTokens() throws Exception {
+		try (ConfidentialClientFixture client = createServiceClient(TenantId.DEFAULT, "service-token")) {
+			MvcResult result = this.mockMvc.perform(clientCredentialsRequest(client, "scim.read")
+				.param("tenant_id", UUID.randomUUID().toString())
+				.param("audience", "https://attacker.example.test"))
+				.andExpect(status().isOk())
+				.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+				.andReturn();
+			JsonNode response = JSON.readTree(result.getResponse().getContentAsString());
+			assertThat(response.get("token_type").stringValue()).isEqualTo("Bearer");
+			assertThat(response.get("scope").stringValue()).isEqualTo("scim.read");
+			assertThat(response.hasNonNull("refresh_token")).isFalse();
+			assertThat(response.hasNonNull("id_token")).isFalse();
+
+			Jwt accessToken = this.jwtDecoder.decode(response.get("access_token").stringValue());
+			assertThat(accessToken.getIssuer().toString()).isEqualTo(ISSUER);
+			assertThat(accessToken.getSubject()).isEqualTo(client.client().identifier().value());
+			assertThat(accessToken.getAudience()).containsExactly("https://scim.example.test/scim/v2");
+			assertThat(accessToken.getClaimAsString(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM))
+				.isEqualTo(TenantId.DEFAULT.toString());
+			assertThat(accessToken.getClaimAsString(ServiceTokenJwtCustomizer.CLIENT_ID_CLAIM))
+				.isEqualTo(client.client().identifier().value());
+			assertThat(accessToken.getClaimAsStringList(OAuth2ParameterNames.SCOPE)).containsExactly("scim.read");
+			assertThat(serviceAuthorizationShape(client.client())).isTrue();
+			assertThat(authorizationCount(client.client())).isOne();
+			assertThat(tokenCount(client.client())).isOne();
+			assertThat(accessTokenScopeCount(client.client())).isOne();
+		}
+	}
+
+	@Test
+	void acceptsOfficialUnscopedClientCredentialsRequestsWithoutGrantingScopes() throws Exception {
+		try (ConfidentialClientFixture client = createServiceClient(TenantId.DEFAULT, "unscoped-service-token")) {
+			MvcResult result = this.mockMvc.perform(clientCredentialsRequest(client, null))
+				.andExpect(status().isOk())
+				.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+				.andReturn();
+			JsonNode response = JSON.readTree(result.getResponse().getContentAsString());
+			assertThat(response.hasNonNull("scope")).isFalse();
+			Jwt accessToken = this.jwtDecoder.decode(response.get("access_token").stringValue());
+			List<String> scopes = accessToken.getClaimAsStringList(OAuth2ParameterNames.SCOPE);
+			assertThat(scopes == null ? List.of() : scopes).isEmpty();
+			assertThat(authorizationScopes(client.client())).isEmpty();
+			assertThat(accessTokenScopeCount(client.client())).isZero();
+			assertThat(serviceAuthorizationShape(client.client())).isTrue();
+		}
+	}
+
+	@Test
+	void rejectsInvalidClientCredentialsRequestsWithoutPersistingAuthorizations() throws Exception {
+		try (ConfidentialClientFixture service = createServiceClient(TenantId.DEFAULT, "invalid-service-token");
+				ConfidentialClientFixture browser = createRefreshClient(TenantId.DEFAULT, "wrong-service-grant")) {
+			MvcResult wrongSecret = this.mockMvc.perform(post("/oauth2/token")
+				.with(httpBasic(service.client().identifier().value(), "wrong-secret"))
+				.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+				.param(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.CLIENT_CREDENTIALS.getValue()))
+				.andExpect(status().isUnauthorized())
+				.andReturn();
+			assertOAuthError(wrongSecret, "invalid_client");
+
+			MvcResult wrongGrant = this.mockMvc.perform(clientCredentialsRequest(browser, "openid"))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(wrongGrant, "unauthorized_client");
+
+			MvcResult invalidScope = this.mockMvc.perform(clientCredentialsRequest(service, "unregistered"))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+			assertOAuthError(invalidScope, "invalid_scope");
+			assertThat(authorizationCount(service.client())).isZero();
+			assertThat(authorizationCount(browser.client())).isZero();
+		}
+	}
+
 	private MockHttpSession beginAuthorization(OAuthClient client) throws Exception {
 		return beginAuthorization(client, "openid", "state-value", "A".repeat(43), null);
 	}
@@ -767,6 +843,19 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 				ClientAuthenticationMethod.CLIENT_SECRET_BASIC, Set.of(new ClientRedirectUri(REDIRECT_URI)), Set.of(),
 				Set.of(new ClientScope("openid"), new ClientScope("profile")),
 				ClientTokenPolicy.refreshEnabledDefaults());
+		try (ClientRegistration registration = this.clients.create(tenantId, request)) {
+			this.clientsToDelete.add(registration.client().id());
+			return new ConfidentialClientFixture(registration.client(), registration.clientSecret().orElseThrow().copy());
+		}
+	}
+
+	private ConfidentialClientFixture createServiceClient(TenantId tenantId, String purpose) {
+		String identifier = "service-" + purpose + "-" + suffix();
+		CreateClientRequest request = new CreateClientRequest(new ClientIdentifier(identifier),
+				"SCIM Service Client", ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(), Set.of(),
+				Set.of(new ClientScope("scim.read"), new ClientScope("scim.write")),
+				ClientTokenPolicy.serviceDefaults());
 		try (ClientRegistration registration = this.clients.create(tenantId, request)) {
 			this.clientsToDelete.add(registration.client().id());
 			return new ConfidentialClientFixture(registration.client(), registration.clientSecret().orElseThrow().copy());
@@ -896,6 +985,24 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		return count("SELECT count(*) FROM oauth_authorizations WHERE client_id = :clientId", client);
 	}
 
+	private boolean serviceAuthorizationShape(OAuthClient client) {
+		return this.jdbcClient.sql("""
+				SELECT authorization_grant_type = 'client_credentials'
+				   AND principal_name = client_identifier
+				   AND user_id IS NULL
+				   AND session_id IS NULL
+				   AND authorization_uri IS NULL
+				   AND redirect_uri IS NULL
+				   AND client_state IS NULL
+				   AND request_parameters = '{}'::jsonb
+				FROM oauth_authorizations
+				WHERE client_id = :clientId
+				""")
+			.param("clientId", client.id().value())
+			.query(Boolean.class)
+			.single();
+	}
+
 	private int count(String query, OAuthClient client) {
 		return this.jdbcClient.sql(query)
 			.param("clientId", client.id().value())
@@ -948,6 +1055,15 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			.contentType(MediaType.APPLICATION_FORM_URLENCODED)
 			.param(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.REFRESH_TOKEN.getValue())
 			.param(OAuth2ParameterNames.REFRESH_TOKEN, refreshToken);
+		return scope == null ? request : request.param(OAuth2ParameterNames.SCOPE, scope);
+	}
+
+	private static MockHttpServletRequestBuilder clientCredentialsRequest(ConfidentialClientFixture client,
+			String scope) {
+		MockHttpServletRequestBuilder request = post("/oauth2/token")
+			.with(httpBasic(client.client().identifier().value(), client.secretValue()))
+			.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+			.param(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.CLIENT_CREDENTIALS.getValue());
 		return scope == null ? request : request.param(OAuth2ParameterNames.SCOPE, scope);
 	}
 

@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Import;
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = {
 		"iam.authorization.server.issuer=https://issuer.example.test",
+		"iam.authorization.server.service-token-audience=https://scim.example.test/scim/v2",
 		"iam.authorization.signing-key-protection.active-key-id=test-v1",
 		"iam.authorization.signing-key-protection.keys.test-v1=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
 		"iam.authorization.token-protection.active-key-id=test-v1",

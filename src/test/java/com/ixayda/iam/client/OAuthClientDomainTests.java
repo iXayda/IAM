@@ -114,6 +114,85 @@ class OAuthClientDomainTests {
 	}
 
 	@Test
+	void createsConfidentialClientCredentialsClientsWithoutBrowserProtocolState() {
+		CreateClientRequest request = new CreateClientRequest(new ClientIdentifier("scim-service"), "SCIM Service",
+				ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(), Set.of(),
+				Set.of(new ClientScope("scim.read"), new ClientScope("scim.write")),
+				ClientTokenPolicy.serviceDefaults());
+
+		OAuthClient client = OAuthClient.create(CLIENT_ID, TenantId.DEFAULT, request, SECRET_METADATA, CREATED_AT);
+
+		assertThat(client.authorizationGrant()).isEqualTo(ClientAuthorizationGrant.CLIENT_CREDENTIALS);
+		assertThat(client.type()).isEqualTo(ClientType.CONFIDENTIAL);
+		assertThat(client.redirectUris()).isEmpty();
+		assertThat(client.postLogoutRedirectUris()).isEmpty();
+		assertThat(client.scopes()).containsExactlyInAnyOrder(new ClientScope("scim.read"),
+				new ClientScope("scim.write"));
+		assertThat(client.requiresProofKey()).isFalse();
+		assertThat(client.requiresConsent()).isFalse();
+		assertThat(client.supportsRefreshTokens()).isFalse();
+	}
+
+	@Test
+	void rejectsInvalidClientCredentialsProtocolState() {
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("public-service"), "Public Service",
+				ClientType.PUBLIC, ClientAuthenticationMethod.NONE, ClientAuthorizationGrant.CLIENT_CREDENTIALS,
+				Set.of(), Set.of(), Set.of(new ClientScope("scim.read")), ClientTokenPolicy.secureDefaults()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("confidential client");
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("redirect-service"),
+				"Redirect Service", ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(REDIRECT_URI), Set.of(),
+				Set.of(new ClientScope("scim.read")), ClientTokenPolicy.secureDefaults()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("must not have redirect URIs");
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("logout-service"), "Logout Service",
+				ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(), Set.of(REDIRECT_URI),
+				Set.of(new ClientScope("scim.read")), ClientTokenPolicy.secureDefaults()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("post-logout");
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("refresh-service"),
+				"Refresh Service", ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(), Set.of(),
+				Set.of(new ClientScope("scim.read")), ClientTokenPolicy.refreshEnabledDefaults()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("must not enable refresh tokens");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "openid", "offline_access", "profile", "email", "address", "phone" })
+	void rejectsOpenIdConnectScopesForClientCredentialsClients(String scope) {
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("oidc-service"), "OIDC Service",
+				ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(), Set.of(), Set.of(new ClientScope(scope)),
+				ClientTokenPolicy.serviceDefaults()))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("OpenID Connect");
+	}
+
+	@Test
+	void rejectsNullAuthorizationGrant() {
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("service"), "Service",
+				ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC, null, Set.of(), Set.of(),
+				Set.of(new ClientScope("scim.read")), ClientTokenPolicy.serviceDefaults()))
+			.isInstanceOf(NullPointerException.class)
+			.hasMessageContaining("authorization grant");
+	}
+
+	@Test
+	void limitsClientCredentialsAccessTokensToFiveMinutes() {
+		assertThatThrownBy(() -> new CreateClientRequest(new ClientIdentifier("long-lived-service"),
+				"Long-lived Service", ClientType.CONFIDENTIAL, ClientAuthenticationMethod.CLIENT_SECRET_BASIC,
+				ClientAuthorizationGrant.CLIENT_CREDENTIALS, Set.of(), Set.of(),
+				Set.of(new ClientScope("scim.read")),
+				new ClientTokenPolicy(Duration.ofMinutes(5), Duration.ofMinutes(6))))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("must not exceed 5 minutes");
+	}
+
+	@Test
 	void enforcesAuthenticationAndSecretMetadataByClientType() {
 		assertThatThrownBy(() -> OAuthClient.create(CLIENT_ID, TenantId.DEFAULT,
 				request(ClientType.PUBLIC, ClientAuthenticationMethod.NONE, Set.of(OPENID), Set.of()),
@@ -218,6 +297,7 @@ class OAuthClientDomainTests {
 		assertThat(ClientTokenPolicy.secureDefaults().accessTokenTtl()).isEqualTo(Duration.ofMinutes(5));
 		assertThat(ClientTokenPolicy.secureDefaults().refreshTokensEnabled()).isFalse();
 		assertThat(ClientTokenPolicy.secureDefaults().refreshTokenTtl()).isEqualTo(Duration.ofHours(1));
+		assertThat(ClientTokenPolicy.serviceDefaults().accessTokenTtl()).isEqualTo(Duration.ofMinutes(5));
 		assertThat(ClientTokenPolicy.refreshEnabledDefaults().refreshTokensEnabled()).isTrue();
 		assertThat(ClientTokenPolicy.refreshEnabledDefaults().refreshTokenTtl()).isEqualTo(Duration.ofHours(1));
 		assertThatThrownBy(() -> new ClientTokenPolicy(Duration.ZERO, Duration.ofMinutes(5)))
