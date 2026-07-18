@@ -330,20 +330,27 @@ jq -e \
 	 and .patch.supported == false
 	 and .bulk.supported == false
 	 and .filter.supported == false
-	 and .authenticationSchemes == []
+	 and (.authenticationSchemes | length) == 1
+	 and .authenticationSchemes[0].type == "oauthbearertoken"
+	 and .authenticationSchemes[0].primary == true
 	 and .meta.resourceType == "ServiceProviderConfig"' \
 	"${scim_body_file}" >/dev/null || fail "SCIM service provider configuration is invalid"
 request_scim /scim/v2/Schemas 200
 jq -e \
 	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
-	 and .totalResults == 0
-	 and .Resources == []' \
+	 and .totalResults == 1
+	 and (.Resources | length) == 1
+	 and .Resources[0].id == "urn:ietf:params:scim:schemas:core:2.0:User"
+	 and .Resources[0].name == "User"' \
 	"${scim_body_file}" >/dev/null || fail "SCIM schema catalog is invalid"
 request_scim /scim/v2/ResourceTypes 200
 jq -e \
 	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
-	 and .totalResults == 0
-	 and .Resources == []' \
+	 and .totalResults == 1
+	 and (.Resources | length) == 1
+	 and .Resources[0].id == "User"
+	 and .Resources[0].endpoint == "/Users"
+	 and .Resources[0].schema == "urn:ietf:params:scim:schemas:core:2.0:User"' \
 	"${scim_body_file}" >/dev/null || fail "SCIM resource type catalog is invalid"
 request_scim /scim/v2/Schemas/unknown 404
 jq -e \
@@ -366,6 +373,7 @@ postgres_container="$(compose ps --quiet postgres)"
 IAM_VERIFY_BASE_URL="http://127.0.0.1:${app_port}" \
 	IAM_VERIFY_ISSUER="https://issuer.release-check.invalid" \
 	IAM_VERIFY_SERVICE_TOKEN_AUDIENCE="https://scim.release-check.invalid/scim/v2" \
+	IAM_VERIFY_SCIM_BASE_URL="https://scim.release-check.invalid/scim/v2" \
 	IAM_VERIFY_POSTGRES_CONTAINER="${postgres_container}" \
 	IAM_DB_NAME="${db_name}" \
 	IAM_DB_USERNAME="${db_username}" \

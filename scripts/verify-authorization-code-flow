@@ -19,6 +19,7 @@ readonly CODE_VERIFIER="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123
 base_url="${IAM_VERIFY_BASE_URL:?IAM_VERIFY_BASE_URL is required}"
 issuer="${IAM_VERIFY_ISSUER:?IAM_VERIFY_ISSUER is required}"
 service_token_audience="${IAM_VERIFY_SERVICE_TOKEN_AUDIENCE:?IAM_VERIFY_SERVICE_TOKEN_AUDIENCE is required}"
+scim_base_url="${IAM_VERIFY_SCIM_BASE_URL:?IAM_VERIFY_SCIM_BASE_URL is required}"
 postgres_container="${IAM_VERIFY_POSTGRES_CONTAINER:?IAM_VERIFY_POSTGRES_CONTAINER is required}"
 db_name="${IAM_DB_NAME:-iam}"
 db_username="${IAM_DB_USERNAME:-iam}"
@@ -375,10 +376,20 @@ service_scope_state="$(database --tuples-only --no-align --command "
 	|| fail "Persisted Client Credentials scope state is invalid: ${service_scope_state}"
 
 log "Checking the SCIM resource-server boundary"
-status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' \
 	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
-	"${base_url}/scim/v2/Users")"
-[[ "${status}" == "404" ]] || fail "SCIM read token did not pass the resource-server boundary: HTTP ${status}"
+	"${base_url}/scim/v2/Users/${USER_ID}")"
+[[ "${status}" == "200" ]] || fail "SCIM read token did not retrieve its tenant user: HTTP ${status}"
+scim_user_location="${scim_base_url}/Users/${USER_ID}"
+jq -e --arg id "${USER_ID}" --arg username "${USERNAME}" --arg location "${scim_user_location}" \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:User"]
+	 and .id == $id and .userName == $username and .active == true
+	 and .meta.resourceType == "User" and .meta.location == $location
+	 and (has("password") | not)' \
+	"${body}" >/dev/null || fail "SCIM user representation is invalid"
+[[ "$(header_value Content-Location "${headers}")" == "${scim_user_location}" ]] \
+	|| fail "SCIM user Content-Location is invalid"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request POST --header 'Accept: application/scim+json' \
 	--header "Authorization: Bearer ${service_access_token}" "${base_url}/scim/v2/Users")"

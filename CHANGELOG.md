@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Tenant-scoped SCIM User retrieval with attribute projection, canonical metadata, and tenant-safe not-found responses.
 - Dedicated SCIM service-token validation with strict tenant/client claims, bounded lifetimes, and read/write scope authorization.
 - Confidential Client Credentials issuance with tenant-bound JWT claims, fixed SCIM audience, short lifetimes, and Native Image verification.
 - Tenant-bound OAuth client-credentials authorization persistence with grant-specific owner, request, and token invariants.

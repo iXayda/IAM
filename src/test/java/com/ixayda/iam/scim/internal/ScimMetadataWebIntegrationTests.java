@@ -19,6 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -84,7 +85,9 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.changePassword.supported").value(false))
 			.andExpect(jsonPath("$.sort.supported").value(false))
 			.andExpect(jsonPath("$.etag.supported").value(false))
-			.andExpect(jsonPath("$.authenticationSchemes", hasSize(0)))
+			.andExpect(jsonPath("$.authenticationSchemes", hasSize(1)))
+			.andExpect(jsonPath("$.authenticationSchemes[0].type").value("oauthbearertoken"))
+			.andExpect(jsonPath("$.authenticationSchemes[0].primary").value(true))
 			.andExpect(jsonPath("$.meta.resourceType").value("ServiceProviderConfig"))
 			.andExpect(jsonPath("$.meta.location").value("https://scim.example.test/scim/v2/ServiceProviderConfig"))
 			.andExpect(jsonPath("$.id").doesNotExist())
@@ -92,9 +95,44 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
-	void exposesEmptySchemaAndResourceTypeCatalogs() throws Exception {
-		assertEmptyCatalog("/scim/v2/Schemas");
-		assertEmptyCatalog("/scim/v2/ResourceTypes");
+	void exposesTheUserSchemaAndResourceTypeCatalogs() throws Exception {
+		this.mockMvc.perform(get("/scim/v2/Schemas").accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, "https://scim.example.test/scim/v2/Schemas"))
+			.andExpect(jsonPath("$.schemas[0]").value(LIST_RESPONSE_SCHEMA))
+			.andExpect(jsonPath("$.totalResults").value(1))
+			.andExpect(jsonPath("$.Resources", hasSize(1)))
+			.andExpect(jsonPath("$.Resources[0].id").value(ScimUserSchema.URN))
+			.andExpect(jsonPath("$.Resources[0].name").value("User"))
+			.andExpect(jsonPath("$.Resources[0].attributes[*].name", hasItem("userName")))
+			.andExpect(jsonPath("$.Resources[0].attributes[*].name", hasItem("password")))
+			.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("Schema"));
+
+		this.mockMvc.perform(get("/scim/v2/ResourceTypes").accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
+					"https://scim.example.test/scim/v2/ResourceTypes"))
+			.andExpect(jsonPath("$.schemas[0]").value(LIST_RESPONSE_SCHEMA))
+			.andExpect(jsonPath("$.totalResults").value(1))
+			.andExpect(jsonPath("$.Resources", hasSize(1)))
+			.andExpect(jsonPath("$.Resources[0].id").value("User"))
+			.andExpect(jsonPath("$.Resources[0].name").value("User"))
+			.andExpect(jsonPath("$.Resources[0].endpoint").value("/Users"))
+			.andExpect(jsonPath("$.Resources[0].schema").value(ScimUserSchema.URN))
+			.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("ResourceType"));
+
+		this.mockMvc.perform(get("/scim/v2/Schemas/{id}", ScimUserSchema.URN).accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.id").value(ScimUserSchema.URN))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
+					containsString("/scim/v2/Schemas/")));
+		this.mockMvc.perform(get("/scim/v2/ResourceTypes/User").accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.id").value("User"))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
+					"https://scim.example.test/scim/v2/ResourceTypes/User"));
 	}
 
 	@Test
@@ -102,14 +140,14 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 		this.mockMvc.perform(get("/scim/v2/Schemas").accept(MediaType.APPLICATION_JSON))
 			.andExpect(status().isOk())
 			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
-			.andExpect(jsonPath("$.totalResults").value(0));
+			.andExpect(jsonPath("$.totalResults").value(1));
 	}
 
 	@Test
 	void ignoresUnsupportedNonFilterDiscoveryParameters() throws Exception {
 		this.mockMvc.perform(get("/scim/v2/ResourceTypes?count=1&sortBy=name").accept(SCIM_JSON))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.totalResults").value(0))
+			.andExpect(jsonPath("$.totalResults").value(1))
 			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
 					"https://scim.example.test/scim/v2/ResourceTypes"));
 	}
@@ -127,8 +165,8 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void returnsScimErrorsForUnknownCatalogItems() throws Exception {
-		assertNotFound("/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User");
-		assertNotFound(URI.create("/scim/v2/ResourceTypes/urn%3Aietf%3Aparams%3Ascim%3Aschemas%3Acore%3A2.0%3AUser"));
+		assertNotFound("/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Unknown");
+		assertNotFound("/scim/v2/ResourceTypes/Unknown");
 	}
 
 	@Test
@@ -152,18 +190,6 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 			.andReturn();
 
 		assertThat(result.getRequest().getSession(false)).isNull();
-	}
-
-	private void assertEmptyCatalog(String path) throws Exception {
-		this.mockMvc.perform(get(path).accept(SCIM_JSON))
-			.andExpect(status().isOk())
-			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
-			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, "https://scim.example.test" + path))
-			.andExpect(jsonPath("$.schemas[0]").value(LIST_RESPONSE_SCHEMA))
-			.andExpect(jsonPath("$.totalResults").value(0))
-			.andExpect(jsonPath("$.Resources", hasSize(0)))
-			.andExpect(jsonPath("$.startIndex").doesNotExist())
-			.andExpect(jsonPath("$.itemsPerPage").doesNotExist());
 	}
 
 	private void assertNotFound(String path) throws Exception {
