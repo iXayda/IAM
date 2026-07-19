@@ -127,6 +127,8 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'members')].subAttributes[*].name",
 					containsInAnyOrder("value", "type", "$ref")))
 			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'members')].subAttributes"
+					+ "[?(@.name == 'value')].required", containsInAnyOrder(true)))
+			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'members')].subAttributes"
 					+ "[?(@.name == 'type')].canonicalValues[*]", containsInAnyOrder("User")))
 			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'members')].subAttributes"
 					+ "[?(@.name == '$ref')].referenceTypes[*]", containsInAnyOrder("User")))

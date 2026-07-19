@@ -13,6 +13,8 @@ public interface GroupOperations {
 
 	Group create(TenantId tenantId, CreateGroupRequest request);
 
+	Group create(TenantId tenantId, CreateGroupRequest request, Set<UserId> memberIds);
+
 	Optional<Group> findById(TenantId tenantId, GroupId groupId);
 
 	GroupPage findDirectoryPage(TenantId tenantId, GroupDirectoryQuery query);

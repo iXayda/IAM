@@ -533,6 +533,37 @@ status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-ou
 		and .emails == [{"value":"release-patched@example.com"}] and (.phoneNumbers | length) == 0' \
 		"${body}" >/dev/null \
 	|| fail "Patched SCIM User was not readable through the native service"
+
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --request POST \
+	--header 'Accept: application/scim+json' --header 'Content-Type: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	--data "$(jq -nc --arg user_id "${created_scim_user_id}" \
+		'{schemas:["urn:ietf:params:scim:schemas:core:2.0:Group"],displayName:"Release Created Group",members:[{value:$user_id,type:"User",("$ref"):("Users/" + $user_id)}]}')" \
+	"${base_url}/scim/v2/Groups")"
+[[ "${status}" == "201" ]] || fail "SCIM write token did not create a tenant group: HTTP ${status}"
+created_scim_group_id="$(jq -er '.id' "${body}")"
+created_scim_group_location="${scim_base_url}/Groups/${created_scim_group_id}"
+jq -e --arg id "${created_scim_group_id}" --arg location "${created_scim_group_location}" \
+	--arg user_id "${created_scim_user_id}" --arg user_location "${created_scim_user_location}" \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:Group"] and .id == $id
+	 and .displayName == "Release Created Group" and .members == [{value:$user_id,type:"User",("$ref"):$user_location}]
+	 and .meta.resourceType == "Group" and .meta.location == $location and (.meta | has("version") | not)' \
+	"${body}" >/dev/null || fail "Created SCIM Group representation is invalid"
+[[ "$(header_value Location "${headers}")" == "${created_scim_group_location}" \
+	&& "$(header_value Content-Location "${headers}")" == "${created_scim_group_location}" \
+	&& -z "$(header_value ETag "${headers}")" ]] \
+	|| fail "Created SCIM Group headers are invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "200" ]] \
+	&& jq -e --arg id "${created_scim_group_id}" --arg user_id "${created_scim_user_id}" \
+		'.id == $id and .displayName == "Release Created Group"
+		 and (.members | length) == 1 and .members[0].value == $user_id and .members[0].type == "User"' \
+		"${body}" >/dev/null \
+	|| fail "Created SCIM Group was not readable through the native service"
+
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request DELETE --header 'Accept: application/scim+json' \
 	--header "Authorization: Bearer ${service_access_token}" \
@@ -564,9 +595,4 @@ status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-ou
 	&& jq -e '.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "404"' \
 		"${body}" >/dev/null \
 	|| fail "Repeated SCIM User delete did not return a protocol not-found response"
-status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
-	--request POST --header 'Accept: application/scim+json' \
-	--header "Authorization: Bearer ${service_write_access_token}" "${base_url}/scim/v2/Groups")"
-[[ "${status}" == "405" ]] || fail "Unsupported SCIM Group creation did not return method-not-allowed: HTTP ${status}"
-
 log "Authorization Code + PKCE + OIDC + Refresh Token + Client Credentials flows passed"

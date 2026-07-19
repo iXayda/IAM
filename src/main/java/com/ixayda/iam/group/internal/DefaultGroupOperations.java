@@ -55,12 +55,31 @@ class DefaultGroupOperations implements GroupOperations {
 	@Override
 	@Transactional
 	public Group create(TenantId tenantId, CreateGroupRequest request) {
+		return create(tenantId, request, Set.of());
+	}
+
+	@Override
+	@Transactional
+	public Group create(TenantId tenantId, CreateGroupRequest request, Set<UserId> memberIds) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(request, "Create group request must not be null");
+		Objects.requireNonNull(memberIds, "Initial group member IDs must not be null");
+		Set<UserId> initialMemberIds = Set.copyOf(memberIds);
+		GroupId groupId = GroupId.random();
+		if (initialMemberIds.size() > GroupOperations.MAX_MEMBERS_PER_GROUP) {
+			throw new GroupMembershipLimitExceededException(tenantId, groupId, GroupOperations.MAX_MEMBERS_PER_GROUP);
+		}
 		this.tenants.requireActiveForWrite(tenantId);
+		initialMemberIds.stream()
+			.sorted(USER_ID_ORDER)
+			.forEach(userId -> this.users.recordMembershipChangeForWrite(tenantId, userId));
 		Instant now = this.timeSource.now();
-		return this.repository.insert(new Group(GroupId.random(), tenantId, request.displayName(), GroupStatus.ACTIVE, 0,
-				now, now));
+		Group created = this.repository.insert(new Group(groupId, tenantId, request.displayName(),
+				GroupStatus.ACTIVE, 0, now, now));
+		if (!initialMemberIds.isEmpty()) {
+			this.memberships.replace(created, Set.of(), initialMemberIds, now);
+		}
+		return created;
 	}
 
 	@Override

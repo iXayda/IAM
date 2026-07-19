@@ -6,6 +6,7 @@ import com.unboundid.scim2.common.BaseScimResource;
 import org.springframework.core.ResolvableType;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
+import tools.jackson.databind.node.ObjectNode;
 
 final class ScimJsonHttpMessageConverter extends JacksonJsonHttpMessageConverter {
 
@@ -16,7 +17,7 @@ final class ScimJsonHttpMessageConverter extends JacksonJsonHttpMessageConverter
 
 	@Override
 	public boolean canRead(ResolvableType type, MediaType mediaType) {
-		return isScimResource(type) && super.canRead(type, mediaType);
+		return isScimInput(type) && super.canRead(type, mediaType);
 	}
 
 	@Override
@@ -27,6 +28,10 @@ final class ScimJsonHttpMessageConverter extends JacksonJsonHttpMessageConverter
 	private static boolean isScimResource(ResolvableType type) {
 		Class<?> rawType = type.resolve();
 		return rawType != null && BaseScimResource.class.isAssignableFrom(rawType);
+	}
+
+	private static boolean isScimInput(ResolvableType type) {
+		return ObjectNode.class.equals(type.resolve()) || isScimResource(type);
 	}
 
 }

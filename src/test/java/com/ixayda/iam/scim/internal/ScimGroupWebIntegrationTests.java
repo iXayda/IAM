@@ -18,6 +18,7 @@ import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginIdentifier;
 import com.ixayda.iam.user.User;
+import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserOperations;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,8 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
@@ -61,6 +64,8 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 	private static final String AUDIENCE = "https://scim.example.test/scim/v2";
 
 	private static final String CLIENT_ID = "scim-group-reader";
+
+	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private final List<TenantId> tenantsToDelete = new ArrayList<>();
 
@@ -139,6 +144,207 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.meta.lastModified").exists())
 			.andExpect(jsonPath("$.meta.location").value(location))
 			.andExpect(jsonPath("$.meta.version").doesNotExist());
+	}
+
+	@Test
+	void createsATenantScopedGroupWithCanonicalMembersAndMetadata() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User first = createUser(tenant.id(), "create-first");
+		User second = createUser(tenant.id(), "create-second");
+		String request = """
+				{
+				  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				  "id": 42,
+				  "meta": "ignored",
+				  "displayName": "Platform Operators",
+				  "members": [
+				    {"value": "%s", "type": "user", "$ref": "Users/%s"},
+				    {"value": "%s", "$ref": "/scim/v2/Users/%s"},
+				    {"value": "%s", "$ref": "https://scim.example.test/scim/v2/Users/%s"}
+				  ]
+				}
+				""".formatted(first.id().toString().toUpperCase(Locale.ROOT), first.id(), second.id(), second.id(),
+				first.id(), first.id());
+
+		MvcResult result = this.mockMvc.perform(post("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("tenant_id", other.id().toString())
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isCreated())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().doesNotExist(HttpHeaders.ETAG))
+			.andExpect(jsonPath("$.schemas[0]").value(ScimGroupSchema.URN))
+			.andExpect(jsonPath("$.id").isNotEmpty())
+			.andExpect(jsonPath("$.displayName").value("Platform Operators"))
+			.andExpect(jsonPath("$.members", hasSize(2)))
+			.andExpect(jsonPath("$.members[*].value",
+					containsInAnyOrder(first.id().toString(), second.id().toString())))
+			.andExpect(jsonPath("$.members[*].type", containsInAnyOrder("User", "User")))
+			.andExpect(jsonPath("$.meta.resourceType").value("Group"))
+			.andExpect(jsonPath("$.meta.created").exists())
+			.andExpect(jsonPath("$.meta.lastModified").exists())
+			.andExpect(jsonPath("$.meta.version").doesNotExist())
+			.andReturn();
+
+		JsonNode body = JSON.readTree(result.getResponse().getContentAsString());
+		String id = body.get("id").stringValue();
+		String location = "https://scim.example.test/scim/v2/Groups/" + id;
+		assertThat(result.getResponse().getHeader(HttpHeaders.LOCATION)).isEqualTo(location);
+		assertThat(result.getResponse().getHeader(HttpHeaders.CONTENT_LOCATION)).isEqualTo(location);
+		assertThat(body.get("meta").get("location").stringValue()).isEqualTo(location);
+		Group stored = this.groups.findById(tenant.id(), com.ixayda.iam.group.GroupId.from(id)).orElseThrow();
+		assertThat(stored.displayName()).isEqualTo("Platform Operators");
+		assertThat(stored.version()).isZero();
+		assertThat(this.groups.findById(other.id(), stored.id())).isEmpty();
+	}
+
+	@Test
+	void appliesCreateProjectionWhileAlwaysReturningTheCreatedLocation() throws Exception {
+		Tenant tenant = createTenant();
+		String request = """
+				{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Projected Create"}
+				""";
+
+		this.mockMvc.perform(post("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("attributes", "displayName")
+			.contentType(MediaType.APPLICATION_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.schemas[0]").value(ScimGroupSchema.URN))
+			.andExpect(jsonPath("$.id").isNotEmpty())
+			.andExpect(jsonPath("$.displayName").value("Projected Create"))
+			.andExpect(jsonPath("$.members").doesNotExist())
+			.andExpect(jsonPath("$.meta.location").isNotEmpty())
+			.andExpect(jsonPath("$.meta.created").doesNotExist());
+	}
+
+	@Test
+	void acceptsDisabledAndLockedMembers() throws Exception {
+		Tenant tenant = createTenant();
+		User disabled = createUser(tenant.id(), "create-disabled");
+		User locked = createUser(tenant.id(), "create-locked");
+		this.users.disable(tenant.id(), disabled.id());
+		this.users.lock(tenant.id(), locked.id());
+		String request = """
+				{
+				  "schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				  "displayName":"Non-active Members",
+				  "members":[{"value":"%s"},{"value":"%s"}]
+				}
+				""".formatted(disabled.id(), locked.id());
+
+		this.mockMvc.perform(post("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.members[*].value",
+					containsInAnyOrder(disabled.id().toString(), locked.id().toString())));
+	}
+
+	@Test
+	void rejectsInvalidCreateRepresentationsWithoutPersistingGroups() throws Exception {
+		Tenant tenant = createTenant();
+		User member = createUser(tenant.id(), "invalid-create-member");
+		long initialGroupCount = groupCount(tenant.id());
+		List<String> invalidRequests = List.of(
+				"{}",
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"displayName":"Invalid"}
+						""",
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Invalid","externalId":"secret-external"}
+						""",
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Invalid","secretUnknown":true}
+						""",
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Invalid","members":[{"type":"User"}]}
+						""",
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Invalid","members":[{"value":"%s","display":"secret-display"}]}
+						""".formatted(member.id()),
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Invalid","members":[{"value":"%s","type":"Group"}]}
+						""".formatted(member.id()),
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Invalid","members":[{"value":"%s","$ref":"https://external.example.test/scim/v2/Users/%s?secret=query"}]}
+						""".formatted(member.id(), member.id()));
+
+		for (String request : invalidRequests) {
+			this.mockMvc.perform(post("/scim/v2/Groups")
+				.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+				.contentType(SCIM_JSON)
+				.accept(SCIM_JSON)
+				.content(request))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+				.andExpect(jsonPath("$.scimType").value("invalidValue"))
+				.andExpect(content().string(not(containsString("secret"))));
+		}
+		assertThat(groupCount(tenant.id())).isEqualTo(initialGroupCount);
+	}
+
+	@Test
+	void rejectsDuplicateCreateAttributesAsInvalidSyntax() throws Exception {
+		Tenant tenant = createTenant();
+		User member = createUser(tenant.id(), "duplicate-create-member");
+		List<String> duplicateRequests = List.of(
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"First","displayName":"Second"}
+						""",
+				"""
+						{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Duplicate Member","members":[{"value":"%s","value":"%s"}]}
+						""".formatted(member.id(), UUID.randomUUID()));
+
+		for (String request : duplicateRequests) {
+			this.mockMvc.perform(post("/scim/v2/Groups")
+				.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+				.contentType(SCIM_JSON)
+				.accept(SCIM_JSON)
+				.content(request))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+				.andExpect(jsonPath("$.status").value("400"))
+				.andExpect(jsonPath("$.scimType").value("invalidSyntax"));
+		}
+	}
+
+	@Test
+	void hidesUnavailableMembersAndRollsBackEveryCreateSideEffect() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User valid = createUser(tenant.id(), "rollback-member");
+		User crossTenant = createUser(other.id(), "cross-tenant-member");
+		User deleted = createUser(tenant.id(), "deleted-member");
+		this.users.delete(tenant.id(), deleted.id());
+		UserId missing = new UserId(new UUID(Long.MAX_VALUE, Long.MAX_VALUE));
+		long groupCount = groupCount(tenant.id());
+		long membershipCount = membershipCount(tenant.id());
+		long validVersion = this.users.findById(tenant.id(), valid.id()).orElseThrow().version();
+		String request = """
+				{
+				  "schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				  "displayName":"Atomic Create",
+				  "members":[{"value":"%s"},{"value":"%s"}]
+				}
+				""".formatted(valid.id(), missing);
+
+		invalidMemberResponse(tenant.id(), request);
+		assertThat(groupCount(tenant.id())).isEqualTo(groupCount);
+		assertThat(membershipCount(tenant.id())).isEqualTo(membershipCount);
+		assertThat(this.users.findById(tenant.id(), valid.id()).orElseThrow().version()).isEqualTo(validVersion);
+
+		String missingBody = invalidMemberResponse(tenant.id(), memberRequest(missing));
+		String crossTenantBody = invalidMemberResponse(tenant.id(), memberRequest(crossTenant.id()));
+		String deletedBody = invalidMemberResponse(tenant.id(), memberRequest(deleted.id()));
+		assertThat(List.of(crossTenantBody, deletedBody)).containsOnly(missingBody);
 	}
 
 	@Test
@@ -236,14 +442,25 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE,
 					"Bearer error=\"insufficient_scope\", scope=\"scim.read\""));
 		this.mockMvc.perform(post("/scim/v2/Groups")
-			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
-			.accept(SCIM_JSON))
-			.andExpect(status().isMethodNotAllowed());
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content("{\"schemas\":[\"" + ScimGroupSchema.URN + "\"],\"displayName\":\"Denied\"}"))
+			.andExpect(status().isForbidden())
+			.andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE,
+					"Bearer error=\"insufficient_scope\", scope=\"scim.write\""));
 
 		this.tenants.disable(tenant.id());
 		this.mockMvc.perform(get("/scim/v2/Groups")
 			.header(HttpHeaders.AUTHORIZATION, authorization)
 			.accept(SCIM_JSON))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL));
+		this.mockMvc.perform(post("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content("{\"schemas\":[\"" + ScimGroupSchema.URN + "\"],\"displayName\":\"Disabled\"}"))
 			.andExpect(status().isNotFound())
 			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL));
 	}
@@ -329,6 +546,45 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
 			.andReturn();
 		return result.getResponse().getContentAsString();
+	}
+
+	private String invalidMemberResponse(TenantId tenantId, String request) throws Exception {
+		MvcResult result = this.mockMvc.perform(post("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("400"))
+			.andExpect(jsonPath("$.scimType").value("invalidValue"))
+			.andReturn();
+		return result.getResponse().getContentAsString();
+	}
+
+	private long groupCount(TenantId tenantId) {
+		return this.jdbcClient.sql("SELECT COUNT(*) FROM groups WHERE tenant_id = :tenantId")
+			.param("tenantId", tenantId.value())
+			.query(Long.class)
+			.single();
+	}
+
+	private long membershipCount(TenantId tenantId) {
+		return this.jdbcClient.sql("SELECT COUNT(*) FROM group_memberships WHERE tenant_id = :tenantId")
+			.param("tenantId", tenantId.value())
+			.query(Long.class)
+			.single();
+	}
+
+	private static String memberRequest(UserId userId) {
+		return """
+				{
+				  "schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				  "displayName":"Unavailable Member",
+				  "members":[{"value":"%s"}]
+				}
+				""".formatted(userId);
 	}
 
 	private Tenant createTenant() {

@@ -17,9 +17,11 @@ import com.ixayda.iam.tenant.TenantDisabledException;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
+import com.ixayda.iam.user.UserNotFoundException;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
 import com.unboundid.scim2.common.exceptions.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 class ScimGroupService {
@@ -87,12 +89,31 @@ class ScimGroupService {
 			.toList());
 	}
 
+	@Transactional(rollbackFor = com.unboundid.scim2.common.exceptions.ScimException.class)
+	public ScimGroupView create(TenantId tenantId, ScimGroupCreateRequest command)
+			throws ResourceNotFoundException, BadRequestException {
+		try {
+			Group created = this.groups.create(tenantId, command.request(), command.memberIds());
+			return new ScimGroupView(created, this.groups.findMembers(tenantId, created.id()));
+		}
+		catch (TenantDisabledException | TenantNotFoundException exception) {
+			throw notFound();
+		}
+		catch (UserNotFoundException | GroupMembershipLimitExceededException exception) {
+			throw invalidMembers();
+		}
+	}
+
 	private static ResourceNotFoundException notFound() {
 		return new ResourceNotFoundException(NOT_FOUND_DETAIL);
 	}
 
 	private static BadRequestException tooMany() {
 		return BadRequestException.tooMany("The requested SCIM Group membership set is too large.");
+	}
+
+	private static BadRequestException invalidMembers() {
+		return BadRequestException.invalidValue("The SCIM Group members contain an invalid or unavailable User.");
 	}
 
 }

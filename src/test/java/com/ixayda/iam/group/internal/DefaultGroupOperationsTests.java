@@ -75,6 +75,27 @@ class DefaultGroupOperationsTests {
 	}
 
 	@Test
+	void createsInitialMembersAtomicallyInStableUserOrder() {
+		LinkedHashSet<UserId> members = new LinkedHashSet<>();
+		members.add(SECOND_USER_ID);
+		members.add(FIRST_USER_ID);
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.timeSource.now()).thenReturn(CREATED_AT);
+		when(this.repository.insert(any(Group.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		Group created = this.operations.create(TenantId.DEFAULT, new CreateGroupRequest("Engineering"), members);
+
+		assertThat(created.version()).isZero();
+		InOrder order = inOrder(this.tenants, this.users, this.timeSource, this.repository, this.memberships);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.users).recordMembershipChangeForWrite(TenantId.DEFAULT, FIRST_USER_ID);
+		order.verify(this.users).recordMembershipChangeForWrite(TenantId.DEFAULT, SECOND_USER_ID);
+		order.verify(this.timeSource).now();
+		order.verify(this.repository).insert(created);
+		order.verify(this.memberships).replace(created, Set.of(), Set.copyOf(members), CREATED_AT);
+	}
+
+	@Test
 	void locksTheTenantBeforeUpdatingTheGroup() {
 		Group current = group("Engineering", GroupStatus.ACTIVE, 0, CREATED_AT);
 		Group changed = group("Platform", GroupStatus.ACTIVE, 1, CREATED_AT.plusSeconds(1));

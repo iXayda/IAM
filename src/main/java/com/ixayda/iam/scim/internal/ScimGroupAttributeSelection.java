@@ -26,9 +26,12 @@ final class ScimGroupAttributeSelection {
 
 	private final List<List<String>> paths;
 
-	private ScimGroupAttributeSelection(Mode mode, List<List<String>> paths) {
+	private final List<List<String>> requiredPaths;
+
+	private ScimGroupAttributeSelection(Mode mode, List<List<String>> paths, List<List<String>> requiredPaths) {
 		this.mode = mode;
 		this.paths = List.copyOf(paths);
+		this.requiredPaths = List.copyOf(requiredPaths);
 	}
 
 	static ScimGroupAttributeSelection parse(List<String> attributes, List<String> excludedAttributes)
@@ -37,15 +40,22 @@ final class ScimGroupAttributeSelection {
 			throw invalidSelection();
 		}
 		if (attributes == null && excludedAttributes == null) {
-			return new ScimGroupAttributeSelection(Mode.ALL, List.of());
+			return new ScimGroupAttributeSelection(Mode.ALL, List.of(), List.of());
 		}
 		return new ScimGroupAttributeSelection(attributes == null ? Mode.EXCLUDE : Mode.INCLUDE,
-				parsePaths(attributes == null ? excludedAttributes : attributes));
+				parsePaths(attributes == null ? excludedAttributes : attributes), List.of());
+	}
+
+	ScimGroupAttributeSelection requiring(String... attributePath) {
+		List<List<String>> required = new ArrayList<>(this.requiredPaths);
+		required.add(normalize(attributePath));
+		return new ScimGroupAttributeSelection(this.mode, this.paths, required);
 	}
 
 	boolean includes(String... attributePath) {
 		List<String> candidate = normalize(attributePath);
-		if (isAlwaysReturned(candidate)) {
+		if (isAlwaysReturned(candidate) || this.requiredPaths.stream()
+			.anyMatch((required) -> isPrefix(required, candidate) || isPrefix(candidate, required))) {
 			return true;
 		}
 		return switch (this.mode) {
