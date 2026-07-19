@@ -129,7 +129,7 @@ IAM 不负责：
 - 有界的 SCIM Users 集合分页，以及 `id`、`userName` 精确查询
 - 有界的 SCIM Groups 集合分页，以及 `id`、`displayName` 精确查询
 - 租户隔离的 SCIM User 创建、受限可写属性和不泄露标识的唯一性冲突响应
-- 租户隔离的 SCIM Group 创建、原子 direct User 初始成员关系和规范成员引用
+- 租户隔离的 SCIM Group 创建与完整替换、原子 direct User 成员关系和规范成员引用
 - 租户隔离的 SCIM User 完整替换、原子局部修改与软删除，以及标识更新和内部锁定状态保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
@@ -245,6 +245,7 @@ DELETE /scim/v2/Users/{id}
 GET /scim/v2/Groups
 GET /scim/v2/Groups/{id}
 POST /scim/v2/Groups
+PUT /scim/v2/Groups/{id}
 ```
 
 discovery 接口匿名开放。Users 和 Groups 读取使用带 `scim.read` scope 的机器 token，资源写入使用
@@ -269,9 +270,11 @@ phone 形式的 `userName` 与对应的 `emails` 或 `phoneNumbers` 值是同一
 账号接管防护，原有 `userName`、email 和 phone 登录标识保持保留，不能立即用于创建新用户。
 
 Groups 读取返回 direct User members 的 `value`、`type: User` 和 canonical `$ref`，并支持
-`attributes`、`excludedAttributes`。创建 Group 时 `displayName` 和唯一的 core Group schema URN 必填；
-`members` 可省略，每项必须引用当前租户内未删除的 User。初始成员关系与 Group 原子写入，重复引用按
-规范化 User ID 去重，失败时不会留下 Group、membership 或 User directory revision 的部分变更。
+`attributes`、`excludedAttributes`。创建和完整替换 Group 时 `displayName` 和唯一的 core Group schema
+URN 必填；`members` 可省略，每项必须引用当前租户内未删除的 User。PUT 不创建缺失资源，并将省略、
+`null` 或空数组的 `members` 解释为空成员集。Group profile 与成员关系在单一事务中更新，一次实际替换
+只推进一次 Group directory revision；重复引用按规范化 User ID 去重，失败时不会留下 Group、membership
+或 User directory revision 的部分变更。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：

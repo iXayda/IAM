@@ -554,15 +554,34 @@ jq -e --arg id "${created_scim_group_id}" --arg location "${created_scim_group_l
 	&& "$(header_value Content-Location "${headers}")" == "${created_scim_group_location}" \
 	&& -z "$(header_value ETag "${headers}")" ]] \
 	|| fail "Created SCIM Group headers are invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --request PUT \
+	--header 'Accept: application/scim+json' --header 'Content-Type: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	--data "$(jq -nc --arg user_id "${USER_ID}" \
+		'{schemas:["urn:ietf:params:scim:schemas:core:2.0:Group"],displayName:"Release Replaced Group",members:[{value:$user_id}]}')" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "200" ]] || fail "SCIM write token did not replace a tenant group: HTTP ${status}"
+jq -e --arg id "${created_scim_group_id}" --arg location "${created_scim_group_location}" \
+	--arg user_id "${USER_ID}" --arg user_location "${scim_user_location}" \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:Group"] and .id == $id
+	 and .displayName == "Release Replaced Group" and .members == [{value:$user_id,type:"User",("$ref"):$user_location}]
+	 and .meta.resourceType == "Group" and .meta.location == $location and (.meta | has("version") | not)' \
+	"${body}" >/dev/null || fail "Replaced SCIM Group representation is invalid"
+[[ "$(header_value Location "${headers}")" == "${created_scim_group_location}" \
+	&& "$(header_value Content-Location "${headers}")" == "${created_scim_group_location}" \
+	&& -z "$(header_value ETag "${headers}")" ]] \
+	|| fail "Replaced SCIM Group headers are invalid"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
 	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
 [[ "${status}" == "200" ]] \
-	&& jq -e --arg id "${created_scim_group_id}" --arg user_id "${created_scim_user_id}" \
-		'.id == $id and .displayName == "Release Created Group"
-		 and (.members | length) == 1 and .members[0].value == $user_id and .members[0].type == "User"' \
+	&& jq -e --arg id "${created_scim_group_id}" --arg user_id "${USER_ID}" \
+		--arg user_location "${scim_user_location}" \
+		'.id == $id and .displayName == "Release Replaced Group"
+		 and .members == [{value:$user_id,type:"User",("$ref"):$user_location}]' \
 		"${body}" >/dev/null \
-	|| fail "Created SCIM Group was not readable through the native service"
+	|| fail "Replaced SCIM Group was not readable through the native service"
 
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request DELETE --header 'Accept: application/scim+json' \

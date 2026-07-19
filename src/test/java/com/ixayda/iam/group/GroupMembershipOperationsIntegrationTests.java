@@ -221,6 +221,44 @@ class GroupMembershipOperationsIntegrationTests extends ApplicationIntegrationTe
 	}
 
 	@Test
+	void concurrentFullReplacementsCommitOneCompleteGroupState() throws Exception {
+		Group group = createGroup(TenantId.DEFAULT, "Concurrent Full Replacement");
+		User first = createUser(TenantId.DEFAULT, "full-replace-first");
+		User second = createUser(TenantId.DEFAULT, "full-replace-second");
+		CountDownLatch ready = new CountDownLatch(2);
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<ReplacementResult>> pending = new ArrayList<>();
+		List<ReplacementResult> results = new ArrayList<>();
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			pending.add(executor.submit(() -> replaceGroup(group, "First Replacement", Set.of(first.id()), ready, start)));
+			pending.add(executor.submit(() -> replaceGroup(group, "Second Replacement", Set.of(second.id()), ready, start)));
+			assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+			start.countDown();
+			for (Future<ReplacementResult> result : pending) {
+				results.add(result.get(10, TimeUnit.SECONDS));
+			}
+		}
+
+		assertThat(results.stream().filter(result -> result.group() != null)).hasSize(1);
+		assertThat(results.stream().filter(result -> result.failure() != null))
+			.singleElement()
+			.satisfies(result -> assertThat(result.failure()).isInstanceOf(GroupConcurrentUpdateException.class));
+		Group stored = this.groups.findById(TenantId.DEFAULT, group.id()).orElseThrow();
+		assertThat(stored.version()).isOne();
+		Set<UserId> members = this.groups.findMembers(TenantId.DEFAULT, group.id()).stream()
+			.map(GroupMembership::userId)
+			.collect(java.util.stream.Collectors.toSet());
+		if (stored.displayName().equals("First Replacement")) {
+			assertThat(members).containsExactly(first.id());
+		}
+		else {
+			assertThat(stored.displayName()).isEqualTo("Second Replacement");
+			assertThat(members).containsExactly(second.id());
+		}
+	}
+
+	@Test
 	void userDeletionWaitsForAnInFlightMembershipWriteThenRemovesIt() throws Exception {
 		Group group = createGroup(TenantId.DEFAULT, "Delete After Replacement");
 		User user = createUser(TenantId.DEFAULT, "membership-delete-after-write");
@@ -339,6 +377,19 @@ class GroupMembershipOperationsIntegrationTests extends ApplicationIntegrationTe
 		try {
 			return new ReplacementResult(
 					this.groups.replaceMembers(TenantId.DEFAULT, group.id(), group.version(), memberIds), null);
+		}
+		catch (RuntimeException ex) {
+			return new ReplacementResult(null, ex);
+		}
+	}
+
+	private ReplacementResult replaceGroup(Group group, String displayName, Set<UserId> memberIds,
+			CountDownLatch ready, CountDownLatch start) {
+		ready.countDown();
+		await(start);
+		try {
+			return new ReplacementResult(this.groups.replace(TenantId.DEFAULT, group.id(), group.version(),
+					new ReplaceGroupRequest(displayName, memberIds)), null);
 		}
 		catch (RuntimeException ex) {
 			return new ReplacementResult(null, ex);

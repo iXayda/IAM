@@ -6,10 +6,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.group.CreateGroupRequest;
 import com.ixayda.iam.group.Group;
+import com.ixayda.iam.group.GroupMembership;
 import com.ixayda.iam.group.GroupOperations;
 import com.ixayda.iam.tenant.CreateTenantRequest;
 import com.ixayda.iam.tenant.Tenant;
@@ -35,6 +41,8 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -45,6 +53,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -86,6 +95,9 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 
 	@Autowired
 	private JdbcClient jdbcClient;
+
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	@AfterEach
 	void deleteFixtures() {
@@ -348,6 +360,312 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void replacesAGroupAndItsMembersWithOneDirectoryRevision() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User removed = createUser(tenant.id(), "replace-removed");
+		User retained = createUser(tenant.id(), "replace-retained");
+		User disabled = createUser(tenant.id(), "replace-disabled");
+		User locked = createUser(tenant.id(), "replace-locked");
+		this.users.disable(tenant.id(), disabled.id());
+		this.users.lock(tenant.id(), locked.id());
+		Group created = createGroup(tenant.id(), "Engineering");
+		Group current = this.groups.replaceMembers(tenant.id(), created.id(), created.version(),
+				Set.of(removed.id(), retained.id()));
+		long removedVersion = userVersion(tenant.id(), removed.id());
+		long retainedVersion = userVersion(tenant.id(), retained.id());
+		long disabledVersion = userVersion(tenant.id(), disabled.id());
+		long lockedVersion = userVersion(tenant.id(), locked.id());
+		String location = "https://scim.example.test/scim/v2/Groups/" + current.id();
+		String request = """
+				{
+				  "schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				  "id":"00000000-0000-0000-0000-000000000999",
+				  "meta":42,
+				  "displayName":"Platform Operators",
+				  "members":[
+				    {"value":"%s","type":"user","$ref":"Users/%s"},
+				    {"value":"%s","$ref":"/scim/v2/Users/%s"},
+				    {"value":"%s"},
+				    {"value":"%s"}
+				  ]
+				}
+				""".formatted(retained.id().toString().toUpperCase(Locale.ROOT), retained.id(),
+				disabled.id(), disabled.id(), locked.id(), retained.id());
+
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("tenant_id", other.id().toString())
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().string(HttpHeaders.LOCATION, location))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, location))
+			.andExpect(header().doesNotExist(HttpHeaders.ETAG))
+			.andExpect(jsonPath("$.schemas[0]").value(ScimGroupSchema.URN))
+			.andExpect(jsonPath("$.id").value(current.id().toString()))
+			.andExpect(jsonPath("$.displayName").value("Platform Operators"))
+			.andExpect(jsonPath("$.members", hasSize(3)))
+			.andExpect(jsonPath("$.members[*].value", containsInAnyOrder(retained.id().toString(),
+					disabled.id().toString(), locked.id().toString())))
+			.andExpect(jsonPath("$.members[*].type", containsInAnyOrder("User", "User", "User")))
+			.andExpect(jsonPath("$.meta.location").value(location))
+			.andExpect(jsonPath("$.meta.version").doesNotExist());
+
+		Group stored = this.groups.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(stored.displayName()).isEqualTo("Platform Operators");
+		assertThat(stored.version()).isEqualTo(current.version() + 1);
+		assertThat(this.groups.findMembers(tenant.id(), current.id())).extracting(GroupMembership::userId)
+			.containsExactlyInAnyOrder(retained.id(), disabled.id(), locked.id());
+		assertThat(userVersion(tenant.id(), removed.id())).isEqualTo(removedVersion + 1);
+		assertThat(userVersion(tenant.id(), retained.id())).isEqualTo(retainedVersion);
+		assertThat(userVersion(tenant.id(), disabled.id())).isEqualTo(disabledVersion + 1);
+		assertThat(userVersion(tenant.id(), locked.id())).isEqualTo(lockedVersion + 1);
+		assertThat(this.groups.findById(other.id(), current.id())).isEmpty();
+	}
+
+	@Test
+	void clearsOmittedNullAndEmptyReplacementMembersWithoutAdvancingNoOps() throws Exception {
+		Tenant tenant = createTenant();
+		User member = createUser(tenant.id(), "replace-clear-member");
+		Group created = createGroup(tenant.id(), "Engineering");
+		Group current = this.groups.replaceMembers(tenant.id(), created.id(), created.version(), Set.of(member.id()));
+		long memberVersion = userVersion(tenant.id(), member.id());
+		String authorization = bearer(token(tenant.id(), "scim.write"));
+
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(groupReplacement("Engineering", null)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.members", hasSize(0)));
+		Group cleared = this.groups.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(cleared.version()).isEqualTo(current.version() + 1);
+		assertThat(this.groups.findMembers(tenant.id(), current.id())).isEmpty();
+		assertThat(userVersion(tenant.id(), member.id())).isEqualTo(memberVersion + 1);
+
+		String explicitNull = "{\"schemas\":[\"" + ScimGroupSchema.URN
+				+ "\"],\"displayName\":\"Engineering\",\"members\":null}";
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(explicitNull))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.members", hasSize(0)));
+		assertThat(this.groups.findById(tenant.id(), current.id())).contains(cleared);
+
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(groupReplacement("Platform", "[]")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.displayName").value("Platform"))
+			.andExpect(jsonPath("$.members", hasSize(0)));
+		assertThat(this.groups.findById(tenant.id(), current.id()).orElseThrow().version())
+			.isEqualTo(cleared.version() + 1);
+	}
+
+	@Test
+	void mapsConcurrentFullReplacementsToOneSuccessAndOneConflict() throws Exception {
+		Tenant tenant = createTenant();
+		Group current = createGroup(tenant.id(), "Concurrent Replacement");
+		User first = createUser(tenant.id(), "concurrent-replace-first");
+		User second = createUser(tenant.id(), "concurrent-replace-second");
+		String authorization = bearer(token(tenant.id(), "scim.write"));
+		CountDownLatch rowLocked = new CountDownLatch(1);
+		CountDownLatch releaseRow = new CountDownLatch(1);
+		List<MvcResult> results = new ArrayList<>();
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(3)) {
+			Future<?> locker = executor.submit(() -> transactionTemplate().executeWithoutResult(status -> {
+				this.jdbcClient.sql("""
+						SELECT group_id
+						FROM groups
+						WHERE tenant_id = :tenantId AND group_id = :groupId
+						FOR UPDATE
+						""")
+					.param("tenantId", tenant.id().value())
+					.param("groupId", current.id().value())
+					.query(UUID.class)
+					.single();
+				rowLocked.countDown();
+				await(releaseRow);
+			}));
+
+			assertThat(rowLocked.await(5, TimeUnit.SECONDS)).isTrue();
+			Future<MvcResult> firstRequest = executor.submit(() -> replaceGroup(current, "First Replacement",
+					first.id(), authorization));
+			Future<MvcResult> secondRequest = executor.submit(() -> replaceGroup(current, "Second Replacement",
+					second.id(), authorization));
+			try {
+				assertThat(waitUntilGroupWritesBlocked(2)).isTrue();
+			}
+			finally {
+				releaseRow.countDown();
+			}
+			locker.get(5, TimeUnit.SECONDS);
+			results.add(firstRequest.get(10, TimeUnit.SECONDS));
+			results.add(secondRequest.get(10, TimeUnit.SECONDS));
+		}
+
+		assertThat(results).extracting(result -> result.getResponse().getStatus())
+			.containsExactlyInAnyOrder(200, 409);
+		MvcResult rejected = results.stream()
+			.filter(result -> result.getResponse().getStatus() == 409)
+			.findFirst()
+			.orElseThrow();
+		String rejectedBody = rejected.getResponse().getContentAsString();
+		assertThat(JSON.readTree(rejectedBody).get("status").stringValue()).isEqualTo("409");
+		assertThat(rejectedBody).doesNotContain(current.id().toString(), first.id().toString(), second.id().toString());
+
+		Group stored = this.groups.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(stored.version()).isEqualTo(current.version() + 1);
+		Set<UserId> storedMembers = this.groups.findMembers(tenant.id(), current.id())
+			.stream()
+			.map(GroupMembership::userId)
+			.collect(java.util.stream.Collectors.toSet());
+		if (stored.displayName().equals("First Replacement")) {
+			assertThat(storedMembers).containsExactly(first.id());
+		}
+		else {
+			assertThat(stored.displayName()).isEqualTo("Second Replacement");
+			assertThat(storedMembers).containsExactly(second.id());
+		}
+	}
+
+	@Test
+	void hidesReplacementTargetsAndNeverUpsertsGroups() throws Exception {
+		Tenant owner = createTenant();
+		Tenant other = createTenant();
+		Tenant disabled = createTenant();
+		Group visible = createGroup(owner.id(), "Visible");
+		Group deleted = createGroup(owner.id(), "Deleted");
+		Group disabledGroup = createGroup(disabled.id(), "Disabled");
+		this.groups.delete(owner.id(), deleted.id(), deleted.version());
+		this.tenants.disable(disabled.id());
+		String request = groupReplacement("Replacement", "[]");
+		long ownerGroupCount = groupCount(owner.id());
+
+		String missing = replacementNotFoundBody(owner.id(), UUID.randomUUID().toString(), request);
+		String malformed = replacementNotFoundBody(owner.id(), "not-a-uuid", request);
+		String nonCanonical = replacementNotFoundBody(owner.id(),
+				visible.id().toString().toUpperCase(Locale.ROOT), request);
+		String crossTenant = replacementNotFoundBody(other.id(), visible.id().toString(), request);
+		String deletedBody = replacementNotFoundBody(owner.id(), deleted.id().toString(), request);
+		String disabledBody = replacementNotFoundBody(disabled.id(), disabledGroup.id().toString(), request);
+
+		assertThat(List.of(malformed, nonCanonical, crossTenant, deletedBody, disabledBody)).containsOnly(missing);
+		assertThat(missing).contains(NOT_FOUND_DETAIL).doesNotContain(visible.id().toString());
+		assertThat(groupCount(owner.id())).isEqualTo(ownerGroupCount);
+	}
+
+	@Test
+	void rollsBackInvalidReplacementMembersWithoutLeakingAvailability() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User removed = createUser(tenant.id(), "replace-rollback-removed");
+		User added = createUser(tenant.id(), "replace-rollback-added");
+		User crossTenant = createUser(other.id(), "replace-rollback-cross");
+		User deleted = createUser(tenant.id(), "replace-rollback-deleted");
+		this.users.delete(tenant.id(), deleted.id());
+		Group created = createGroup(tenant.id(), "Engineering");
+		Group current = this.groups.replaceMembers(tenant.id(), created.id(), created.version(), Set.of(removed.id()));
+		long removedVersion = userVersion(tenant.id(), removed.id());
+		long addedVersion = userVersion(tenant.id(), added.id());
+		UserId missing = new UserId(new UUID(Long.MAX_VALUE, Long.MAX_VALUE));
+		String request = groupReplacement("Must Not Persist",
+				"[{\"value\":\"" + added.id() + "\"},{\"value\":\"" + missing + "\"}]");
+
+		String missingBody = invalidReplacementMemberBody(tenant.id(), current.id().toString(), request);
+		Group unchanged = this.groups.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(unchanged).isEqualTo(current);
+		assertThat(this.groups.findMembers(tenant.id(), current.id())).extracting(GroupMembership::userId)
+			.containsExactly(removed.id());
+		assertThat(userVersion(tenant.id(), removed.id())).isEqualTo(removedVersion);
+		assertThat(userVersion(tenant.id(), added.id())).isEqualTo(addedVersion);
+
+		String crossBody = invalidReplacementMemberBody(tenant.id(), current.id().toString(),
+				groupReplacement("Secret Cross", "[{\"value\":\"" + crossTenant.id() + "\"}]"));
+		String deletedBody = invalidReplacementMemberBody(tenant.id(), current.id().toString(),
+				groupReplacement("Secret Deleted", "[{\"value\":\"" + deleted.id() + "\"}]"));
+		assertThat(List.of(crossBody, deletedBody)).containsOnly(missingBody);
+		assertThat(crossBody).doesNotContain("Secret", crossTenant.id().toString(), deleted.id().toString());
+	}
+
+	@Test
+	void validatesReplacementPreconditionsProjectionScopeAndDuplicateKeys() throws Exception {
+		Tenant tenant = createTenant();
+		Group current = createGroup(tenant.id(), "Engineering");
+		String request = groupReplacement("Platform", "[]");
+		String authorization = bearer(token(tenant.id(), "scim.write"));
+		String location = "https://scim.example.test/scim/v2/Groups/" + current.id();
+
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.header(HttpHeaders.IF_MATCH, "*")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("attributes", "displayName")
+			.queryParam("excludedAttributes", "members")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isForbidden());
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content("{\"schemas\":[\"" + ScimGroupSchema.URN
+					+ "\"],\"displayName\":\"First\",\"displayName\":\"Second\"}"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidSyntax"));
+
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("attributes", "displayName")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isOk())
+			.andExpect(header().string(HttpHeaders.LOCATION, location))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, location))
+			.andExpect(jsonPath("$.schemas[0]").value(ScimGroupSchema.URN))
+			.andExpect(jsonPath("$.id").value(current.id().toString()))
+			.andExpect(jsonPath("$.displayName").value("Platform"))
+			.andExpect(jsonPath("$.members").doesNotExist())
+			.andExpect(jsonPath("$.meta").doesNotExist());
+		this.mockMvc.perform(put("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("excludedAttributes", "members,meta")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.schemas[0]").value(ScimGroupSchema.URN))
+			.andExpect(jsonPath("$.id").value(current.id().toString()))
+			.andExpect(jsonPath("$.displayName").value("Platform"))
+			.andExpect(jsonPath("$.members").doesNotExist())
+			.andExpect(jsonPath("$.meta").doesNotExist());
+	}
+
+	@Test
 	void listsTenantScopedGroupsWithPaginationFiltersAndProjectedMembers() throws Exception {
 		Tenant tenant = createTenant();
 		Tenant other = createTenant();
@@ -563,6 +881,36 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 		return result.getResponse().getContentAsString();
 	}
 
+	private String replacementNotFoundBody(TenantId tenantId, String groupId, String request) throws Exception {
+		MvcResult result = this.mockMvc.perform(put("/scim/v2/Groups/{id}", groupId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isNotFound())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("404"))
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
+			.andReturn();
+		return result.getResponse().getContentAsString();
+	}
+
+	private String invalidReplacementMemberBody(TenantId tenantId, String groupId, String request) throws Exception {
+		MvcResult result = this.mockMvc.perform(put("/scim/v2/Groups/{id}", groupId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("400"))
+			.andExpect(jsonPath("$.scimType").value("invalidValue"))
+			.andReturn();
+		return result.getResponse().getContentAsString();
+	}
+
 	private long groupCount(TenantId tenantId) {
 		return this.jdbcClient.sql("SELECT COUNT(*) FROM groups WHERE tenant_id = :tenantId")
 			.param("tenantId", tenantId.value())
@@ -577,6 +925,57 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 			.single();
 	}
 
+	private long userVersion(TenantId tenantId, UserId userId) {
+		return this.users.findById(tenantId, userId).orElseThrow().version();
+	}
+
+	private MvcResult replaceGroup(Group group, String displayName, UserId memberId, String authorization)
+			throws Exception {
+		return this.mockMvc.perform(put("/scim/v2/Groups/{id}", group.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(groupReplacement(displayName, "[{\"value\":\"" + memberId + "\"}]")))
+			.andReturn();
+	}
+
+	private boolean waitUntilGroupWritesBlocked(long expectedBlockers) throws InterruptedException {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+		do {
+			long blockers = this.jdbcClient.sql("""
+					SELECT count(*)
+					FROM pg_stat_activity
+					WHERE wait_event_type = 'Lock'
+					  AND cardinality(pg_blocking_pids(pid)) > 0
+					  AND query ILIKE '%FROM groups%'
+					""")
+				.query(Long.class)
+				.single();
+			if (blockers >= expectedBlockers) {
+				return true;
+			}
+			Thread.sleep(25);
+		}
+		while (System.nanoTime() < deadline);
+		return false;
+	}
+
+	private TransactionTemplate transactionTemplate() {
+		return new TransactionTemplate(this.transactionManager);
+	}
+
+	private static void await(CountDownLatch latch) {
+		try {
+			if (!latch.await(5, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("Timed out waiting to release the group row lock");
+			}
+		}
+		catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Interrupted while waiting to release the group row lock", exception);
+		}
+	}
+
 	private static String memberRequest(UserId userId) {
 		return """
 				{
@@ -585,6 +984,12 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 				  "members":[{"value":"%s"}]
 				}
 				""".formatted(userId);
+	}
+
+	private static String groupReplacement(String displayName, String membersJson) {
+		String members = membersJson == null ? "" : ",\"members\":" + membersJson;
+		return "{\"schemas\":[\"" + ScimGroupSchema.URN + "\"],\"displayName\":\"" + displayName
+				+ "\"" + members + "}";
 	}
 
 	private Tenant createTenant() {

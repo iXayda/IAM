@@ -20,6 +20,7 @@ import com.ixayda.iam.group.GroupNotFoundException;
 import com.ixayda.iam.group.GroupOperations;
 import com.ixayda.iam.group.GroupPage;
 import com.ixayda.iam.group.GroupStatus;
+import com.ixayda.iam.group.ReplaceGroupRequest;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.UserId;
@@ -103,6 +104,43 @@ class DefaultGroupOperations implements GroupOperations {
 		requireExpectedVersion(current, expectedVersion);
 		Group changed = current.updateDisplayName(displayName, transitionTime(current));
 		return changed == current ? current : this.repository.updateDisplayName(current, changed);
+	}
+
+	@Override
+	@Transactional
+	public Group replace(TenantId tenantId, GroupId groupId, long expectedVersion, ReplaceGroupRequest request) {
+		validateExpectedVersion(expectedVersion);
+		Objects.requireNonNull(request, "Replace group request must not be null");
+		if (request.memberIds().size() > GroupOperations.MAX_MEMBERS_PER_GROUP) {
+			throw new GroupMembershipLimitExceededException(tenantId, groupId, GroupOperations.MAX_MEMBERS_PER_GROUP);
+		}
+		this.tenants.requireActiveForWrite(tenantId);
+		Group current = requireGroupForUpdate(tenantId, groupId);
+		requireExpectedVersion(current, expectedVersion);
+		Set<GroupMembership> existing = this.memberships.findByGroup(tenantId, groupId);
+		Set<UserId> existingUserIds = existing.stream().map(GroupMembership::userId)
+			.collect(Collectors.toUnmodifiableSet());
+		boolean membersChanged = !existingUserIds.equals(request.memberIds());
+		Set<UserId> affectedUserIds = new HashSet<>(existingUserIds);
+		affectedUserIds.addAll(request.memberIds());
+		affectedUserIds.stream().sorted(USER_ID_ORDER).forEach(userId -> {
+			if (membersChanged && existingUserIds.contains(userId) != request.memberIds().contains(userId)) {
+				this.users.recordMembershipChangeForWrite(tenantId, userId);
+			}
+			else {
+				this.users.requireNotDeletedForWrite(tenantId, userId);
+			}
+		});
+		boolean displayNameChanged = !current.displayName().equals(request.displayName());
+		if (!displayNameChanged && !membersChanged) {
+			return current;
+		}
+		Instant changedAt = transitionTime(current);
+		Group changed = current.replace(request.displayName(), membersChanged, changedAt);
+		if (membersChanged) {
+			this.memberships.replace(current, existing, request.memberIds(), changedAt);
+		}
+		return this.repository.replace(current, changed);
 	}
 
 	@Override

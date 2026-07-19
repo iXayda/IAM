@@ -6,6 +6,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.ixayda.iam.group.Group;
+import com.ixayda.iam.group.GroupConcurrentUpdateException;
 import com.ixayda.iam.group.GroupDirectoryQuery;
 import com.ixayda.iam.group.GroupId;
 import com.ixayda.iam.group.GroupMembership;
@@ -19,6 +20,7 @@ import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.UserNotFoundException;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
+import com.unboundid.scim2.common.exceptions.ResourceConflictException;
 import com.unboundid.scim2.common.exceptions.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +40,19 @@ class ScimGroupService {
 	}
 
 	ScimGroupView find(TenantId tenantId, String groupId) throws ResourceNotFoundException, BadRequestException {
+		Group group = findGroup(tenantId, groupId);
+		try {
+			return new ScimGroupView(group, this.groups.findMembers(tenantId, group.id()));
+		}
+		catch (GroupNotFoundException exception) {
+			throw notFound();
+		}
+		catch (GroupMembershipLimitExceededException exception) {
+			throw tooMany();
+		}
+	}
+
+	private Group findGroup(TenantId tenantId, String groupId) throws ResourceNotFoundException {
 		GroupId parsedId;
 		try {
 			parsedId = GroupId.from(groupId);
@@ -49,16 +64,7 @@ class ScimGroupService {
 		catch (IllegalArgumentException | TenantDisabledException | TenantNotFoundException exception) {
 			throw notFound();
 		}
-		Group group = this.groups.findById(tenantId, parsedId).orElseThrow(ScimGroupService::notFound);
-		try {
-			return new ScimGroupView(group, this.groups.findMembers(tenantId, parsedId));
-		}
-		catch (GroupNotFoundException exception) {
-			throw notFound();
-		}
-		catch (GroupMembershipLimitExceededException exception) {
-			throw tooMany();
-		}
+		return this.groups.findById(tenantId, parsedId).orElseThrow(ScimGroupService::notFound);
 	}
 
 	ScimGroupPage findPage(TenantId tenantId, GroupDirectoryQuery query, boolean includeMembers)
@@ -97,6 +103,25 @@ class ScimGroupService {
 			return new ScimGroupView(created, this.groups.findMembers(tenantId, created.id()));
 		}
 		catch (TenantDisabledException | TenantNotFoundException exception) {
+			throw notFound();
+		}
+		catch (UserNotFoundException | GroupMembershipLimitExceededException exception) {
+			throw invalidMembers();
+		}
+	}
+
+	@Transactional(rollbackFor = com.unboundid.scim2.common.exceptions.ScimException.class)
+	public ScimGroupView replace(TenantId tenantId, String groupId, ScimGroupCreateRequest command)
+			throws ResourceConflictException, ResourceNotFoundException, BadRequestException {
+		Group current = findGroup(tenantId, groupId);
+		try {
+			Group replaced = this.groups.replace(tenantId, current.id(), current.version(), command.replacement());
+			return new ScimGroupView(replaced, this.groups.findMembers(tenantId, replaced.id()));
+		}
+		catch (GroupConcurrentUpdateException exception) {
+			throw new ResourceConflictException("The SCIM Group changed during replacement.");
+		}
+		catch (TenantDisabledException | TenantNotFoundException | GroupNotFoundException exception) {
 			throw notFound();
 		}
 		catch (UserNotFoundException | GroupMembershipLimitExceededException exception) {

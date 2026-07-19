@@ -21,6 +21,8 @@ public interface GroupOperations {
 
 	Group updateDisplayName(TenantId tenantId, GroupId groupId, long expectedVersion, String displayName);
 
+	Group replace(TenantId tenantId, GroupId groupId, long expectedVersion, ReplaceGroupRequest request);
+
 	Group delete(TenantId tenantId, GroupId groupId, long expectedVersion);
 
 	Set<GroupMembership> findMembers(TenantId tenantId, GroupId groupId);

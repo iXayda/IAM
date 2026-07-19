@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import com.ixayda.iam.group.CreateGroupRequest;
 import com.ixayda.iam.group.GroupOperations;
+import com.ixayda.iam.group.ReplaceGroupRequest;
 import com.ixayda.iam.user.UserId;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
 import com.unboundid.scim2.common.types.Member;
@@ -45,6 +46,8 @@ class ScimGroupCreateRequestTests {
 
 		assertThat(parsed.request()).isEqualTo(new CreateGroupRequest("Engineering"));
 		assertThat(parsed.memberIds()).containsExactlyInAnyOrder(FIRST_USER_ID, SECOND_USER_ID);
+		assertThat(parsed.replacement()).isEqualTo(
+				new ReplaceGroupRequest("Engineering", Set.of(FIRST_USER_ID, SECOND_USER_ID)));
 	}
 
 	@Test

@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.UUID;
 
 import com.ixayda.iam.tenant.TenantId;
+import com.ixayda.iam.user.UserId;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
@@ -83,6 +85,21 @@ class GroupDomainTests {
 		assertThat(changed.status()).isEqualTo(GroupStatus.ACTIVE);
 		assertThat(changed.version()).isOne();
 		assertThat(changed.updatedAt()).isEqualTo(CREATED_AT.plusSeconds(1));
+	}
+
+	@Test
+	void replacesTheDisplayNameAndMembersWithOneDirectoryRevision() {
+		Group original = group("Engineering", GroupStatus.ACTIVE, 4, CREATED_AT);
+		UserId memberId = UserId.random();
+		ReplaceGroupRequest request = new ReplaceGroupRequest(" Platform ", Set.of(memberId));
+
+		Group replaced = original.replace(request.displayName(), true, CREATED_AT.plusSeconds(1));
+
+		assertThat(replaced.displayName()).isEqualTo("Platform");
+		assertThat(replaced.version()).isEqualTo(5);
+		assertThat(replaced.updatedAt()).isEqualTo(CREATED_AT.plusSeconds(1));
+		assertThat(request.toString()).doesNotContain("Platform", memberId.toString());
+		assertThat(replaced.replace(" Platform ", false, CREATED_AT.plusSeconds(2))).isSameAs(replaced);
 	}
 
 	@Test

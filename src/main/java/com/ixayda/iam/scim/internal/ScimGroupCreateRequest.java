@@ -10,6 +10,7 @@ import java.util.Set;
 
 import com.ixayda.iam.group.CreateGroupRequest;
 import com.ixayda.iam.group.GroupOperations;
+import com.ixayda.iam.group.ReplaceGroupRequest;
 import com.ixayda.iam.user.UserId;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
 import com.unboundid.scim2.common.types.Member;
@@ -31,6 +32,10 @@ record ScimGroupCreateRequest(CreateGroupRequest request, Set<UserId> memberIds)
 
 	ScimGroupCreateRequest {
 		memberIds = Set.copyOf(memberIds);
+	}
+
+	ReplaceGroupRequest replacement() {
+		return new ReplaceGroupRequest(this.request.displayName(), this.memberIds);
 	}
 
 	static ScimGroupCreateRequest parse(ObjectNode source, ScimJsonCodec codec, ScimProperties properties)

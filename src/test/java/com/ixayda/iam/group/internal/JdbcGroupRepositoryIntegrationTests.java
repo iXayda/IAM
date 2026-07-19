@@ -122,6 +122,16 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void replacesGroupsWithOneTenantScopedOptimisticUpdate() {
+		Group current = insert(group(TenantId.DEFAULT, "Engineering", GroupStatus.ACTIVE, 0, CREATED_AT));
+		Group replaced = current.replace("Platform", true, CREATED_AT.plusSeconds(1));
+
+		assertThat(replace(current, replaced)).isEqualTo(replaced);
+		assertThat(this.repository.findById(TenantId.DEFAULT, current.id())).contains(replaced);
+		assertThatThrownBy(() -> replace(current, replaced)).isInstanceOf(GroupConcurrentUpdateException.class);
+	}
+
+	@Test
 	void rejectsForgedGroupChanges() {
 		Group current = group(TenantId.DEFAULT, "Engineering", GroupStatus.ACTIVE, 0, CREATED_AT);
 		Group moved = new Group(current.id(), SECOND_TENANT_ID, "Platform", GroupStatus.ACTIVE, 1,
@@ -145,6 +155,9 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> updateMembers(current, skippedMemberVersion))
 			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> replace(current, moved)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> replace(current, changedStatus)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> replace(current, skippedVersion)).isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test
@@ -153,6 +166,9 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 
 		assertThatThrownBy(() -> this.repository.insert(group)).isInstanceOf(IllegalTransactionStateException.class);
 		assertThatThrownBy(() -> this.repository.updateMembers(group, group.membersChanged(CREATED_AT.plusSeconds(1))))
+			.isInstanceOf(IllegalTransactionStateException.class);
+		assertThatThrownBy(() -> this.repository.replace(group,
+				group.replace("Platform", true, CREATED_AT.plusSeconds(1))))
 			.isInstanceOf(IllegalTransactionStateException.class);
 		insert(group);
 		assertThatThrownBy(() -> this.repository.findByIdForUpdate(TenantId.DEFAULT, group.id()))
@@ -188,6 +204,10 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 
 	private Group updateMembers(Group current, Group changed) {
 		return transactionTemplate().execute(status -> this.repository.updateMembers(current, changed));
+	}
+
+	private Group replace(Group current, Group changed) {
+		return transactionTemplate().execute(status -> this.repository.replace(current, changed));
 	}
 
 	private TransactionTemplate transactionTemplate() {

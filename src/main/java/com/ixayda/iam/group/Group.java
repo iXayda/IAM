@@ -34,17 +34,7 @@ public record Group(GroupId id, TenantId tenantId, String displayName, GroupStat
 	}
 
 	public Group updateDisplayName(String replacement, Instant changedAt) {
-		String normalized = normalizeDisplayName(replacement);
-		Objects.requireNonNull(changedAt, "Group display name change time must not be null");
-		if (this.displayName.equals(normalized)) {
-			return this;
-		}
-		if (isDeleted()) {
-			throw new IllegalStateException("Deleted group display name cannot be changed");
-		}
-		validateChangeTime(changedAt);
-		return new Group(this.id, this.tenantId, normalized, this.status, Math.incrementExact(this.version),
-				this.createdAt, changedAt);
+		return replace(replacement, false, changedAt);
 	}
 
 	public Group delete(Instant changedAt) {
@@ -58,13 +48,22 @@ public record Group(GroupId id, TenantId tenantId, String displayName, GroupStat
 	}
 
 	public Group membersChanged(Instant changedAt) {
+		return replace(this.displayName, true, changedAt);
+	}
+
+	public Group replace(String replacementDisplayName, boolean membersChanged, Instant changedAt) {
+		String normalizedDisplayName = normalizeDisplayName(replacementDisplayName);
 		Objects.requireNonNull(changedAt, "Group membership change time must not be null");
+		boolean displayNameChanged = !this.displayName.equals(normalizedDisplayName);
+		if (!displayNameChanged && !membersChanged) {
+			return this;
+		}
 		if (isDeleted()) {
-			throw new IllegalStateException("Deleted group members cannot be changed");
+			throw new IllegalStateException("Deleted group cannot be replaced");
 		}
 		validateChangeTime(changedAt);
-		return new Group(this.id, this.tenantId, this.displayName, this.status, Math.incrementExact(this.version),
-				this.createdAt, changedAt);
+		return new Group(this.id, this.tenantId, normalizedDisplayName, this.status,
+				Math.incrementExact(this.version), this.createdAt, changedAt);
 	}
 
 	@Override

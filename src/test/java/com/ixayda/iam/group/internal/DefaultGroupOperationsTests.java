@@ -24,6 +24,7 @@ import com.ixayda.iam.group.GroupMembershipLimitExceededException;
 import com.ixayda.iam.group.GroupNotFoundException;
 import com.ixayda.iam.group.GroupOperations;
 import com.ixayda.iam.group.GroupStatus;
+import com.ixayda.iam.group.ReplaceGroupRequest;
 import com.ixayda.iam.tenant.Tenant;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantOperations;
@@ -125,6 +126,50 @@ class DefaultGroupOperationsTests {
 	}
 
 	@Test
+	void replacesTheDisplayNameAndMembersWithOneStableWriteSequence() {
+		Group current = group("Engineering", GroupStatus.ACTIVE, 0, CREATED_AT);
+		Group changed = group("Platform", GroupStatus.ACTIVE, 1, CREATED_AT.plusSeconds(1));
+		Set<GroupMembership> existing = Set.of(membership(FIRST_USER_ID, CREATED_AT));
+		ReplaceGroupRequest replacement =
+				new ReplaceGroupRequest("Platform", Set.of(FIRST_USER_ID, SECOND_USER_ID));
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, GROUP_ID)).thenReturn(Optional.of(current));
+		when(this.memberships.findByGroup(TenantId.DEFAULT, GROUP_ID)).thenReturn(existing);
+		when(this.timeSource.now()).thenReturn(CREATED_AT.plusSeconds(1));
+		when(this.repository.replace(current, changed)).thenReturn(changed);
+
+		assertThat(this.operations.replace(TenantId.DEFAULT, GROUP_ID, 0, replacement)).isEqualTo(changed);
+
+		InOrder order = inOrder(this.tenants, this.repository, this.memberships, this.users, this.timeSource);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForUpdate(TenantId.DEFAULT, GROUP_ID);
+		order.verify(this.memberships).findByGroup(TenantId.DEFAULT, GROUP_ID);
+		order.verify(this.users).requireNotDeletedForWrite(TenantId.DEFAULT, FIRST_USER_ID);
+		order.verify(this.users).recordMembershipChangeForWrite(TenantId.DEFAULT, SECOND_USER_ID);
+		order.verify(this.timeSource).now();
+		order.verify(this.memberships).replace(current, existing, replacement.memberIds(), CREATED_AT.plusSeconds(1));
+		order.verify(this.repository).replace(current, changed);
+	}
+
+	@Test
+	void treatsAnEquivalentReplacementAsANoOpAfterValidatingMembers() {
+		Group current = group("Engineering", GroupStatus.ACTIVE, 4, CREATED_AT.plusSeconds(4));
+		Set<GroupMembership> existing = Set.of(membership(FIRST_USER_ID, CREATED_AT));
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, GROUP_ID)).thenReturn(Optional.of(current));
+		when(this.memberships.findByGroup(TenantId.DEFAULT, GROUP_ID)).thenReturn(existing);
+
+		Group result = this.operations.replace(TenantId.DEFAULT, GROUP_ID, 4,
+				new ReplaceGroupRequest(" Engineering ", Set.of(FIRST_USER_ID)));
+
+		assertThat(result).isSameAs(current);
+		verify(this.users).requireNotDeletedForWrite(TenantId.DEFAULT, FIRST_USER_ID);
+		verify(this.memberships, never()).replace(any(), any(), any(), any());
+		verify(this.repository, never()).replace(any(), any());
+		verifyNoInteractions(this.timeSource);
+	}
+
+	@Test
 	void readsMembersOnlyWhenTheRepositoryFindsAnActiveGroup() {
 		GroupMembership membership = membership(FIRST_USER_ID, CREATED_AT);
 		when(this.memberships.findByActiveGroup(TenantId.DEFAULT, GROUP_ID))
@@ -147,6 +192,9 @@ class DefaultGroupOperationsTests {
 			.isInstanceOf(GroupMembershipLimitExceededException.class)
 			.extracting("tenantId", "groupId", "maximumMembers")
 			.containsExactly(TenantId.DEFAULT, GROUP_ID, GroupOperations.MAX_MEMBERS_PER_GROUP);
+		assertThatThrownBy(() -> this.operations.replace(TenantId.DEFAULT, GROUP_ID, 0,
+				new ReplaceGroupRequest("Engineering", members)))
+			.isInstanceOf(GroupMembershipLimitExceededException.class);
 		verifyNoInteractions(this.repository, this.tenants, this.users, this.memberships, this.timeSource);
 	}
 
