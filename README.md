@@ -130,6 +130,7 @@ IAM 不负责：
 - 有界的 SCIM Groups 集合分页，以及 `id`、`displayName` 精确查询
 - 租户隔离的 SCIM User 创建、受限可写属性和不泄露标识的唯一性冲突响应
 - 租户隔离的 SCIM Group 创建、完整替换与原子局部修改，以及规范的 direct User 成员关系
+- 租户隔离的 SCIM Group 软删除、成员关系清理和统一的资源不可见响应
 - 租户隔离的 SCIM User 完整替换、原子局部修改与软删除，以及标识更新和内部锁定状态保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
@@ -247,6 +248,7 @@ GET /scim/v2/Groups/{id}
 POST /scim/v2/Groups
 PUT /scim/v2/Groups/{id}
 PATCH /scim/v2/Groups/{id}
+DELETE /scim/v2/Groups/{id}
 ```
 
 discovery 接口匿名开放。Users 和 Groups 读取使用带 `scim.read` scope 的机器 token，资源写入使用
@@ -279,6 +281,8 @@ URN 必填；`members` 可省略，每项必须引用当前租户内未删除的
 Group PATCH 按请求顺序原子执行 `add`、`remove` 和 `replace`，支持无 path 属性对象、`displayName`、
 完整 `members` 集合以及 `members[value eq "User UUID"]` 选择。删除不存在的成员是成功的 no-op；过滤
 replace 未命中时返回固定 `noTarget`。成员子属性不可单独修改，任一操作或成员校验失败时全部回滚。
+DELETE 使用 `scim.write`，成功时返回空的 `204 No Content`；Group 被软删除，direct User memberships
+被清理，受影响 User 的 directory revision 同步推进，之后的读取、修改和重复删除均返回 `404`。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：

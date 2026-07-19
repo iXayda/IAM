@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Tenant-scoped SCIM Group deletion with strict empty responses, atomic membership cleanup, directory revision updates, and confidential failures.
 - Atomic, ordered SCIM Group PATCH operations with SDK-backed paths, bounded direct User membership changes, and confidential failures.
 - Tenant-scoped SCIM Group replacement with atomic profile and direct User membership updates, canonical responses, and confidential failures.
 - Tenant-scoped SCIM Group creation with atomic, bounded direct User members, canonical references, and confidential member validation.

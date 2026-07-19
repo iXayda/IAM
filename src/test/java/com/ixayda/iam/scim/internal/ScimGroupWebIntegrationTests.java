@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.group.CreateGroupRequest;
 import com.ixayda.iam.group.Group;
+import com.ixayda.iam.group.GroupId;
 import com.ixayda.iam.group.GroupMembership;
 import com.ixayda.iam.group.GroupOperations;
 import com.ixayda.iam.tenant.CreateTenantRequest;
@@ -51,6 +52,7 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -673,6 +675,133 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void deletesATenantScopedGroupAndItsMembershipsWithAnEmptyResponse() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User first = createUser(tenant.id(), "delete-group-first");
+		User second = createUser(tenant.id(), "delete-group-second");
+		Group created = createGroup(tenant.id(), "Delete Group");
+		Group current = this.groups.replaceMembers(tenant.id(), created.id(), created.version(),
+				Set.of(first.id(), second.id()));
+		long firstVersion = userVersion(tenant.id(), first.id());
+		long secondVersion = userVersion(tenant.id(), second.id());
+
+		this.mockMvc.perform(delete("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("tenant_id", other.id().toString())
+			.accept(SCIM_JSON))
+			.andExpect(status().isNoContent())
+			.andExpect(content().string(""))
+			.andExpect(header().doesNotExist(HttpHeaders.CONTENT_TYPE))
+			.andExpect(header().doesNotExist(HttpHeaders.LOCATION))
+			.andExpect(header().doesNotExist(HttpHeaders.CONTENT_LOCATION))
+			.andExpect(header().doesNotExist(HttpHeaders.ETAG));
+
+		assertThat(this.groups.findById(tenant.id(), current.id())).isEmpty();
+		assertThat(storedGroupStatus(tenant.id(), current.id())).isEqualTo("deleted");
+		assertThat(storedGroupVersion(tenant.id(), current.id())).isEqualTo(current.version() + 1);
+		assertThat(groupMembershipCount(tenant.id(), current.id())).isZero();
+		assertThat(userVersion(tenant.id(), first.id())).isEqualTo(firstVersion + 1);
+		assertThat(userVersion(tenant.id(), second.id())).isEqualTo(secondVersion + 1);
+		this.mockMvc.perform(get("/scim/v2/Groups/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL));
+		assertThat(deleteNotFoundBody(tenant.id(), current.id().toString())).contains(NOT_FOUND_DETAIL);
+	}
+
+	@Test
+	void rejectsInvisibleConditionalAndReadOnlyGroupDeletesWithoutChangingData() throws Exception {
+		Tenant owner = createTenant();
+		Tenant other = createTenant();
+		Tenant disabled = createTenant();
+		Group visible = createGroup(owner.id(), "Visible");
+		Group deleted = createGroup(owner.id(), "Deleted");
+		Group disabledGroup = createGroup(disabled.id(), "Disabled");
+		this.groups.delete(owner.id(), deleted.id(), deleted.version());
+		this.tenants.disable(disabled.id());
+
+		this.mockMvc.perform(delete("/scim/v2/Groups/{id}", visible.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(owner.id(), "scim.write")))
+			.header(HttpHeaders.IF_MATCH, "*")
+			.accept(SCIM_JSON))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+		this.mockMvc.perform(delete("/scim/v2/Groups/{id}", visible.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(owner.id(), "scim.read")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isForbidden());
+
+		String missing = deleteNotFoundBody(owner.id(), UUID.randomUUID().toString());
+		String malformed = deleteNotFoundBody(owner.id(), "not-a-uuid");
+		String nonCanonical = deleteNotFoundBody(owner.id(),
+				visible.id().toString().toUpperCase(Locale.ROOT));
+		String crossTenant = deleteNotFoundBody(other.id(), visible.id().toString());
+		String alreadyDeleted = deleteNotFoundBody(owner.id(), deleted.id().toString());
+		String disabledBody = deleteNotFoundBody(disabled.id(), disabledGroup.id().toString());
+		assertThat(List.of(malformed, nonCanonical, crossTenant, alreadyDeleted, disabledBody)).containsOnly(missing);
+		assertThat(missing).contains(NOT_FOUND_DETAIL).doesNotContain(visible.id().toString());
+		assertThat(this.groups.findById(owner.id(), visible.id())).contains(visible);
+	}
+
+	@Test
+	void commitsOnlyOneOfTwoConcurrentGroupDeletes() throws Exception {
+		Tenant tenant = createTenant();
+		User member = createUser(tenant.id(), "concurrent-delete-member");
+		Group created = createGroup(tenant.id(), "Concurrent Delete");
+		Group current = this.groups.replaceMembers(tenant.id(), created.id(), created.version(), Set.of(member.id()));
+		long memberVersion = userVersion(tenant.id(), member.id());
+		String authorization = bearer(token(tenant.id(), "scim.write"));
+		CountDownLatch rowLocked = new CountDownLatch(1);
+		CountDownLatch releaseRow = new CountDownLatch(1);
+		List<MvcResult> results = new ArrayList<>();
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(3)) {
+			Future<?> locker = executor.submit(() -> transactionTemplate().executeWithoutResult(status -> {
+				this.jdbcClient.sql("""
+						SELECT group_id
+						FROM groups
+						WHERE tenant_id = :tenantId AND group_id = :groupId
+						FOR UPDATE
+						""")
+					.param("tenantId", tenant.id().value())
+					.param("groupId", current.id().value())
+					.query(UUID.class)
+					.single();
+				rowLocked.countDown();
+				await(releaseRow);
+			}));
+
+			assertThat(rowLocked.await(5, TimeUnit.SECONDS)).isTrue();
+			Future<MvcResult> first = executor.submit(() -> deleteGroup(current, authorization));
+			Future<MvcResult> second = executor.submit(() -> deleteGroup(current, authorization));
+			try {
+				assertThat(waitUntilGroupWritesBlocked(2)).isTrue();
+			}
+			finally {
+				releaseRow.countDown();
+			}
+			locker.get(5, TimeUnit.SECONDS);
+			results.add(first.get(10, TimeUnit.SECONDS));
+			results.add(second.get(10, TimeUnit.SECONDS));
+		}
+
+		assertThat(results).extracting(result -> result.getResponse().getStatus())
+			.containsExactlyInAnyOrder(204, 404);
+		MvcResult rejected = results.stream()
+			.filter(result -> result.getResponse().getStatus() == 404)
+			.findFirst()
+			.orElseThrow();
+		assertThat(rejected.getResponse().getContentAsString())
+			.contains(NOT_FOUND_DETAIL)
+			.doesNotContain(current.id().toString());
+		assertThat(storedGroupVersion(tenant.id(), current.id())).isEqualTo(current.version() + 1);
+		assertThat(groupMembershipCount(tenant.id(), current.id())).isZero();
+		assertThat(userVersion(tenant.id(), member.id())).isEqualTo(memberVersion + 1);
+	}
+
+	@Test
 	void clearsOmittedNullAndEmptyReplacementMembersWithoutAdvancingNoOps() throws Exception {
 		Tenant tenant = createTenant();
 		User member = createUser(tenant.id(), "replace-clear-member");
@@ -1187,6 +1316,19 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 		return result.getResponse().getContentAsString();
 	}
 
+	private String deleteNotFoundBody(TenantId tenantId, String groupId) throws Exception {
+		MvcResult result = this.mockMvc.perform(delete("/scim/v2/Groups/{id}", groupId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isNotFound())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("404"))
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
+			.andReturn();
+		return result.getResponse().getContentAsString();
+	}
+
 	private long groupCount(TenantId tenantId) {
 		return this.jdbcClient.sql("SELECT COUNT(*) FROM groups WHERE tenant_id = :tenantId")
 			.param("tenantId", tenantId.value())
@@ -1198,6 +1340,34 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 		return this.jdbcClient.sql("SELECT COUNT(*) FROM group_memberships WHERE tenant_id = :tenantId")
 			.param("tenantId", tenantId.value())
 			.query(Long.class)
+			.single();
+	}
+
+	private long groupMembershipCount(TenantId tenantId, GroupId groupId) {
+		return this.jdbcClient.sql("""
+				SELECT COUNT(*)
+				FROM group_memberships
+				WHERE tenant_id = :tenantId AND group_id = :groupId
+				""")
+			.param("tenantId", tenantId.value())
+			.param("groupId", groupId.value())
+			.query(Long.class)
+			.single();
+	}
+
+	private long storedGroupVersion(TenantId tenantId, GroupId groupId) {
+		return this.jdbcClient.sql("SELECT version FROM groups WHERE tenant_id = :tenantId AND group_id = :groupId")
+			.param("tenantId", tenantId.value())
+			.param("groupId", groupId.value())
+			.query(Long.class)
+			.single();
+	}
+
+	private String storedGroupStatus(TenantId tenantId, GroupId groupId) {
+		return this.jdbcClient.sql("SELECT status FROM groups WHERE tenant_id = :tenantId AND group_id = :groupId")
+			.param("tenantId", tenantId.value())
+			.param("groupId", groupId.value())
+			.query(String.class)
 			.single();
 	}
 
@@ -1221,6 +1391,13 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 			.contentType(SCIM_JSON)
 			.accept(SCIM_JSON)
 			.content(groupPatch("replace", "displayName", "\"" + displayName + "\"")))
+			.andReturn();
+	}
+
+	private MvcResult deleteGroup(Group group, String authorization) throws Exception {
+		return this.mockMvc.perform(delete("/scim/v2/Groups/{id}", group.id())
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.accept(SCIM_JSON))
 			.andReturn();
 	}
 

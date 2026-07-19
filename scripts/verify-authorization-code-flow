@@ -612,8 +612,40 @@ status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-ou
 		--arg user_location "${created_scim_user_location}" \
 		'.id == $id and .displayName == "Release Patched Group"
 		 and .members == [{value:$user_id,type:"User",("$ref"):$user_location}]' \
+			"${body}" >/dev/null \
+		|| fail "Patched SCIM Group was not readable through the native service"
+
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request DELETE --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "403" ]] && jq -e '.status == "403"' "${body}" >/dev/null \
+	|| fail "SCIM Group delete was not rejected for a read-only token"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --request DELETE --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "204" && ! -s "${body}" \
+	&& -z "$(header_value Content-Type "${headers}")" \
+	&& -z "$(header_value Location "${headers}")" \
+	&& -z "$(header_value Content-Location "${headers}")" \
+	&& -z "$(header_value ETag "${headers}")" ]] \
+	|| fail "SCIM write token did not delete a tenant group with a strict empty response: HTTP ${status}"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "404" ]] \
+	&& jq -e '.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "404"' \
 		"${body}" >/dev/null \
-	|| fail "Patched SCIM Group was not readable through the native service"
+	|| fail "Deleted SCIM Group remained visible through the native service"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request DELETE --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "404" ]] \
+	&& jq -e '.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "404"' \
+		"${body}" >/dev/null \
+	|| fail "Repeated SCIM Group delete did not return a protocol not-found response"
 
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request DELETE --header 'Accept: application/scim+json' \

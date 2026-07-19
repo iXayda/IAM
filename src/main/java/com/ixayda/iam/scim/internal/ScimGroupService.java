@@ -159,6 +159,20 @@ class ScimGroupService {
 		}
 	}
 
+	public void delete(TenantId tenantId, String groupId)
+			throws ResourceConflictException, ResourceNotFoundException {
+		Group current = findGroup(tenantId, groupId);
+		try {
+			this.groups.delete(tenantId, current.id(), current.version());
+		}
+		catch (GroupConcurrentUpdateException exception) {
+			throw new ResourceConflictException("The SCIM Group changed during deletion.");
+		}
+		catch (TenantDisabledException | TenantNotFoundException | GroupNotFoundException exception) {
+			throw notFound();
+		}
+	}
+
 	private static ResourceNotFoundException notFound() {
 		return new ResourceNotFoundException(NOT_FOUND_DETAIL);
 	}

@@ -11,11 +11,11 @@
 - 本地密码认证领域能力、LDAP credential verifier；
 - Redis 登录限流和一次性安全状态；
 - OAuth 2.0 Authorization Code、PKCE、OpenID Connect、Refresh Token 和 Client Credentials；
-- 匿名 SCIM 2.0 discovery、受 scope 保护的资源命名空间、租户隔离的 User 生命周期与 Group 读取、创建、完整替换和局部修改；
+- 匿名 SCIM 2.0 discovery、受 scope 保护的资源命名空间、租户隔离的 User 与 Group 生命周期；
 - 健康探针、Prometheus 指标、OpenTelemetry 和告警规则。
 
-OAuth 2.0/OIDC、SCIM discovery、Users 生命周期和 Group 读取、创建、完整替换与局部修改已提供 HTTP 入口并纳入发布门禁。
-SCIM Groups 删除、Admin RBAC、完整 MFA 和审计 HTTP 入口尚未提供，
+OAuth 2.0/OIDC、SCIM discovery 以及 Users 和 Groups 生命周期已提供 HTTP 入口并纳入发布门禁。
+Admin RBAC、完整 MFA 和审计 HTTP 入口尚未提供，
 因此当前试点不得宣称这些外部工作流已经可用。新增 HTTP adapter 后必须补充协议一致性、安全性和
 端到端验收。
 
@@ -35,7 +35,7 @@ GitHub Actions 在 pull request、`master` push、手动触发和每周定时任
 2. Prometheus 告警规则单元测试；
 3. GraalVM Native Image 构建；
 4. 全新数据库迁移、探针、指标和 schema history 检查；
-5. SCIM discovery、租户隔离的 User 生命周期与 Group 读取、创建、完整替换和局部修改、service JWT read/write 边界、OAuth 2.0 Authorization Code、PKCE、OIDC、Refresh Token 和 Client Credentials HTTP smoke；
+5. SCIM discovery、租户隔离的 User 与 Group 生命周期、service JWT read/write 边界、OAuth 2.0 Authorization Code、PKCE、OIDC、Refresh Token 和 Client Credentials HTTP smoke；
 6. Redis/PostgreSQL 中断、readiness 降级、liveness 保持和恢复；
 7. 缺少安全 secret 时的 fail-closed readiness；
 8. 重启迁移幂等性和 SIGTERM 优雅关闭。
@@ -143,7 +143,7 @@ Redis 丢失后应按空库恢复：现有 challenge 全部失效，限流预算
 - LDAP 仅在启用时完成安全传输、allowlist 和故障验收；
 - Prometheus 抓取、告警接收和恢复通知已实际验证；
 - management 端点和探针不存在公网暴露；
-- 已明确记录尚未提供的 SCIM Groups 删除、Admin RBAC、完整 MFA 和审计 HTTP 能力。
+- 已明确记录尚未提供的 Admin RBAC、完整 MFA 和审计 HTTP 能力。
 
 告警路由、生产部署清单、真实备份自动化和目标环境协议验收仍由目标环境负责，不能以本地 Compose
 或当前 release gate 代替。
