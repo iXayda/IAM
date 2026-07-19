@@ -5,16 +5,20 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 import com.ixayda.iam.group.Group;
 import com.ixayda.iam.group.GroupConcurrentUpdateException;
+import com.ixayda.iam.group.GroupDirectoryQuery;
 import com.ixayda.iam.group.GroupId;
+import com.ixayda.iam.group.GroupPage;
 import com.ixayda.iam.group.GroupStatus;
 import com.ixayda.iam.tenant.TenantId;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.IllegalTransactionStateException;
@@ -29,6 +33,17 @@ class JdbcGroupRepository {
 			"group_id, tenant_id, display_name, status, version, created_at, updated_at";
 
 	private static final RowMapper<Group> GROUP_ROW_MAPPER = JdbcGroupRepository::mapGroup;
+
+	private static final ResultSetExtractor<GroupPage> GROUP_PAGE_EXTRACTOR = JdbcGroupRepository::extractGroupPage;
+
+	private static final String ACTIVE_GROUP_CONDITION = "g.status = 'active'";
+
+	private static final String NO_GROUPS_CONDITION = "false";
+
+	private static final String ID_EQUALS_CONDITION = ACTIVE_GROUP_CONDITION + " AND g.group_id = :matchedGroupId";
+
+	private static final String DISPLAY_NAME_EQUALS_CONDITION =
+			ACTIVE_GROUP_CONDITION + " AND lower(g.display_name) = lower(:matchedDisplayName)";
 
 	private final JdbcClient jdbcClient;
 
@@ -73,6 +88,28 @@ class JdbcGroupRepository {
 			.param("groupId", groupId.value())
 			.query(GROUP_ROW_MAPPER)
 			.optional();
+	}
+
+	GroupPage findDirectoryPage(TenantId tenantId, GroupDirectoryQuery query) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(query, "Group directory query must not be null");
+		String condition = switch (query.criterion()) {
+			case GroupDirectoryQuery.All ignored -> ACTIVE_GROUP_CONDITION;
+			case GroupDirectoryQuery.None ignored -> NO_GROUPS_CONDITION;
+			case GroupDirectoryQuery.IdEquals ignored -> ID_EQUALS_CONDITION;
+			case GroupDirectoryQuery.DisplayNameEquals ignored -> DISPLAY_NAME_EQUALS_CONDITION;
+		};
+		JdbcClient.StatementSpec statement = this.jdbcClient.sql(directoryPageQuery(condition))
+			.param("tenantId", tenantId.value())
+			.param("offset", query.offset())
+			.param("limit", query.limit());
+		if (query.criterion() instanceof GroupDirectoryQuery.IdEquals idEquals) {
+			statement = statement.param("matchedGroupId", idEquals.groupId().value());
+		}
+		else if (query.criterion() instanceof GroupDirectoryQuery.DisplayNameEquals displayNameEquals) {
+			statement = statement.param("matchedDisplayName", displayNameEquals.value());
+		}
+		return statement.query(GROUP_PAGE_EXTRACTOR);
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
@@ -215,6 +252,57 @@ class JdbcGroupRepository {
 				status(resultSet.getString("status")), resultSet.getLong("version"),
 				resultSet.getObject("created_at", OffsetDateTime.class).toInstant(),
 				resultSet.getObject("updated_at", OffsetDateTime.class).toInstant());
+	}
+
+	private static GroupPage extractGroupPage(ResultSet resultSet) throws SQLException {
+		if (!resultSet.next()) {
+			throw new IllegalStateException("Group directory query did not return its total result row");
+		}
+		long totalResults = resultSet.getLong("total_results");
+		ArrayList<Group> groups = new ArrayList<>();
+		do {
+			if (resultSet.getObject("group_id") != null) {
+				groups.add(mapGroup(resultSet, groups.size()));
+			}
+		}
+		while (resultSet.next());
+		return new GroupPage(totalResults, groups);
+	}
+
+	private static String directoryPageQuery(String condition) {
+		return """
+				WITH total AS (
+				    SELECT count(*) AS total_results
+				    FROM groups g
+				    WHERE g.tenant_id = :tenantId
+				      AND %1$s
+				), page AS (
+				    SELECT g.group_id,
+				           g.tenant_id,
+				           g.display_name,
+				           g.status,
+				           g.version,
+				           g.created_at,
+				           g.updated_at
+				    FROM groups g
+				    WHERE g.tenant_id = :tenantId
+				      AND %1$s
+				    ORDER BY g.group_id
+				    OFFSET :offset
+				    LIMIT :limit
+				)
+				SELECT total.total_results,
+				       page.group_id,
+				       page.tenant_id,
+				       page.display_name,
+				       page.status,
+				       page.version,
+				       page.created_at,
+				       page.updated_at
+				FROM total
+				LEFT JOIN page ON true
+				ORDER BY page.group_id
+				""".formatted(condition);
 	}
 
 	private static String databaseValue(GroupStatus status) {

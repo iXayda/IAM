@@ -3,6 +3,7 @@ package com.ixayda.iam.group.internal;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -11,10 +12,13 @@ import java.util.stream.Collectors;
 import com.ixayda.iam.group.CreateGroupRequest;
 import com.ixayda.iam.group.Group;
 import com.ixayda.iam.group.GroupConcurrentUpdateException;
+import com.ixayda.iam.group.GroupDirectoryQuery;
 import com.ixayda.iam.group.GroupId;
 import com.ixayda.iam.group.GroupMembership;
+import com.ixayda.iam.group.GroupMembershipLimitExceededException;
 import com.ixayda.iam.group.GroupNotFoundException;
 import com.ixayda.iam.group.GroupOperations;
+import com.ixayda.iam.group.GroupPage;
 import com.ixayda.iam.group.GroupStatus;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantOperations;
@@ -65,6 +69,13 @@ class DefaultGroupOperations implements GroupOperations {
 	}
 
 	@Override
+	public GroupPage findDirectoryPage(TenantId tenantId, GroupDirectoryQuery query) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(query, "Group directory query must not be null");
+		return this.repository.findDirectoryPage(tenantId, query);
+	}
+
+	@Override
 	@Transactional
 	public Group updateDisplayName(TenantId tenantId, GroupId groupId, long expectedVersion, String displayName) {
 		validateExpectedVersion(expectedVersion);
@@ -104,11 +115,24 @@ class DefaultGroupOperations implements GroupOperations {
 	}
 
 	@Override
+	public Map<GroupId, Set<GroupMembership>> findMembers(TenantId tenantId, Set<GroupId> groupIds) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(groupIds, "Group IDs must not be null");
+		if (groupIds.size() > GroupDirectoryQuery.MAX_LIMIT) {
+			throw new IllegalArgumentException("Group membership batch must not exceed the directory page limit");
+		}
+		return this.memberships.findByGroups(tenantId, groupIds);
+	}
+
+	@Override
 	@Transactional
 	public Group replaceMembers(TenantId tenantId, GroupId groupId, long expectedVersion, Set<UserId> memberIds) {
 		validateExpectedVersion(expectedVersion);
 		Objects.requireNonNull(memberIds, "Group member IDs must not be null");
 		Set<UserId> desiredUserIds = Set.copyOf(memberIds);
+		if (desiredUserIds.size() > GroupOperations.MAX_MEMBERS_PER_GROUP) {
+			throw new GroupMembershipLimitExceededException(tenantId, groupId, GroupOperations.MAX_MEMBERS_PER_GROUP);
+		}
 		this.tenants.requireActiveForWrite(tenantId);
 		Group current = requireGroupForUpdate(tenantId, groupId);
 		requireExpectedVersion(current, expectedVersion);

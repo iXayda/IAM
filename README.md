@@ -125,8 +125,9 @@ IAM 不负责：
 - SCIM Users/Groups 资源命名空间的专用 JWT profile 校验与 `scim.read` / `scim.write` 授权边界
 - SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - 租户隔离的 SCIM User 单资源读取、属性选择和统一的资源不可见响应
-- 租户隔离的 SCIM Group 单资源读取、direct User 成员引用和统一的资源不可见响应
+- 租户隔离的 SCIM Group 单资源与集合读取、direct User 成员引用和统一的资源不可见响应
 - 有界的 SCIM Users 集合分页，以及 `id`、`userName` 精确查询
+- 有界的 SCIM Groups 集合分页，以及 `id`、`displayName` 精确查询
 - 租户隔离的 SCIM User 创建、受限可写属性和不泄露标识的唯一性冲突响应
 - 租户隔离的 SCIM User 完整替换、原子局部修改与软删除，以及标识更新和内部锁定状态保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
@@ -240,13 +241,15 @@ POST /scim/v2/Users
 PUT /scim/v2/Users/{id}
 PATCH /scim/v2/Users/{id}
 DELETE /scim/v2/Users/{id}
+GET /scim/v2/Groups
 GET /scim/v2/Groups/{id}
 ```
 
-discovery 接口匿名开放。Users 读取使用带 `scim.read` scope 的机器 token，创建使用 `scim.write`，
-并且只从已验证的 `tenant_id` claim 确定租户。集合查询支持 `startIndex`、`count`，以及未在 discovery
-中宣告为通用 filtering 能力的 `id eq`、`userName eq` 精确查询；所有返回资源的操作均支持
-`attributes`、`excludedAttributes`。
+discovery 接口匿名开放。Users 和 Groups 读取使用带 `scim.read` scope 的机器 token，User 写入使用
+`scim.write`，并且只从已验证的 `tenant_id` claim 确定租户。集合查询支持 `startIndex`、`count`，
+以及未在 discovery 中宣告为通用 filtering 能力的精确查询：Users 支持 `id eq`、`userName eq`，
+Groups 支持 `id eq`、`displayName eq`。所有返回资源的操作均支持 `attributes`、
+`excludedAttributes`。每个 Group 最多包含 1000 个 direct User members，超限数据不会被截断返回。
 
 创建和完整替换 User 时 `userName` 和唯一的 core User schema URN 必填；写操作支持 `displayName`、`name.formatted`、
 `name.givenName`、`name.familyName`、单个 `emails.value`、单个 `phoneNumbers.value` 和 `active`。

@@ -20,7 +20,9 @@ import com.ixayda.iam.group.CreateGroupRequest;
 import com.ixayda.iam.group.Group;
 import com.ixayda.iam.group.GroupId;
 import com.ixayda.iam.group.GroupMembership;
+import com.ixayda.iam.group.GroupMembershipLimitExceededException;
 import com.ixayda.iam.group.GroupNotFoundException;
+import com.ixayda.iam.group.GroupOperations;
 import com.ixayda.iam.group.GroupStatus;
 import com.ixayda.iam.tenant.Tenant;
 import com.ixayda.iam.tenant.TenantId;
@@ -112,6 +114,19 @@ class DefaultGroupOperationsTests {
 		assertThatThrownBy(() -> this.operations.findMembers(TenantId.DEFAULT, GROUP_ID))
 			.isInstanceOf(GroupNotFoundException.class);
 		verifyNoInteractions(this.repository, this.tenants, this.users, this.timeSource);
+	}
+
+	@Test
+	void rejectsMemberSetsThatExceedTheOperationalLimitBeforeWriting() {
+		Set<UserId> members = java.util.stream.IntStream.rangeClosed(0, GroupOperations.MAX_MEMBERS_PER_GROUP)
+			.mapToObj(ignored -> UserId.random())
+			.collect(java.util.stream.Collectors.toSet());
+
+		assertThatThrownBy(() -> this.operations.replaceMembers(TenantId.DEFAULT, GROUP_ID, 0, members))
+			.isInstanceOf(GroupMembershipLimitExceededException.class)
+			.extracting("tenantId", "groupId", "maximumMembers")
+			.containsExactly(TenantId.DEFAULT, GROUP_ID, GroupOperations.MAX_MEMBERS_PER_GROUP);
+		verifyNoInteractions(this.repository, this.tenants, this.users, this.memberships, this.timeSource);
 	}
 
 	@Test

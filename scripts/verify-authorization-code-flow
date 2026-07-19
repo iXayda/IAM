@@ -413,6 +413,22 @@ jq -e --arg id "${GROUP_ID}" --arg user_id "${USER_ID}" --arg user_location "${s
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
 	--write-out '%{http_code}' --get \
 	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	--data-urlencode 'filter=displayName eq "release check group"' --data-urlencode 'count=1' \
+	--data-urlencode 'tenant_id=00000000-0000-0000-0000-000000000999' \
+	"${base_url}/scim/v2/Groups")"
+[[ "${status}" == "200" ]] || fail "SCIM read token did not query its tenant group directory: HTTP ${status}"
+jq -e --arg id "${GROUP_ID}" --arg user_id "${USER_ID}" --arg user_location "${scim_user_location}" \
+	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+	 and .totalResults == 1 and .startIndex == 1 and .itemsPerPage == 1
+	 and (.Resources | length) == 1
+	 and .Resources[0].id == $id and .Resources[0].displayName == "Release Check Group"
+	 and .Resources[0].members == [{"value":$user_id,"$ref":$user_location,"type":"User"}]' \
+	"${body}" >/dev/null || fail "SCIM Group collection response is invalid"
+[[ "$(header_value Content-Location "${headers}")" == "${scim_base_url}/Groups" ]] \
+	|| fail "SCIM Group collection Content-Location is invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --get \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
 	--data-urlencode "filter=userName eq \"${USERNAME}\"" --data-urlencode 'count=1' \
 	--data-urlencode 'tenant_id=00000000-0000-0000-0000-000000000999' \
 	"${base_url}/scim/v2/Users")"
@@ -444,9 +460,9 @@ jq -e \
 service_write_access_token="$(jq -er '.access_token' "${service_token_response}")"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_write_access_token}" \
-	"${base_url}/scim/v2/Groups/${GROUP_ID}")"
+	"${base_url}/scim/v2/Groups")"
 [[ "${status}" == "403" ]] && jq -e '.status == "403"' "${body}" >/dev/null \
-	|| fail "SCIM Group read was not rejected for a write-only token"
+	|| fail "SCIM Group collection read was not rejected for a write-only token"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
 	--write-out '%{http_code}' --request POST \
 	--header 'Accept: application/scim+json' --header 'Content-Type: application/scim+json' \
@@ -551,6 +567,6 @@ status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-ou
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request POST --header 'Accept: application/scim+json' \
 	--header "Authorization: Bearer ${service_write_access_token}" "${base_url}/scim/v2/Groups")"
-[[ "${status}" == "404" ]] || fail "SCIM write token did not pass the resource-server boundary: HTTP ${status}"
+[[ "${status}" == "405" ]] || fail "Unsupported SCIM Group creation did not return method-not-allowed: HTTP ${status}"
 
 log "Authorization Code + PKCE + OIDC + Refresh Token + Client Credentials flows passed"

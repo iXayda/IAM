@@ -56,6 +56,10 @@ final class ScimGroupAttributeSelection {
 		};
 	}
 
+	boolean includesMembers() {
+		return includes("members", "value") || includes("members", "type") || includes("members", "$ref");
+	}
+
 	private static List<List<String>> parsePaths(List<String> values) throws BadRequestException {
 		List<List<String>> paths = new ArrayList<>();
 		try {

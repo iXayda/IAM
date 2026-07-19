@@ -11,11 +11,11 @@
 - 本地密码认证领域能力、LDAP credential verifier；
 - Redis 登录限流和一次性安全状态；
 - OAuth 2.0 Authorization Code、PKCE、OpenID Connect、Refresh Token 和 Client Credentials；
-- 匿名 SCIM 2.0 discovery、受 scope 保护的资源命名空间、租户隔离的 User 生命周期与 Group 单资源读取；
+- 匿名 SCIM 2.0 discovery、受 scope 保护的资源命名空间、租户隔离的 User 生命周期与 Group 读取；
 - 健康探针、Prometheus 指标、OpenTelemetry 和告警规则。
 
-OAuth 2.0/OIDC、SCIM discovery、Users 生命周期和 Group 单资源读取已提供 HTTP 入口并纳入发布门禁。
-SCIM Groups 集合查询与写入 provisioning、Admin RBAC、完整 MFA 和审计 HTTP 入口尚未提供，
+OAuth 2.0/OIDC、SCIM discovery、Users 生命周期和 Group 单资源与集合读取已提供 HTTP 入口并纳入发布门禁。
+SCIM Groups 写入 provisioning、Admin RBAC、完整 MFA 和审计 HTTP 入口尚未提供，
 因此当前试点不得宣称这些外部工作流已经可用。新增 HTTP adapter 后必须补充协议一致性、安全性和
 端到端验收。
 
@@ -143,7 +143,7 @@ Redis 丢失后应按空库恢复：现有 challenge 全部失效，限流预算
 - LDAP 仅在启用时完成安全传输、allowlist 和故障验收；
 - Prometheus 抓取、告警接收和恢复通知已实际验证；
 - management 端点和探针不存在公网暴露；
-- 已明确记录尚未提供的 SCIM Groups 集合查询与写入 provisioning、Admin RBAC、完整 MFA 和审计 HTTP 能力。
+- 已明确记录尚未提供的 SCIM Groups 写入 provisioning、Admin RBAC、完整 MFA 和审计 HTTP 能力。
 
 告警路由、生产部署清单、真实备份自动化和目标环境协议验收仍由目标环境负责，不能以本地 Compose
 或当前 release gate 代替。

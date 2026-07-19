@@ -32,9 +32,7 @@ final class ScimGroupMapper {
 		if (selection.includes("displayName")) {
 			resource.setDisplayName(group.displayName());
 		}
-		boolean membersSelected = selection.includes("members", "value")
-				|| selection.includes("members", "type") || selection.includes("members", "$ref");
-		if (selection.includes("members") && membersSelected) {
+		if (selection.includes("members") && selection.includesMembers()) {
 			resource.setMembers(view.members().stream()
 				.sorted(MEMBER_ORDER)
 				.map((membership) -> member(membership, selection))

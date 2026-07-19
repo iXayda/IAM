@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Tenant-scoped SCIM Group retrieval with direct User member references, attribute projection, and confidential not-found responses.
+- Tenant-scoped SCIM Group retrieval and bounded collection paging with capped direct User members, projected attributes, and exact `id` or `displayName` queries.
 - Tenant-scoped SCIM User deletion with strict empty responses, lifecycle cleanup, reserved login identifiers, and tenant-safe not-found errors.
 - Atomic, bounded, tenant-scoped SCIM User PATCH operations with SDK-backed paths, filtered values, and confidential protocol errors.
 - Tenant-scoped SCIM User replacement with atomic identifier, profile, and active-state updates, invalidating existing sessions after identity or lifecycle changes.

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -13,6 +14,8 @@ import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.group.Group;
 import com.ixayda.iam.group.GroupId;
 import com.ixayda.iam.group.GroupMembership;
+import com.ixayda.iam.group.GroupMembershipLimitExceededException;
+import com.ixayda.iam.group.GroupOperations;
 import com.ixayda.iam.group.GroupStatus;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
@@ -85,6 +88,80 @@ class JdbcGroupMembershipRepositoryIntegrationTests extends ApplicationIntegrati
 			.param("groupId", GROUP_ID.value())
 			.update();
 		assertThat(this.repository.findByActiveGroup(TenantId.DEFAULT, GROUP_ID)).isEmpty();
+	}
+
+	@Test
+	void loadsMembershipsForAGroupPageInOneTenantScopedBatch() {
+		insertMembership(FIRST_USER_ID, CREATED_AT.plusSeconds(1));
+		GroupId emptyGroupId = GroupId.random();
+		this.jdbcClient.sql("""
+				INSERT INTO groups
+				    (group_id, tenant_id, display_name, created_at, updated_at)
+				VALUES (:groupId, :tenantId, 'Empty Repository Group', :createdAt, :createdAt)
+				""")
+			.param("groupId", emptyGroupId.value())
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("createdAt", databaseValue(CREATED_AT))
+			.update();
+		try {
+			Map<GroupId, Set<GroupMembership>> memberships =
+					this.repository.findByGroups(TenantId.DEFAULT, Set.of(GROUP_ID, emptyGroupId));
+
+			assertThat(memberships).containsOnlyKeys(GROUP_ID, emptyGroupId);
+			assertThat(memberships.get(GROUP_ID)).singleElement().extracting(GroupMembership::userId)
+				.isEqualTo(FIRST_USER_ID);
+			assertThat(memberships.get(emptyGroupId)).isEmpty();
+			assertThatThrownBy(() -> memberships.put(GroupId.random(), Set.of()))
+				.isInstanceOf(UnsupportedOperationException.class);
+			assertThat(this.repository.findByGroups(TenantId.DEFAULT, Set.of())).isEmpty();
+		}
+		finally {
+			this.jdbcClient.sql("DELETE FROM groups WHERE group_id = :groupId")
+				.param("groupId", emptyGroupId.value())
+				.update();
+		}
+	}
+
+	@Test
+	void rejectsLegacyMembershipSetsThatExceedTheReadLimit() {
+		this.jdbcClient.sql("""
+				INSERT INTO users (user_id, tenant_id)
+				SELECT md5('membership-limit-' || value)::uuid, :tenantId
+				FROM generate_series(1, :memberCount) value
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("memberCount", GroupOperations.MAX_MEMBERS_PER_GROUP + 1)
+			.update();
+		this.jdbcClient.sql("""
+				INSERT INTO group_memberships (tenant_id, group_id, user_id, created_at)
+				SELECT :tenantId, :groupId, md5('membership-limit-' || value)::uuid, :createdAt
+				FROM generate_series(1, :memberCount) value
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("groupId", GROUP_ID.value())
+			.param("createdAt", databaseValue(CREATED_AT))
+			.param("memberCount", GroupOperations.MAX_MEMBERS_PER_GROUP + 1)
+			.update();
+		try {
+			assertThatThrownBy(() -> this.repository.findByActiveGroup(TenantId.DEFAULT, GROUP_ID))
+				.isInstanceOf(GroupMembershipLimitExceededException.class);
+			assertThatThrownBy(() -> this.repository.findByGroups(TenantId.DEFAULT, Set.of(GROUP_ID)))
+				.isInstanceOf(GroupMembershipLimitExceededException.class);
+		}
+		finally {
+			this.jdbcClient.sql("DELETE FROM group_memberships WHERE group_id = :groupId")
+				.param("groupId", GROUP_ID.value())
+				.update();
+			this.jdbcClient.sql("""
+					DELETE FROM users
+					WHERE user_id IN (
+					    SELECT md5('membership-limit-' || value)::uuid
+					    FROM generate_series(1, :memberCount) value
+					)
+					""")
+				.param("memberCount", GroupOperations.MAX_MEMBERS_PER_GROUP + 1)
+				.update();
+		}
 	}
 
 	@Test

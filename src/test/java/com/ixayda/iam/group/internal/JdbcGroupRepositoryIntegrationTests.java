@@ -12,7 +12,9 @@ import java.util.UUID;
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.group.Group;
 import com.ixayda.iam.group.GroupConcurrentUpdateException;
+import com.ixayda.iam.group.GroupDirectoryQuery;
 import com.ixayda.iam.group.GroupId;
+import com.ixayda.iam.group.GroupPage;
 import com.ixayda.iam.group.GroupStatus;
 import com.ixayda.iam.tenant.TenantId;
 import org.junit.jupiter.api.AfterEach;
@@ -66,6 +68,33 @@ class JdbcGroupRepositoryIntegrationTests extends ApplicationIntegrationTest {
 
 		assertThat(this.repository.findById(TenantId.DEFAULT, group.id())).contains(group);
 		assertThat(this.repository.findById(SECOND_TENANT_ID, group.id())).isEmpty();
+	}
+
+	@Test
+	void pagesActiveGroupsWithTenantScopedCaseInsensitiveCriteria() {
+		Group first = insert(group(TenantId.DEFAULT, "Directory Match", GroupStatus.ACTIVE, 0, CREATED_AT));
+		Group second = insert(group(TenantId.DEFAULT, "directory match", GroupStatus.ACTIVE, 0, CREATED_AT));
+		Group removed = insert(group(TenantId.DEFAULT, "DIRECTORY MATCH", GroupStatus.ACTIVE, 0, CREATED_AT));
+		delete(removed, removed.delete(CREATED_AT.plusSeconds(1)));
+		insert(group(SECOND_TENANT_ID, "Directory Match", GroupStatus.ACTIVE, 0, CREATED_AT));
+
+		GroupPage page = this.repository.findDirectoryPage(TenantId.DEFAULT,
+				GroupDirectoryQuery.displayNameEquals(0, 100, "dIrEcToRy MaTcH"));
+
+		assertThat(page.totalResults()).isEqualTo(2);
+		assertThat(page.groups()).extracting(Group::id).containsExactlyElementsOf(
+				List.of(first.id(), second.id()).stream().sorted((left, right) -> left.toString().compareTo(right.toString()))
+					.toList());
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				GroupDirectoryQuery.displayNameEquals(1, 1, "Directory Match")).groups()).hasSize(1);
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				GroupDirectoryQuery.displayNameEquals(0, 0, "Directory Match")))
+			.extracting(GroupPage::totalResults, GroupPage::groups)
+			.containsExactly(2L, List.of());
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				GroupDirectoryQuery.idEquals(0, 100, first.id())).groups()).containsExactly(first);
+		assertThat(this.repository.findDirectoryPage(TenantId.DEFAULT,
+				GroupDirectoryQuery.none(0, 100))).isEqualTo(new GroupPage(0, List.of()));
 	}
 
 	@Test

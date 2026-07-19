@@ -7,8 +7,10 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -18,6 +20,8 @@ import java.util.stream.Collectors;
 import com.ixayda.iam.group.Group;
 import com.ixayda.iam.group.GroupId;
 import com.ixayda.iam.group.GroupMembership;
+import com.ixayda.iam.group.GroupMembershipLimitExceededException;
+import com.ixayda.iam.group.GroupOperations;
 import com.ixayda.iam.group.GroupStatus;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
@@ -73,10 +77,12 @@ class JdbcGroupMembershipRepository {
 				  AND group_record.group_id = :groupId
 				  AND group_record.status = :activeStatus
 				ORDER BY membership.user_id
+				LIMIT :memberProbeLimit
 				""")
 			.param("tenantId", tenantId.value())
 			.param("groupId", groupId.value())
 			.param("activeStatus", databaseValue(GroupStatus.ACTIVE))
+			.param("memberProbeLimit", GroupOperations.MAX_MEMBERS_PER_GROUP + 1)
 			.query((resultSet, rowNumber) -> {
 				UUID userId = resultSet.getObject("user_id", UUID.class);
 				OffsetDateTime createdAt = resultSet.getObject("created_at", OffsetDateTime.class);
@@ -86,11 +92,58 @@ class JdbcGroupMembershipRepository {
 		if (rows.isEmpty()) {
 			return Optional.empty();
 		}
+		if (rows.size() > GroupOperations.MAX_MEMBERS_PER_GROUP) {
+			throw membershipLimitExceeded(tenantId, groupId);
+		}
 		LinkedHashSet<GroupMembership> memberships = rows.stream()
 			.filter(MembershipRow::hasMembership)
 			.map(row -> new GroupMembership(tenantId, groupId, new UserId(row.userId()), row.createdAt()))
 			.collect(Collectors.toCollection(LinkedHashSet::new));
 		return Optional.of(Collections.unmodifiableSet(memberships));
+	}
+
+	Map<GroupId, Set<GroupMembership>> findByGroups(TenantId tenantId, Set<GroupId> groupIds) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(groupIds, "Group IDs must not be null");
+		if (groupIds.isEmpty()) {
+			return Map.of();
+		}
+		LinkedHashMap<GroupId, LinkedHashSet<GroupMembership>> memberships = new LinkedHashMap<>();
+		groupIds.stream().sorted(Comparator.comparing(GroupId::value))
+			.forEach(groupId -> memberships.put(groupId, new LinkedHashSet<>()));
+		this.jdbcClient.sql("""
+				SELECT membership.tenant_id,
+				       membership.group_id,
+				       membership.user_id,
+				       membership.created_at
+				FROM groups requested_group
+				CROSS JOIN LATERAL (
+				    SELECT tenant_id, group_id, user_id, created_at
+				    FROM group_memberships
+				    WHERE tenant_id = requested_group.tenant_id
+				      AND group_id = requested_group.group_id
+				    ORDER BY user_id
+				    LIMIT :memberProbeLimit
+				) membership
+				WHERE requested_group.tenant_id = :tenantId
+				  AND requested_group.group_id IN (:groupIds)
+				  AND requested_group.status = 'active'
+				ORDER BY membership.group_id, membership.user_id
+				""")
+			.param("tenantId", tenantId.value())
+			.param("groupIds", groupIds.stream().map(GroupId::value).toList())
+			.param("memberProbeLimit", GroupOperations.MAX_MEMBERS_PER_GROUP + 1)
+			.query(ROW_MAPPER)
+			.list()
+			.forEach(membership -> memberships.get(membership.groupId()).add(membership));
+		memberships.forEach((groupId, values) -> {
+			if (values.size() > GroupOperations.MAX_MEMBERS_PER_GROUP) {
+				throw membershipLimitExceeded(tenantId, groupId);
+			}
+		});
+		LinkedHashMap<GroupId, Set<GroupMembership>> result = new LinkedHashMap<>();
+		memberships.forEach((groupId, values) -> result.put(groupId, Collections.unmodifiableSet(values)));
+		return Collections.unmodifiableMap(result);
 	}
 
 	List<GroupId> findGroupIdsByUser(TenantId tenantId, UserId userId) {
@@ -203,6 +256,10 @@ class JdbcGroupMembershipRepository {
 				new GroupId(resultSet.getObject("group_id", UUID.class)),
 				new UserId(resultSet.getObject("user_id", UUID.class)),
 				resultSet.getObject("created_at", OffsetDateTime.class).toInstant());
+	}
+
+	private static GroupMembershipLimitExceededException membershipLimitExceeded(TenantId tenantId, GroupId groupId) {
+		return new GroupMembershipLimitExceededException(tenantId, groupId, GroupOperations.MAX_MEMBERS_PER_GROUP);
 	}
 
 	private static OffsetDateTime databaseValue(Instant instant) {

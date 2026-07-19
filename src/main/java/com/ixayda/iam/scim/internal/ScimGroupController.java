@@ -5,6 +5,7 @@ import java.util.List;
 
 import com.ixayda.iam.tenant.TenantId;
 import com.unboundid.scim2.common.exceptions.ScimException;
+import com.unboundid.scim2.common.messages.ListResponse;
 import com.unboundid.scim2.common.types.GroupResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -37,6 +38,32 @@ final class ScimGroupController {
 		this.groups = groups;
 		this.mapper = mapper;
 		this.properties = properties;
+	}
+
+	@GetMapping(value = GROUPS_PATH,
+			produces = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE })
+	ResponseEntity<ListResponse<GroupResource>> groups(@AuthenticationPrincipal Jwt jwt,
+			@RequestParam(name = "startIndex", required = false) List<String> startIndexes,
+			@RequestParam(name = "count", required = false) List<String> counts,
+			@RequestParam(name = "filter", required = false) List<String> filters,
+			@RequestParam(name = "sortBy", required = false) List<String> sortBy,
+			@RequestParam(name = "sortOrder", required = false) List<String> sortOrder,
+			@RequestParam(name = "attributes", required = false) List<String> attributes,
+			@RequestParam(name = "excludedAttributes", required = false) List<String> excludedAttributes)
+			throws ScimException {
+		ScimGroupCollectionQuery query =
+				ScimGroupCollectionQuery.parse(startIndexes, counts, filters, sortBy, sortOrder);
+		ScimGroupAttributeSelection selection = ScimGroupAttributeSelection.parse(attributes, excludedAttributes);
+		TenantId tenantId = this.tenantResolver.resolve(jwt);
+		ScimGroupPage page = this.groups.findPage(tenantId, query.directoryQuery(), selection.includesMembers());
+		List<GroupResource> resources = page.groups().stream().map((group) -> {
+			URI location = this.properties.endpoint(GROUPS_PATH, group.group().id().toString());
+			return this.mapper.map(group, location, selection);
+		}).toList();
+		ListResponse<GroupResource> response = new ListResponse<>(Math.toIntExact(page.totalResults()), resources,
+				query.startIndex(), resources.size());
+		URI location = this.properties.endpoint(GROUPS_PATH);
+		return ResponseEntity.ok().header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString()).body(response);
 	}
 
 	@GetMapping(value = GROUPS_PATH + "/{id}",

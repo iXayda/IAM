@@ -41,6 +41,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -138,6 +139,113 @@ class ScimGroupWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.meta.lastModified").exists())
 			.andExpect(jsonPath("$.meta.location").value(location))
 			.andExpect(jsonPath("$.meta.version").doesNotExist());
+	}
+
+	@Test
+	void listsTenantScopedGroupsWithPaginationFiltersAndProjectedMembers() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		Group first = createGroup(tenant.id(), "Directory Group");
+		Group second = createGroup(tenant.id(), "directory group");
+		Group deleted = createGroup(tenant.id(), "DIRECTORY GROUP");
+		createGroup(other.id(), "Directory Group");
+		User member = createUser(tenant.id(), "directory-member");
+		first = this.groups.replaceMembers(tenant.id(), first.id(), first.version(), Set.of(member.id()));
+		second = this.groups.replaceMembers(tenant.id(), second.id(), second.version(), Set.of(member.id()));
+		this.groups.delete(tenant.id(), deleted.id(), deleted.version());
+		String authorization = bearer(token(tenant.id(), "scim.read"));
+		String collectionLocation = "https://scim.example.test/scim/v2/Groups";
+
+		this.mockMvc.perform(get("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("startIndex", "1")
+			.queryParam("count", "100")
+			.queryParam("filter", "displayName eq \"dIrEcToRy GrOuP\"")
+			.queryParam("attributes", "displayName,members.value")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, collectionLocation))
+			.andExpect(header().doesNotExist(HttpHeaders.LOCATION))
+			.andExpect(jsonPath("$.schemas[0]").value("urn:ietf:params:scim:api:messages:2.0:ListResponse"))
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.startIndex").value(1))
+			.andExpect(jsonPath("$.itemsPerPage").value(2))
+			.andExpect(jsonPath("$.Resources", hasSize(2)))
+			.andExpect(jsonPath("$.Resources[*].id",
+					containsInAnyOrder(first.id().toString(), second.id().toString())))
+			.andExpect(jsonPath("$.Resources[*].displayName",
+					containsInAnyOrder("Directory Group", "directory group")))
+			.andExpect(jsonPath("$.Resources[*].members[0].value",
+					containsInAnyOrder(member.id().toString(), member.id().toString())))
+			.andExpect(jsonPath("$.Resources[*].members[0].type").doesNotExist())
+			.andExpect(jsonPath("$.Resources[*].members[0].$ref").doesNotExist());
+
+		this.mockMvc.perform(get("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("startIndex", "2")
+			.queryParam("count", "1")
+			.queryParam("filter", "displayName eq \"directory group\"")
+			.queryParam("excludedAttributes", "members.value,members.type,members.$ref")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.startIndex").value(2))
+			.andExpect(jsonPath("$.itemsPerPage").value(1))
+			.andExpect(jsonPath("$.Resources", hasSize(1)))
+			.andExpect(jsonPath("$.Resources[0].members").doesNotExist());
+
+		this.mockMvc.perform(get("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("count", "0")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.itemsPerPage").value(0))
+			.andExpect(jsonPath("$.Resources", hasSize(0)));
+		this.mockMvc.perform(get("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.queryParam("startIndex", "100")
+			.queryParam("filter", "id eq \"" + first.id() + "\"")
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalResults").value(1))
+			.andExpect(jsonPath("$.startIndex").value(100))
+			.andExpect(jsonPath("$.itemsPerPage").value(0))
+			.andExpect(jsonPath("$.Resources", hasSize(0)));
+	}
+
+	@Test
+	void validatesGroupCollectionQueriesAndRequiresReadScope() throws Exception {
+		Tenant tenant = createTenant();
+		String authorization = bearer(token(tenant.id(), "scim.read"));
+
+		for (String query : List.of("filter=displayName%20co%20%22secret-filter-value%22", "sortBy=displayName",
+				"startIndex=not-a-number")) {
+			this.mockMvc.perform(get("/scim/v2/Groups?" + query)
+				.header(HttpHeaders.AUTHORIZATION, authorization)
+				.accept(SCIM_JSON))
+				.andExpect(status().isBadRequest())
+				.andExpect(content().string(not(containsString("secret-filter-value"))));
+		}
+
+		this.mockMvc.perform(get("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isForbidden())
+			.andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE,
+					"Bearer error=\"insufficient_scope\", scope=\"scim.read\""));
+		this.mockMvc.perform(post("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isMethodNotAllowed());
+
+		this.tenants.disable(tenant.id());
+		this.mockMvc.perform(get("/scim/v2/Groups")
+			.header(HttpHeaders.AUTHORIZATION, authorization)
+			.accept(SCIM_JSON))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL));
 	}
 
 	@Test
