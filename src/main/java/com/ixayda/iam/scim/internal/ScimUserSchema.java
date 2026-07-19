@@ -39,7 +39,7 @@ final class ScimUserSchema {
 			List<AttributeDefinition> attributes = schema.getAttributes().stream()
 				.filter((attribute) -> SUPPORTED_ATTRIBUTES.containsKey(attribute.getName()))
 				.map((attribute) -> withSupportedSubAttributes(attribute,
-						SUPPORTED_ATTRIBUTES.get(attribute.getName())))
+						SUPPORTED_ATTRIBUTES.get(attribute.getName()), attribute.getName().equals("active")))
 				.toList();
 			return new SchemaResource(schema.getId(), schema.getName(), schema.getDescription(), attributes);
 		}
@@ -52,15 +52,15 @@ final class ScimUserSchema {
 		return ATTRIBUTE_DEFINITIONS;
 	}
 
-	private static AttributeDefinition withSupportedSubAttributes(AttributeDefinition definition,
-			Set<String> supportedSubAttributes) {
+	static AttributeDefinition withSupportedSubAttributes(AttributeDefinition definition,
+			Set<String> supportedSubAttributes, boolean forceRequired) {
 		Collection<AttributeDefinition> subAttributes = definition.getSubAttributes();
 		AttributeDefinition.Builder builder = new AttributeDefinition.Builder()
 			.setName(definition.getName())
 			.setType(definition.getType())
 			.setMultiValued(definition.isMultiValued())
 			.setDescription(definition.getDescription())
-			.setRequired(definition.isRequired() || definition.getName().equals("active"))
+			.setRequired(definition.isRequired() || forceRequired)
 			.setCaseExact(definition.isCaseExact())
 			.setMutability(definition.getMutability())
 			.setReturned(definition.getReturned())

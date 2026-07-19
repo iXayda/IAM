@@ -22,6 +22,8 @@ import org.springframework.stereotype.Component;
 @Component
 final class ScimMetadataCatalog {
 
+	private static final String GROUPS_PATH = "/Groups";
+
 	private static final List<AuthenticationScheme> AUTHENTICATION_SCHEMES = List.of(new AuthenticationScheme(
 			"OAuth 2.0 Bearer Token", "OAuth 2.0 bearer tokens scoped to a tenant and the SCIM resource server.",
 			URI.create("https://www.rfc-editor.org/rfc/rfc6750"), null, "oauthbearertoken", true));
@@ -34,12 +36,19 @@ final class ScimMetadataCatalog {
 		SchemaResource userSchema = ScimUserSchema.create();
 		userSchema.setMeta(metadata("Schema", properties.endpoint(ScimMetadataController.SCHEMAS_PATH,
 				ScimUserSchema.URN)));
+		SchemaResource groupSchema = ScimGroupSchema.create();
+		groupSchema.setMeta(metadata("Schema", properties.endpoint(ScimMetadataController.SCHEMAS_PATH,
+				ScimGroupSchema.URN)));
 		ResourceTypeResource userResourceType = new ResourceTypeResource("User", "User Account",
 				URI.create(ScimUserController.USERS_PATH), URI.create(ScimUserSchema.URN));
 		userResourceType.setMeta(metadata("ResourceType", properties.endpoint(
 				ScimMetadataController.RESOURCE_TYPES_PATH, "User")));
-		this.schemas = List.of(userSchema);
-		this.resourceTypes = List.of(userResourceType);
+		ResourceTypeResource groupResourceType = new ResourceTypeResource("Group", "Group",
+				URI.create(GROUPS_PATH), URI.create(ScimGroupSchema.URN));
+		groupResourceType.setMeta(metadata("ResourceType", properties.endpoint(
+				ScimMetadataController.RESOURCE_TYPES_PATH, "Group")));
+		this.schemas = List.of(userSchema, groupSchema);
+		this.resourceTypes = List.of(userResourceType, groupResourceType);
 	}
 
 	ServiceProviderConfigResource serviceProviderConfig(URI location) {

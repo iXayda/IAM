@@ -95,14 +95,14 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
-	void exposesTheUserSchemaAndResourceTypeCatalogs() throws Exception {
+	void exposesTheUserAndGroupSchemaAndResourceTypeCatalogs() throws Exception {
 		this.mockMvc.perform(get("/scim/v2/Schemas").accept(SCIM_JSON))
 			.andExpect(status().isOk())
 			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
 			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, "https://scim.example.test/scim/v2/Schemas"))
 			.andExpect(jsonPath("$.schemas[0]").value(LIST_RESPONSE_SCHEMA))
-			.andExpect(jsonPath("$.totalResults").value(1))
-			.andExpect(jsonPath("$.Resources", hasSize(1)))
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.Resources", hasSize(2)))
 			.andExpect(jsonPath("$.Resources[0].id").value(ScimUserSchema.URN))
 			.andExpect(jsonPath("$.Resources[0].name").value("User"))
 			.andExpect(jsonPath("$.Resources[0].attributes", hasSize(6)))
@@ -116,7 +116,21 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 					.value(containsInAnyOrder(true)))
 				.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'active')].mutability")
 					.value(containsInAnyOrder("readWrite")))
-				.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("Schema"));
+				.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("Schema"))
+			.andExpect(jsonPath("$.Resources[1].id").value(ScimGroupSchema.URN))
+			.andExpect(jsonPath("$.Resources[1].name").value("Group"))
+			.andExpect(jsonPath("$.Resources[1].attributes", hasSize(2)))
+			.andExpect(jsonPath("$.Resources[1].attributes[*].name",
+					containsInAnyOrder("displayName", "members")))
+			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'displayName')].required")
+				.value(containsInAnyOrder(true)))
+			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'members')].subAttributes[*].name",
+					containsInAnyOrder("value", "type", "$ref")))
+			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'members')].subAttributes"
+					+ "[?(@.name == 'type')].canonicalValues[*]", containsInAnyOrder("User")))
+			.andExpect(jsonPath("$.Resources[1].attributes[?(@.name == 'members')].subAttributes"
+					+ "[?(@.name == '$ref')].referenceTypes[*]", containsInAnyOrder("User")))
+			.andExpect(jsonPath("$.Resources[1].meta.resourceType").value("Schema"));
 
 		this.mockMvc.perform(get("/scim/v2/ResourceTypes").accept(SCIM_JSON))
 			.andExpect(status().isOk())
@@ -124,13 +138,18 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
 					"https://scim.example.test/scim/v2/ResourceTypes"))
 			.andExpect(jsonPath("$.schemas[0]").value(LIST_RESPONSE_SCHEMA))
-			.andExpect(jsonPath("$.totalResults").value(1))
-			.andExpect(jsonPath("$.Resources", hasSize(1)))
+			.andExpect(jsonPath("$.totalResults").value(2))
+			.andExpect(jsonPath("$.Resources", hasSize(2)))
 			.andExpect(jsonPath("$.Resources[0].id").value("User"))
 			.andExpect(jsonPath("$.Resources[0].name").value("User"))
 			.andExpect(jsonPath("$.Resources[0].endpoint").value("/Users"))
 			.andExpect(jsonPath("$.Resources[0].schema").value(ScimUserSchema.URN))
-			.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("ResourceType"));
+			.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("ResourceType"))
+			.andExpect(jsonPath("$.Resources[1].id").value("Group"))
+			.andExpect(jsonPath("$.Resources[1].name").value("Group"))
+			.andExpect(jsonPath("$.Resources[1].endpoint").value("/Groups"))
+			.andExpect(jsonPath("$.Resources[1].schema").value(ScimGroupSchema.URN))
+			.andExpect(jsonPath("$.Resources[1].meta.resourceType").value("ResourceType"));
 
 		this.mockMvc.perform(get("/scim/v2/Schemas/{id}", ScimUserSchema.URN).accept(SCIM_JSON))
 			.andExpect(status().isOk())
@@ -142,6 +161,14 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.id").value("User"))
 			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
 					"https://scim.example.test/scim/v2/ResourceTypes/User"));
+		this.mockMvc.perform(get("/scim/v2/Schemas/{id}", ScimGroupSchema.URN).accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.id").value(ScimGroupSchema.URN));
+		this.mockMvc.perform(get("/scim/v2/ResourceTypes/Group").accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.id").value("Group"))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
+					"https://scim.example.test/scim/v2/ResourceTypes/Group"));
 	}
 
 	@Test
@@ -149,14 +176,14 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 		this.mockMvc.perform(get("/scim/v2/Schemas").accept(MediaType.APPLICATION_JSON))
 			.andExpect(status().isOk())
 			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
-			.andExpect(jsonPath("$.totalResults").value(1));
+			.andExpect(jsonPath("$.totalResults").value(2));
 	}
 
 	@Test
 	void ignoresUnsupportedNonFilterDiscoveryParameters() throws Exception {
 		this.mockMvc.perform(get("/scim/v2/ResourceTypes?count=1&sortBy=name").accept(SCIM_JSON))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.totalResults").value(1))
+			.andExpect(jsonPath("$.totalResults").value(2))
 			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION,
 					"https://scim.example.test/scim/v2/ResourceTypes"));
 	}

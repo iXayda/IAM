@@ -339,19 +339,24 @@ jq -e \
 request_scim /scim/v2/Schemas 200
 jq -e \
 	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
-	 and .totalResults == 1
-	 and (.Resources | length) == 1
+	 and .totalResults == 2
+	 and (.Resources | length) == 2
 	 and .Resources[0].id == "urn:ietf:params:scim:schemas:core:2.0:User"
-	 and .Resources[0].name == "User"' \
+	 and .Resources[0].name == "User"
+	 and .Resources[1].id == "urn:ietf:params:scim:schemas:core:2.0:Group"
+	 and .Resources[1].name == "Group"' \
 	"${scim_body_file}" >/dev/null || fail "SCIM schema catalog is invalid"
 request_scim /scim/v2/ResourceTypes 200
 jq -e \
 	'.schemas == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
-	 and .totalResults == 1
-	 and (.Resources | length) == 1
+	 and .totalResults == 2
+	 and (.Resources | length) == 2
 	 and .Resources[0].id == "User"
 	 and .Resources[0].endpoint == "/Users"
-	 and .Resources[0].schema == "urn:ietf:params:scim:schemas:core:2.0:User"' \
+	 and .Resources[0].schema == "urn:ietf:params:scim:schemas:core:2.0:User"
+	 and .Resources[1].id == "Group"
+	 and .Resources[1].endpoint == "/Groups"
+	 and .Resources[1].schema == "urn:ietf:params:scim:schemas:core:2.0:Group"' \
 	"${scim_body_file}" >/dev/null || fail "SCIM resource type catalog is invalid"
 request_scim /scim/v2/Schemas/unknown 404
 jq -e \

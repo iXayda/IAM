@@ -15,8 +15,10 @@ import com.unboundid.scim2.common.types.Email;
 import com.unboundid.scim2.common.types.Entitlement;
 import com.unboundid.scim2.common.types.FilterConfig;
 import com.unboundid.scim2.common.types.Group;
+import com.unboundid.scim2.common.types.GroupResource;
 import com.unboundid.scim2.common.types.InstantMessagingAddress;
 import com.unboundid.scim2.common.types.Meta;
+import com.unboundid.scim2.common.types.Member;
 import com.unboundid.scim2.common.types.Name;
 import com.unboundid.scim2.common.types.PaginationConfig;
 import com.unboundid.scim2.common.types.PatchConfig;
@@ -42,7 +44,8 @@ final class ScimRuntimeHints implements RuntimeHintsRegistrar {
 			ChangePasswordConfig.class, SortConfig.class, ETagConfig.class, PaginationConfig.class,
 			AuthenticationScheme.class, ListResponse.class, SchemaResource.class, ResourceTypeResource.class,
 			ResourceTypeResource.SchemaExtension.class, AttributeDefinition.class, Meta.class, ErrorResponse.class,
-			UserResource.class, ScimUserCreateResource.class, Name.class, Email.class, PhoneNumber.class, Address.class,
+			UserResource.class, GroupResource.class, Member.class, ScimUserCreateResource.class, Name.class, Email.class,
+			PhoneNumber.class, Address.class,
 			InstantMessagingAddress.class, Photo.class, Group.class, Entitlement.class, Role.class,
 			X509Certificate.class, StatusSerializer.class, StatusDeserializer.class);
 
