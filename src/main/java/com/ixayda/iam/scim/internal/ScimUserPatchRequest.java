@@ -102,10 +102,14 @@ final class ScimUserPatchRequest {
 			for (ParsedOperation operation : this.operations) {
 				AliasState before = AliasState.from(writable);
 				for (SdkOperation sdkOperation : operation.operations()) {
-					if (sdkOperation.requireTarget() && !JsonUtils.pathExists(sdkOperation.path(), writable)) {
+					boolean targetExists = sdkOperation.path() != null
+							&& JsonUtils.pathExists(sdkOperation.path(), writable);
+					if (sdkOperation.requireTarget() && !targetExists) {
 						throw BadRequestException.noTarget(NO_TARGET_DETAIL);
 					}
-					PatchOperation actual = sdkOperation.missingParentOperation() != null
+					PatchOperation actual = sdkOperation.missingTargetOperation() != null && !targetExists
+							? sdkOperation.missingTargetOperation()
+							: sdkOperation.missingParentOperation() != null
 							&& isMissingComplexParent(sdkOperation.path(), writable)
 								? sdkOperation.missingParentOperation() : sdkOperation.operation();
 					actual.apply(writable);
@@ -206,13 +210,18 @@ final class ScimUserPatchRequest {
 				boolean requireTarget = type == OperationType.REPLACE
 						&& removalPath.getElement(0).getValueFilter() != null;
 				sdkOperations = List.of(
-						new SdkOperation(PatchOperation.remove(removalPath), removalPath, requireTarget, null));
+						new SdkOperation(PatchOperation.remove(removalPath), removalPath, requireTarget, null, null));
 			}
 			else {
-				PatchOperation sdkOperation = type == OperationType.ADD ? PatchOperation.add(path, value)
-						: PatchOperation.replace(path, value);
-				sdkOperations = List.of(new SdkOperation(sdkOperation, path, false,
-						missingComplexParentOperation(path, value)));
+				if (type == OperationType.ADD && path.getElement(0).getValueFilter() != null) {
+					sdkOperations = List.of(filteredAddOperation(path, value));
+				}
+				else {
+					PatchOperation sdkOperation = type == OperationType.ADD ? PatchOperation.add(path, value)
+							: PatchOperation.replace(path, value);
+					sdkOperations = List.of(new SdkOperation(sdkOperation, path, false,
+							missingComplexParentOperation(path, value), null));
+				}
 			}
 			return new ParsedOperation(sdkOperations, operationAttributes);
 		}
@@ -294,6 +303,25 @@ final class ScimUserPatchRequest {
 		ObjectNode item = JsonUtils.getJsonNodeFactory().objectNode();
 		item.set("value", value);
 		return PatchOperation.add(path.subPath(1), JsonUtils.getJsonNodeFactory().arrayNode().add(item));
+	}
+
+	private static SdkOperation filteredAddOperation(Path path, JsonNode value) throws BadRequestException {
+		PatchOperation existingTarget = PatchOperation.replace(path, value);
+		ObjectNode item;
+		if (path.size() == 1) {
+			if (!(value instanceof ObjectNode objectValue)) {
+				throw invalidValue();
+			}
+			item = objectValue.deepCopy();
+		}
+		else {
+			item = JsonUtils.getJsonNodeFactory().objectNode();
+			item.set(path.getElement(1).getAttribute(), value);
+		}
+		Path rootPath = Path.of(path.getElement(0).getAttribute());
+		PatchOperation missingTarget = PatchOperation.add(rootPath,
+				JsonUtils.getJsonNodeFactory().arrayNode().add(item));
+		return new SdkOperation(existingTarget, path, false, null, missingTarget);
 	}
 
 	private static boolean isMissingComplexParent(Path path, ObjectNode writable) {
@@ -762,10 +790,10 @@ final class ScimUserPatchRequest {
 	}
 
 	private record SdkOperation(PatchOperation operation, Path path, boolean requireTarget,
-			PatchOperation missingParentOperation) {
+			PatchOperation missingParentOperation, PatchOperation missingTargetOperation) {
 
 		private static SdkOperation apply(PatchOperation operation, Path path) {
-			return new SdkOperation(operation, path, false, null);
+			return new SdkOperation(operation, path, false, null, null);
 		}
 
 	}

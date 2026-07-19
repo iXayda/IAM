@@ -293,6 +293,40 @@ class ScimUserPatchRequestTests {
 	}
 
 	@Test
+	void appliesFilteredAddsUsingTheRequestedValueInsteadOfTheSelector() throws Exception {
+		ScimUserPatchRequest replaceMatch = parse(patch("""
+				[{"op":"add","path":"emails[value eq \\"alice@example.com\\"].value",
+				  "value":"desired@example.com"}]
+				"""));
+		assertThat(replaceMatch.apply(user(), this.mapper, this.codec).identifiers())
+			.contains(LoginIdentifier.email("desired@example.com"));
+
+		User usernameOnly = new User(UserId.random(), TenantId.random(),
+				List.of(LoginIdentifier.username("alice")), UserProfile.empty(), UserStatus.ACTIVE,
+				4, 2, CREATED_AT, CREATED_AT.plusSeconds(60), null);
+		ScimUserPatchRequest addMissing = parse(patch("""
+				[{"op":"add","path":"emails[value eq \\"selector@example.com\\"].value",
+				  "value":"desired@example.com"}]
+				"""));
+		assertThat(addMissing.apply(usernameOnly, this.mapper, this.codec).identifiers())
+			.containsExactly(LoginIdentifier.username("alice"), LoginIdentifier.email("desired@example.com"));
+
+		ScimUserPatchRequest replaceComplexMatch = parse(patch("""
+				[{"op":"add","path":"emails[value eq \\"alice@example.com\\"]",
+				  "value":{"value":"complex-match@example.com"}}]
+				"""));
+		assertThat(replaceComplexMatch.apply(user(), this.mapper, this.codec).identifiers())
+			.contains(LoginIdentifier.email("complex-match@example.com"));
+
+		ScimUserPatchRequest addMissingComplex = parse(patch("""
+				[{"op":"add","path":"emails[value eq \\"selector@example.com\\"]",
+				  "value":{"value":"complex-missing@example.com"}}]
+				"""));
+		assertThat(addMissingComplex.apply(usernameOnly, this.mapper, this.codec).identifiers())
+			.containsExactly(LoginIdentifier.username("alice"), LoginIdentifier.email("complex-missing@example.com"));
+	}
+
+	@Test
 	void replacesAFilteredComplexObjectWithoutCreatingANestedArray() throws Exception {
 		ScimUserPatchRequest request = parse(patch("""
 				[{"op":"replace","path":"emails[value eq \\\"alice@example.com\\\"]",

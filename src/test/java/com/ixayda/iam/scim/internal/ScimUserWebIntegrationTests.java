@@ -713,6 +713,32 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void appliesFilteredAddsWithoutOverwritingTheRequestedIdentifier() throws Exception {
+		Tenant tenant = createTenant();
+		User matching = createUser(tenant.id());
+		User missing = this.users.create(tenant.id(),
+				new CreateUserRequest(List.of(LoginIdentifier.username("filtered-add-missing"))));
+		for (List<String> example : List.of(
+				List.of(matching.id().toString(), "alice@example.com", "matched@example.com"),
+				List.of(missing.id().toString(), "selector-secret@example.com", "missing@example.com"))) {
+			String request = patchBody("add", "emails[value eq \\\"" + example.get(1) + "\\\"].value",
+					"\"" + example.get(2) + "\"");
+			this.mockMvc.perform(patch("/scim/v2/Users/{id}", example.getFirst())
+				.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+				.contentType(SCIM_JSON)
+				.accept(SCIM_JSON)
+				.content(request))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.emails[0].value").value(example.get(2)))
+				.andExpect(content().string(not(containsString(example.get(1)))));
+		}
+		assertThat(this.users.findById(tenant.id(), matching.id()).orElseThrow().identifiers())
+			.contains(LoginIdentifier.email("matched@example.com"));
+		assertThat(this.users.findById(tenant.id(), missing.id()).orElseThrow().identifiers())
+			.contains(LoginIdentifier.email("missing@example.com"));
+	}
+
+	@Test
 	void doesNotPatchInvisibleUsersOrUpsertMissingUsers() throws Exception {
 		Tenant owner = createTenant();
 		Tenant other = createTenant();

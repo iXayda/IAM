@@ -71,6 +71,7 @@ All notable changes to this project will be documented in this file.
 - Validated tenant domain model and lifecycle contract.
 
 ### Fixed
+- Preserved the requested login identifier when applying filtered SCIM User adds instead of substituting the filter literal.
 - OAuth consent approval and denial now update consent and pending authorization state atomically.
 - Database health checks now use bounded connection, validation, and socket waits.
 - GraalVM native application startup.
