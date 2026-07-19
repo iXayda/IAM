@@ -21,8 +21,21 @@ final class ScimUserMapper {
 		if (user.isDeleted()) {
 			throw new IllegalArgumentException("Deleted users cannot be mapped to SCIM resources");
 		}
-		UserResource resource = new UserResource();
+		UserResource resource = mapWritable(user, selection);
 		resource.setId(user.id().toString());
+		resource.setMeta(metadata(user, location, selection));
+		return resource;
+	}
+
+	UserResource mapWritable(User user) {
+		if (user.isDeleted()) {
+			throw new IllegalArgumentException("Deleted users cannot be mapped to SCIM resources");
+		}
+		return mapWritable(user, ScimUserAttributeSelection.all());
+	}
+
+	private static UserResource mapWritable(User user, ScimUserAttributeSelection selection) {
+		UserResource resource = new UserResource();
 		if (selection.includes("userName")) {
 			resource.setUserName(primaryIdentifier(user).value());
 		}
@@ -35,7 +48,6 @@ final class ScimUserMapper {
 		if (selection.includes("active")) {
 			resource.setActive(user.status() == UserStatus.ACTIVE);
 		}
-		resource.setMeta(metadata(user, location, selection));
 		return resource;
 	}
 

@@ -20,6 +20,11 @@ final class ScimExceptionHandler {
 
 	@ExceptionHandler(HttpMessageNotReadableException.class)
 	ResponseEntity<ErrorResponse> handleUnreadableRequest(HttpMessageNotReadableException exception) {
+		if (ScimRequestBodyLimitFilter.causedByPayloadLimit(exception)) {
+			return ResponseEntity.status(413)
+				.contentType(ScimMediaTypes.SCIM_JSON)
+				.body(ScimRequestBodyLimitFilter.errorResponse());
+		}
 		if (exception.getCause() instanceof MismatchedInputException) {
 			return handle(BadRequestException.invalidValue(
 					"The SCIM request contains a value that is incompatible with its attribute type."));

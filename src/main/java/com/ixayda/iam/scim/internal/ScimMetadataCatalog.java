@@ -43,7 +43,7 @@ final class ScimMetadataCatalog {
 	}
 
 	ServiceProviderConfigResource serviceProviderConfig(URI location) {
-		ServiceProviderConfigResource resource = new ServiceProviderConfigResource(null, new PatchConfig(false),
+		ServiceProviderConfigResource resource = new ServiceProviderConfigResource(null, new PatchConfig(true),
 				new BulkConfig(false, 0, 0), new FilterConfig(false, 0), new ChangePasswordConfig(false),
 				new SortConfig(false), new ETagConfig(false), null, AUTHENTICATION_SCHEMES);
 		resource.setMeta(metadata("ServiceProviderConfig", location));

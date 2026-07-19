@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Atomic, bounded, tenant-scoped SCIM User PATCH operations with SDK-backed paths, filtered values, and confidential protocol errors.
 - Tenant-scoped SCIM User replacement with atomic identifier, profile, and active-state updates, invalidating existing sessions after identity or lifecycle changes.
 - Tenant-scoped SCIM User creation with bounded writable attributes, atomic inactive provisioning, and confidential uniqueness errors.
 - Tenant-scoped SCIM User collection paging with bounded, non-advertised `id` and `userName` equality queries.

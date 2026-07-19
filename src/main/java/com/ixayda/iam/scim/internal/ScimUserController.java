@@ -17,6 +17,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -116,6 +117,29 @@ final class ScimUserController {
 			.header(HttpHeaders.LOCATION, location.toASCIIString())
 			.header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString())
 			.body(this.mapper.map(replaced, location, selection));
+	}
+
+	@PatchMapping(value = USERS_PATH + "/{id}",
+			consumes = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE },
+			produces = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE })
+	ResponseEntity<UserResource> patchUser(@PathVariable String id, @AuthenticationPrincipal Jwt jwt,
+			@RequestBody ObjectNode resource,
+			@RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+			@RequestParam(name = "attributes", required = false) List<String> attributes,
+			@RequestParam(name = "excludedAttributes", required = false) List<String> excludedAttributes)
+			throws ScimException {
+		ScimUserAttributeSelection selection = ScimUserAttributeSelection.parse(attributes, excludedAttributes);
+		if (ifMatch != null) {
+			throw BadRequestException.invalidValue("SCIM entity tags are not supported.");
+		}
+		ScimUserPatchRequest command = ScimUserPatchRequest.parse(resource);
+		TenantId tenantId = this.tenantResolver.resolve(jwt);
+		User patched = this.users.patch(tenantId, id, command);
+		URI location = this.properties.endpoint(USERS_PATH, patched.id().toString());
+		return ResponseEntity.ok()
+			.header(HttpHeaders.LOCATION, location.toASCIIString())
+			.header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString())
+			.body(this.mapper.map(patched, location, selection));
 	}
 
 	@GetMapping(value = USERS_PATH + "/{id}",

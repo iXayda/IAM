@@ -17,7 +17,7 @@ final class ScimUserSchema {
 
 	static final String URN = "urn:ietf:params:scim:schemas:core:2.0:User";
 
-	private static final Map<String, Set<String>> SUPPORTED_ATTRIBUTES = Map.of(
+	static final Map<String, Set<String>> SUPPORTED_ATTRIBUTES = Map.of(
 			"userName", Set.of(),
 			"name", Set.of("formatted", "givenName", "familyName"),
 			"displayName", Set.of(),
@@ -55,23 +55,21 @@ final class ScimUserSchema {
 	private static AttributeDefinition withSupportedSubAttributes(AttributeDefinition definition,
 			Set<String> supportedSubAttributes) {
 		Collection<AttributeDefinition> subAttributes = definition.getSubAttributes();
-		if (subAttributes == null) {
-			return definition;
-		}
-		AttributeDefinition[] selected = subAttributes.stream()
-			.filter((subAttribute) -> supportedSubAttributes.contains(subAttribute.getName()))
-			.toArray(AttributeDefinition[]::new);
 		AttributeDefinition.Builder builder = new AttributeDefinition.Builder()
 			.setName(definition.getName())
 			.setType(definition.getType())
-			.addSubAttributes(selected)
 			.setMultiValued(definition.isMultiValued())
 			.setDescription(definition.getDescription())
-			.setRequired(definition.isRequired())
+			.setRequired(definition.isRequired() || definition.getName().equals("active"))
 			.setCaseExact(definition.isCaseExact())
 			.setMutability(definition.getMutability())
 			.setReturned(definition.getReturned())
 			.setUniqueness(definition.getUniqueness());
+		if (subAttributes != null) {
+			builder.addSubAttributes(subAttributes.stream()
+				.filter((subAttribute) -> supportedSubAttributes.contains(subAttribute.getName()))
+				.toArray(AttributeDefinition[]::new));
+		}
 		if (definition.getCanonicalValues() != null) {
 			builder.addCanonicalValues(definition.getCanonicalValues().toArray(String[]::new));
 		}

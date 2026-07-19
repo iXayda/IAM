@@ -327,7 +327,7 @@ log "Checking native SCIM discovery and protocol errors"
 request_scim /scim/v2/ServiceProviderConfig 200
 jq -e \
 	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"]
-	 and .patch.supported == false
+	 and .patch.supported == true
 	 and .bulk.supported == false
 	 and .filter.supported == false
 	 and .filter.maxResults == 0

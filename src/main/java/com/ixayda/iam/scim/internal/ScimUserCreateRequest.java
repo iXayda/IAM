@@ -116,7 +116,7 @@ record ScimUserCreateRequest(CreateUserRequest request, Boolean active) {
 		return values != null && !values.isEmpty();
 	}
 
-	private static LoginIdentifier primaryIdentifier(String userName) {
+	static LoginIdentifier primaryIdentifier(String userName) {
 		if (userName == null) {
 			throw new IllegalArgumentException("SCIM userName is required");
 		}
@@ -155,7 +155,7 @@ record ScimUserCreateRequest(CreateUserRequest request, Boolean active) {
 		addIdentifier(identifiers, LoginIdentifier.phone(telephoneValue(phoneNumbers.getFirst().getValue())));
 	}
 
-	private static String telephoneValue(String value) {
+	static String telephoneValue(String value) {
 		if (value != null && value.regionMatches(true, 0, "tel:", 0, 4)) {
 			return value.substring(4);
 		}

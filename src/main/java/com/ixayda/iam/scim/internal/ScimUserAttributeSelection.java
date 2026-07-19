@@ -46,6 +46,10 @@ final class ScimUserAttributeSelection {
 				parsePaths(attributes == null ? excludedAttributes : attributes), List.of());
 	}
 
+	static ScimUserAttributeSelection all() {
+		return new ScimUserAttributeSelection(Mode.ALL, List.of(), List.of());
+	}
+
 	ScimUserAttributeSelection requiring(String... attributePath) {
 		List<List<String>> required = new ArrayList<>(this.requiredPaths);
 		required.add(normalize(attributePath));

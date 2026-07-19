@@ -1,9 +1,11 @@
 package com.ixayda.iam.scim.internal;
 
+import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +49,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -403,6 +406,328 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.content(request))
 			.andExpect(status().isForbidden());
 
+		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
+	}
+
+	@Test
+	void patchesATenantScopedUserAtomicallyWithOneRevision() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User current = createUser(tenant.id());
+		String location = "https://scim.example.test/scim/v2/Users/" + current.id();
+		String request = """
+				{
+				  "schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+				  "Operations":[
+				    {"op":"replace","path":"userName","value":"patched-user"},
+				    {"op":"replace","path":"displayName","value":"Patched User"},
+				    {"op":"replace","path":"name.givenName","value":"Patched"},
+				    {"op":"remove","path":"name.familyName"},
+				    {"op":"replace","path":"emails[value eq \\\"alice@example.com\\\"].value",
+				      "value":"patched@example.com"},
+				    {"op":"remove","path":"phoneNumbers"},
+				    {"op":"replace","path":"active","value":false}
+				  ]
+				}
+				""";
+
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("tenant_id", other.id().toString())
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().string(HttpHeaders.LOCATION, location))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, location))
+			.andExpect(header().doesNotExist(HttpHeaders.ETAG))
+			.andExpect(jsonPath("$.id").value(current.id().toString()))
+			.andExpect(jsonPath("$.userName").value("patched-user"))
+			.andExpect(jsonPath("$.displayName").value("Patched User"))
+			.andExpect(jsonPath("$.name.givenName").value("Patched"))
+			.andExpect(jsonPath("$.name.familyName").doesNotExist())
+			.andExpect(jsonPath("$.emails[0].value").value("patched@example.com"))
+			.andExpect(jsonPath("$.phoneNumbers", hasSize(0)))
+			.andExpect(jsonPath("$.active").value(false))
+			.andExpect(jsonPath("$.meta.location").value(location))
+			.andExpect(jsonPath("$.meta.version").doesNotExist());
+
+		User stored = this.users.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(stored.identifiers()).containsExactly(LoginIdentifier.username("patched-user"),
+				LoginIdentifier.email("patched@example.com"));
+		assertThat(stored.profile()).isEqualTo(
+				new UserProfile("Patched User", "Alice Q. Jensen", "Patched", null));
+		assertThat(stored.status()).isEqualTo(UserStatus.DISABLED);
+		assertThat(stored.version()).isEqualTo(current.version() + 1);
+		assertThat(stored.securityVersion()).isEqualTo(current.securityVersion() + 1);
+		assertThat(this.users.findById(other.id(), current.id())).isEmpty();
+	}
+
+	@Test
+	void synchronizesPrimaryEmailAliasesAndAddsComplexValues() throws Exception {
+		Tenant tenant = createTenant();
+		User current = this.users.create(tenant.id(), new CreateUserRequest(
+				List.of(LoginIdentifier.email("primary@example.com")), UserProfile.empty()));
+		String request = """
+				{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+				 "Operations":[
+				   {"op":"replace","path":"emails[VALUE eq \\\"primary@example.com\\\"].value",
+				    "value":"changed@example.com"},
+				   {"op":"add","path":"name","value":{"GivenName":"Provisioned"}}
+				 ]}
+				""";
+
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.userName").value("changed@example.com"))
+			.andExpect(jsonPath("$.emails[0].value").value("changed@example.com"))
+			.andExpect(jsonPath("$.name.givenName").value("Provisioned"));
+
+		User changed = this.users.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(changed.identifiers()).containsExactly(LoginIdentifier.email("changed@example.com"));
+		assertThat(changed.version()).isEqualTo(current.version() + 1);
+		assertThat(changed.securityVersion()).isEqualTo(current.securityVersion() + 1);
+
+		User usernameOnly = this.users.create(tenant.id(),
+				new CreateUserRequest(List.of(LoginIdentifier.username("subattribute-user")), UserProfile.empty()));
+		String createParents = """
+				{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+				 "Operations":[
+				   {"op":"add","path":"emails.value","value":"SUBATTRIBUTE@Example.com"},
+				   {"op":"replace","path":"phoneNumbers.value","value":"+1 (555) 765-4321"}
+				 ]}
+				""";
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", usernameOnly.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(createParents))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.emails[0].value").value("subattribute@example.com"))
+			.andExpect(jsonPath("$.phoneNumbers[0].value").value("tel:+15557654321"));
+		this.mockMvc.perform(get("/scim/v2/Users/{id}", usernameOnly.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.emails[0].value").value("subattribute@example.com"))
+			.andExpect(jsonPath("$.phoneNumbers[0].value").value("tel:+15557654321"));
+	}
+
+	@Test
+	void rejectsUnassigningTheRequiredActiveProjectionWithoutChangingALockedUser() throws Exception {
+		Tenant tenant = createTenant();
+		User locked = this.users.lock(tenant.id(), createUser(tenant.id()).id());
+
+		String remove = "{\"schemas\":[\"" + ScimUserPatchRequest.SCHEMA_URN
+				+ "\"],\"Operations\":[{\"op\":\"remove\",\"path\":\"active\"}]}";
+		for (String request : List.of(remove,
+				patchBody("replace", "active", "null"))) {
+			this.mockMvc.perform(patch("/scim/v2/Users/{id}", locked.id())
+				.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+				.contentType(SCIM_JSON)
+				.accept(SCIM_JSON)
+				.content(request))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.scimType").value("mutability"));
+		}
+
+		assertThat(this.users.findById(tenant.id(), locked.id())).contains(locked);
+	}
+
+	@Test
+	void preservesInternalLockStateAndSupportsProjectedPatchResponses() throws Exception {
+		Tenant tenant = createTenant();
+		User locked = this.users.lock(tenant.id(), createUser(tenant.id()).id());
+		String profilePatch = """
+				{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+				 "Operations":[
+				   {"op":"remove","path":"emails[value eq \\\"missing@example.com\\\"]"},
+				   {"op":"replace","path":"displayName","value":"Locked Profile"},
+				   {"op":"replace","path":"active","value":false}
+				 ]}
+				""";
+
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", locked.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("attributes", "userName,displayName")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(profilePatch))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.userName").value("alice"))
+			.andExpect(jsonPath("$.displayName").value("Locked Profile"))
+			.andExpect(jsonPath("$.active").doesNotExist())
+			.andExpect(jsonPath("$.meta").doesNotExist());
+
+		User profiled = this.users.findById(tenant.id(), locked.id()).orElseThrow();
+		assertThat(profiled.status()).isEqualTo(UserStatus.LOCKED);
+		assertThat(profiled.version()).isEqualTo(locked.version() + 1);
+		assertThat(profiled.securityVersion()).isEqualTo(locked.securityVersion());
+
+		String activatePatch = patchBody("replace", "active", "true");
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", locked.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(activatePatch))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.active").value(true));
+		User active = this.users.findById(tenant.id(), locked.id()).orElseThrow();
+		assertThat(active.status()).isEqualTo(UserStatus.ACTIVE);
+		assertThat(active.securityVersion()).isEqualTo(profiled.securityVersion() + 1);
+	}
+
+	@Test
+	void rollsBackEveryPatchOperationOnUniquenessAndValidationFailures() throws Exception {
+		Tenant tenant = createTenant();
+		createUser(tenant.id(), "patch-reserved");
+		User current = createUser(tenant.id(), "patch-current");
+		String conflict = """
+				{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+				 "Operations":[
+				   {"op":"replace","path":"displayName","value":"Secret Profile"},
+				   {"op":"replace","path":"emails","value":[{"value":"PATCH-RESERVED@example.com"}]}
+				 ]}
+				""";
+
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(conflict))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.scimType").value("uniqueness"))
+			.andExpect(content().string(not(containsString("Secret Profile"))))
+			.andExpect(content().string(not(containsString("PATCH-RESERVED@example.com"))));
+		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
+
+		String invalid = """
+				{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+				 "Operations":[
+				   {"op":"replace","path":"displayName","value":"Not Committed"},
+				   {"op":"remove","path":"userName"}
+				 ]}
+				""";
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(invalid))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("mutability"))
+			.andExpect(content().string(not(containsString("Not Committed"))));
+		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
+
+		String repaired = """
+				{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+				 "Operations":[
+				   {"op":"replace","path":"active","value":"invalid-intermediate"},
+				   {"op":"replace","path":"active","value":true}
+				 ]}
+				""";
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(repaired))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"))
+			.andExpect(content().string(not(containsString("invalid-intermediate"))));
+		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
+	}
+
+	@Test
+	void doesNotPatchInvisibleUsersOrUpsertMissingUsers() throws Exception {
+		Tenant owner = createTenant();
+		Tenant other = createTenant();
+		Tenant disabled = createTenant();
+		User visible = createUser(owner.id());
+		User deleted = createUser(owner.id(), "patch-deleted");
+		User disabledTenantUser = createUser(disabled.id(), "patch-disabled");
+		this.users.delete(owner.id(), deleted.id());
+		this.tenants.disable(disabled.id());
+		long countBefore = userCount();
+
+		String missing = patchResponseBody(owner.id(), UUID.randomUUID().toString());
+		String malformed = patchResponseBody(owner.id(), "not-a-uuid");
+		String nonCanonical = patchResponseBody(owner.id(), visible.id().toString().toUpperCase(Locale.ROOT));
+		String crossTenant = patchResponseBody(other.id(), visible.id().toString());
+		String deletedBody = patchResponseBody(owner.id(), deleted.id().toString());
+		String disabledTenantBody = patchResponseBody(disabled.id(), disabledTenantUser.id().toString());
+
+		assertThat(List.of(malformed, nonCanonical, crossTenant, deletedBody, disabledTenantBody)).containsOnly(missing);
+		assertThat(missing).contains(NOT_FOUND_DETAIL).doesNotContain(visible.id().toString());
+		assertThat(userCount()).isEqualTo(countBefore);
+	}
+
+	@Test
+	void rejectsUnsupportedPatchPreconditionsInvalidProjectionAndReadOnlyScope() throws Exception {
+		Tenant tenant = createTenant();
+		User current = createUser(tenant.id());
+		String request = patchBody("replace", "displayName", "\"Patched\"");
+
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.header(HttpHeaders.IF_MATCH, "*")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("attributes", "userName")
+			.queryParam("excludedAttributes", "emails")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+		this.mockMvc.perform(patch("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isForbidden());
+		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
+	}
+
+	@Test
+	void rejectsChunkedScimBodiesBeforeMaterializingAnOversizedPatch() throws Exception {
+		Tenant tenant = createTenant();
+		User current = createUser(tenant.id());
+		byte[] payload = patchBody("replace", "displayName", "\"" + "x".repeat(128 * 1024) + "\"")
+			.getBytes(StandardCharsets.UTF_8);
+		HttpRequest.BodyPublisher publisher = HttpRequest.BodyPublishers
+			.ofInputStream(() -> new ByteArrayInputStream(payload));
+
+		assertThat(publisher.contentLength()).isEqualTo(-1);
+		HttpRequest request = HttpRequest.newBuilder(
+				URI.create("http://127.0.0.1:" + this.port + "/scim/v2/Users/" + current.id()))
+			.version(HttpClient.Version.HTTP_1_1)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.header(HttpHeaders.CONTENT_TYPE, SCIM_JSON.toString())
+			.header(HttpHeaders.ACCEPT, SCIM_JSON.toString())
+			.method("PATCH", publisher)
+			.build();
+
+		HttpResponse<String> response = this.httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.version()).isEqualTo(HttpClient.Version.HTTP_1_1);
+		assertThat(response.statusCode()).isEqualTo(413);
+		assertThat(response.headers().firstValue(HttpHeaders.CONTENT_TYPE)).hasValueSatisfying(
+				(value) -> assertThat(MediaType.parseMediaType(value).isCompatibleWith(SCIM_JSON)).isTrue());
+		JsonNode body = JSON.readTree(response.body());
+		assertThat(body.get("schemas").get(0).stringValue()).isEqualTo(ERROR_SCHEMA);
+		assertThat(body.get("status").stringValue()).isEqualTo("413");
+		assertThat(body.get("scimType").stringValue()).isEqualTo("tooMany");
+		assertThat(body.get("detail").stringValue())
+			.isEqualTo("The SCIM request body exceeds the supported size limit.");
 		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
 	}
 
@@ -793,6 +1118,26 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
 			.andReturn();
 		return result.getResponse().getContentAsString();
+	}
+
+	private String patchResponseBody(TenantId tenantId, String userId) throws Exception {
+		MvcResult result = this.mockMvc.perform(patch("/scim/v2/Users/{id}", userId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(patchBody("replace", "displayName", "\"Not Upserted\"")))
+			.andExpect(status().isNotFound())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("404"))
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
+			.andReturn();
+		return result.getResponse().getContentAsString();
+	}
+
+	private static String patchBody(String op, String path, String value) {
+		return "{\"schemas\":[\"" + ScimUserPatchRequest.SCHEMA_URN + "\"],\"Operations\":[{\"op\":\""
+				+ op + "\",\"path\":\"" + path + "\",\"value\":" + value + "}]}";
 	}
 
 	private void assertReplaceError(TenantId tenantId, String userId, String request, String scope,

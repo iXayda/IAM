@@ -62,7 +62,7 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 		assertThat(response.headers().firstValue(HttpHeaders.CONTENT_LOCATION))
 			.hasValue("https://scim.example.test/scim/v2/ServiceProviderConfig");
 		JsonNode body = JSON.readTree(response.body());
-		assertThat(body.get("patch").get("supported").booleanValue()).isFalse();
+		assertThat(body.get("patch").get("supported").booleanValue()).isTrue();
 		assertThat(body.get("meta").get("location").stringValue())
 			.isEqualTo("https://scim.example.test/scim/v2/ServiceProviderConfig");
 	}
@@ -76,7 +76,7 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 					"https://scim.example.test/scim/v2/ServiceProviderConfig"))
 			.andExpect(jsonPath("$.schemas[0]")
 				.value("urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"))
-			.andExpect(jsonPath("$.patch.supported").value(false))
+			.andExpect(jsonPath("$.patch.supported").value(true))
 			.andExpect(jsonPath("$.bulk.supported").value(false))
 			.andExpect(jsonPath("$.bulk.maxOperations").value(0))
 			.andExpect(jsonPath("$.bulk.maxPayloadSize").value(0))
@@ -110,9 +110,13 @@ class ScimMetadataWebIntegrationTests extends ApplicationIntegrationTest {
 					"userName", "name", "displayName", "active", "emails", "phoneNumbers")))
 			.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'name')].subAttributes[*].name",
 					containsInAnyOrder("formatted", "givenName", "familyName")))
-			.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'emails')].subAttributes[*].name",
-					containsInAnyOrder("value")))
-			.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("Schema"));
+				.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'emails')].subAttributes[*].name",
+						containsInAnyOrder("value")))
+				.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'active')].required")
+					.value(containsInAnyOrder(true)))
+				.andExpect(jsonPath("$.Resources[0].attributes[?(@.name == 'active')].mutability")
+					.value(containsInAnyOrder("readWrite")))
+				.andExpect(jsonPath("$.Resources[0].meta.resourceType").value("Schema"));
 
 		this.mockMvc.perform(get("/scim/v2/ResourceTypes").accept(SCIM_JSON))
 			.andExpect(status().isOk())

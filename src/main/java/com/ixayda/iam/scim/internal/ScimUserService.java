@@ -27,9 +27,15 @@ class ScimUserService {
 
 	private final UserOperations users;
 
-	ScimUserService(TenantOperations tenants, UserOperations users) {
+	private final ScimUserMapper mapper;
+
+	private final ScimJsonCodec codec;
+
+	ScimUserService(TenantOperations tenants, UserOperations users, ScimUserMapper mapper, ScimJsonCodec codec) {
 		this.tenants = tenants;
 		this.users = users;
+		this.mapper = mapper;
+		this.codec = codec;
 	}
 
 	User find(TenantId tenantId, String userId) throws ResourceNotFoundException {
@@ -94,6 +100,25 @@ class ScimUserService {
 		}
 		catch (UserConcurrentUpdateException exception) {
 			throw new ResourceConflictException("The SCIM User changed during replacement.");
+		}
+		catch (TenantDisabledException | TenantNotFoundException | UserNotFoundException exception) {
+			throw notFound();
+		}
+	}
+
+	public User patch(TenantId tenantId, String userId, ScimUserPatchRequest command)
+			throws ResourceConflictException, ResourceNotFoundException, BadRequestException {
+		User current = find(tenantId, userId);
+		try {
+			return this.users.replace(tenantId, current.id(), current.version(),
+					command.apply(current, this.mapper, this.codec));
+		}
+		catch (UserAlreadyExistsException exception) {
+			throw ResourceConflictException.uniqueness(
+					"A SCIM User with the same login identifier already exists.");
+		}
+		catch (UserConcurrentUpdateException exception) {
+			throw new ResourceConflictException("The SCIM User changed during patching.");
 		}
 		catch (TenantDisabledException | TenantNotFoundException | UserNotFoundException exception) {
 			throw notFound();
