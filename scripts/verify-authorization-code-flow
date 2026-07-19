@@ -582,6 +582,38 @@ status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-ou
 		 and .members == [{value:$user_id,type:"User",("$ref"):$user_location}]' \
 		"${body}" >/dev/null \
 	|| fail "Replaced SCIM Group was not readable through the native service"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --request PATCH \
+	--header 'Accept: application/scim+json' --header 'Content-Type: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	--data "$(jq -nc --arg remove_id "${USER_ID}" --arg add_id "${created_scim_user_id}" \
+		'{schemas:["urn:ietf:params:scim:api:messages:2.0:PatchOp"],Operations:[
+		  {op:"replace",path:"displayName",value:"Release Patched Group"},
+		  {op:"remove",path:("members[value eq \"" + $remove_id + "\"]")},
+		  {op:"add",path:"members",value:[{value:$add_id}]}
+		]}')" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "200" ]] || fail "SCIM write token did not patch a tenant group: HTTP ${status}"
+jq -e --arg id "${created_scim_group_id}" --arg location "${created_scim_group_location}" \
+	--arg user_id "${created_scim_user_id}" --arg user_location "${created_scim_user_location}" \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:Group"] and .id == $id
+	 and .displayName == "Release Patched Group" and .members == [{value:$user_id,type:"User",("$ref"):$user_location}]
+	 and .meta.resourceType == "Group" and .meta.location == $location and (.meta | has("version") | not)' \
+	"${body}" >/dev/null || fail "Patched SCIM Group representation is invalid"
+[[ "$(header_value Location "${headers}")" == "${created_scim_group_location}" \
+	&& "$(header_value Content-Location "${headers}")" == "${created_scim_group_location}" \
+	&& -z "$(header_value ETag "${headers}")" ]] \
+	|| fail "Patched SCIM Group headers are invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Groups/${created_scim_group_id}")"
+[[ "${status}" == "200" ]] \
+	&& jq -e --arg id "${created_scim_group_id}" --arg user_id "${created_scim_user_id}" \
+		--arg user_location "${created_scim_user_location}" \
+		'.id == $id and .displayName == "Release Patched Group"
+		 and .members == [{value:$user_id,type:"User",("$ref"):$user_location}]' \
+		"${body}" >/dev/null \
+	|| fail "Patched SCIM Group was not readable through the native service"
 
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request DELETE --header 'Accept: application/scim+json' \

@@ -34,9 +34,19 @@ class ScimGroupService {
 
 	private final GroupOperations groups;
 
-	ScimGroupService(TenantOperations tenants, GroupOperations groups) {
+	private final ScimGroupMapper mapper;
+
+	private final ScimJsonCodec codec;
+
+	private final ScimProperties properties;
+
+	ScimGroupService(TenantOperations tenants, GroupOperations groups, ScimGroupMapper mapper, ScimJsonCodec codec,
+			ScimProperties properties) {
 		this.tenants = tenants;
 		this.groups = groups;
+		this.mapper = mapper;
+		this.codec = codec;
+		this.properties = properties;
 	}
 
 	ScimGroupView find(TenantId tenantId, String groupId) throws ResourceNotFoundException, BadRequestException {
@@ -120,6 +130,26 @@ class ScimGroupService {
 		}
 		catch (GroupConcurrentUpdateException exception) {
 			throw new ResourceConflictException("The SCIM Group changed during replacement.");
+		}
+		catch (TenantDisabledException | TenantNotFoundException | GroupNotFoundException exception) {
+			throw notFound();
+		}
+		catch (UserNotFoundException | GroupMembershipLimitExceededException exception) {
+			throw invalidMembers();
+		}
+	}
+
+	@Transactional(rollbackFor = com.unboundid.scim2.common.exceptions.ScimException.class)
+	public ScimGroupView patch(TenantId tenantId, String groupId, ScimGroupPatchRequest command)
+			throws ResourceConflictException, ResourceNotFoundException, BadRequestException {
+		ScimGroupView current = find(tenantId, groupId);
+		try {
+			Group replaced = this.groups.replace(tenantId, current.group().id(), current.group().version(),
+					command.apply(current, this.mapper, this.codec, this.properties));
+			return new ScimGroupView(replaced, this.groups.findMembers(tenantId, replaced.id()));
+		}
+		catch (GroupConcurrentUpdateException exception) {
+			throw new ResourceConflictException("The SCIM Group changed during patching.");
 		}
 		catch (TenantDisabledException | TenantNotFoundException | GroupNotFoundException exception) {
 			throw notFound();

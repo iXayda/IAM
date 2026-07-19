@@ -40,10 +40,14 @@ final class ScimGroupAttributeSelection {
 			throw invalidSelection();
 		}
 		if (attributes == null && excludedAttributes == null) {
-			return new ScimGroupAttributeSelection(Mode.ALL, List.of(), List.of());
+			return all();
 		}
 		return new ScimGroupAttributeSelection(attributes == null ? Mode.EXCLUDE : Mode.INCLUDE,
 				parsePaths(attributes == null ? excludedAttributes : attributes), List.of());
+	}
+
+	static ScimGroupAttributeSelection all() {
+		return new ScimGroupAttributeSelection(Mode.ALL, List.of(), List.of());
 	}
 
 	ScimGroupAttributeSelection requiring(String... attributePath) {

@@ -27,8 +27,22 @@ final class ScimGroupMapper {
 		if (group.isDeleted()) {
 			throw new IllegalArgumentException("Deleted groups cannot be mapped to SCIM resources");
 		}
-		GroupResource resource = new GroupResource();
+		GroupResource resource = mapWritable(view, selection);
 		resource.setId(group.id().toString());
+		resource.setMeta(metadata(group, location, selection));
+		return resource;
+	}
+
+	GroupResource mapWritable(ScimGroupView view) {
+		return mapWritable(view, ScimGroupAttributeSelection.all());
+	}
+
+	private GroupResource mapWritable(ScimGroupView view, ScimGroupAttributeSelection selection) {
+		Group group = view.group();
+		if (group.isDeleted()) {
+			throw new IllegalArgumentException("Deleted groups cannot be mapped to SCIM resources");
+		}
+		GroupResource resource = new GroupResource();
 		if (selection.includes("displayName")) {
 			resource.setDisplayName(group.displayName());
 		}
@@ -38,7 +52,6 @@ final class ScimGroupMapper {
 				.map((membership) -> member(membership, selection))
 				.toList());
 		}
-		resource.setMeta(metadata(group, location, selection));
 		return resource;
 	}
 

@@ -129,7 +129,7 @@ IAM 不负责：
 - 有界的 SCIM Users 集合分页，以及 `id`、`userName` 精确查询
 - 有界的 SCIM Groups 集合分页，以及 `id`、`displayName` 精确查询
 - 租户隔离的 SCIM User 创建、受限可写属性和不泄露标识的唯一性冲突响应
-- 租户隔离的 SCIM Group 创建与完整替换、原子 direct User 成员关系和规范成员引用
+- 租户隔离的 SCIM Group 创建、完整替换与原子局部修改，以及规范的 direct User 成员关系
 - 租户隔离的 SCIM User 完整替换、原子局部修改与软删除，以及标识更新和内部锁定状态保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
@@ -246,6 +246,7 @@ GET /scim/v2/Groups
 GET /scim/v2/Groups/{id}
 POST /scim/v2/Groups
 PUT /scim/v2/Groups/{id}
+PATCH /scim/v2/Groups/{id}
 ```
 
 discovery 接口匿名开放。Users 和 Groups 读取使用带 `scim.read` scope 的机器 token，资源写入使用
@@ -275,6 +276,9 @@ URN 必填；`members` 可省略，每项必须引用当前租户内未删除的
 `null` 或空数组的 `members` 解释为空成员集。Group profile 与成员关系在单一事务中更新，一次实际替换
 只推进一次 Group directory revision；重复引用按规范化 User ID 去重，失败时不会留下 Group、membership
 或 User directory revision 的部分变更。
+Group PATCH 按请求顺序原子执行 `add`、`remove` 和 `replace`，支持无 path 属性对象、`displayName`、
+完整 `members` 集合以及 `members[value eq "User UUID"]` 选择。删除不存在的成员是成功的 no-op；过滤
+replace 未命中时返回固定 `noTarget`。成员子属性不可单独修改，任一操作或成员校验失败时全部回滚。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：

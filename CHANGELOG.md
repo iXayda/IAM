@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Atomic, ordered SCIM Group PATCH operations with SDK-backed paths, bounded direct User membership changes, and confidential failures.
 - Tenant-scoped SCIM Group replacement with atomic profile and direct User membership updates, canonical responses, and confidential failures.
 - Tenant-scoped SCIM Group creation with atomic, bounded direct User members, canonical references, and confidential member validation.
 - Tenant-scoped SCIM Group retrieval and bounded collection paging with capped direct User members, projected attributes, and exact `id` or `displayName` queries.
