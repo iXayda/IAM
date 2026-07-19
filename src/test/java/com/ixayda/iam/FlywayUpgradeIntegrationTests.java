@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
-	private static final int CURRENT_SCHEMA_VERSION = 21;
+	private static final int CURRENT_SCHEMA_VERSION = 22;
 
 	private static final UUID TENANT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742901");
 
@@ -31,6 +31,12 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
 	private static final UUID INVALID_SERVICE_CLIENT_ID =
 			UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742908");
+
+	private static final UUID ADMIN_USER_ID =
+			UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742909");
+
+	private static final UUID ADMIN_APPROVER_ID =
+			UUID.fromString("019c61d7-47d1-79ca-8052-1b731e74290a");
 
 	@Autowired
 	private DataSource dataSource;
@@ -279,12 +285,77 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			assertThat(historical.migrate().migrationsExecuted).isEqualTo(20);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
 			assertThat(count(jdbc, schema, "admin_roles")).isEqualTo(5);
 			assertThat(count(jdbc, schema, "admin_permissions")).isEqualTo(23);
 			assertThat(count(jdbc, schema, "admin_role_permissions")).isEqualTo(38);
 			assertThat(count(jdbc, schema, "admin_role_grant_rules")).isEqualTo(8);
 			assertThat(count(jdbc, schema, "admin_role_bindings")).isZero();
+			assertThat(current.validateWithResult().validationSuccessful).isTrue();
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
+			assertThat(current.migrate().migrationsExecuted).isZero();
+		}
+		finally {
+			jdbc.sql("DROP SCHEMA IF EXISTS " + schema + " CASCADE").update();
+		}
+	}
+
+	@Test
+	void preservesExistingAdminRoleBindingsWhenAddingLifecycleHistory() {
+		String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		JdbcClient jdbc = JdbcClient.create(this.dataSource);
+		try {
+			Flyway historical = flyway(schema, "21");
+			assertThat(historical.migrate().migrationsExecuted).isEqualTo(21);
+			jdbc.sql("""
+					INSERT INTO %s.users (user_id, tenant_id)
+					VALUES
+					    (:adminUserId, '00000000-0000-0000-0000-000000000001'),
+					    (:approverId, '00000000-0000-0000-0000-000000000001')
+					""".formatted(schema))
+				.param("adminUserId", ADMIN_USER_ID)
+				.param("approverId", ADMIN_APPROVER_ID)
+				.update();
+			jdbc.sql("""
+					INSERT INTO %s.admin_role_bindings
+					    (tenant_id, user_id, role_code, binding_type, created_by_user_id,
+					     reason, expires_at, created_at, updated_at)
+					VALUES
+					    ('00000000-0000-0000-0000-000000000001', :adminUserId,
+					     'support', 'permanent', :approverId, 'Support rotation', NULL,
+					     '2026-07-20T00:00:00Z', '2026-07-20T00:00:00Z'),
+					    ('00000000-0000-0000-0000-000000000001', :adminUserId,
+					     'auditor', 'jit', :approverId, 'Incident review',
+					     '2026-07-20T04:00:00Z', '2026-07-20T00:00:00Z', '2026-07-20T00:00:00Z')
+					""".formatted(schema))
+				.param("adminUserId", ADMIN_USER_ID)
+				.param("approverId", ADMIN_APPROVER_ID)
+				.update();
+
+			Flyway current = flyway(schema, null);
+			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(jdbc.sql("""
+					SELECT count(*) = 2
+					   AND count(DISTINCT binding_id) = 2
+					   AND bool_and(status = 'active')
+					   AND bool_and(version = 0)
+					   AND bool_and(revoked_by_user_id IS NULL)
+					   AND bool_and(revoked_at IS NULL)
+					FROM %s.admin_role_bindings
+					WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
+					  AND user_id = :adminUserId
+					""".formatted(schema))
+				.param("adminUserId", ADMIN_USER_ID)
+				.query(Boolean.class)
+				.single()).isTrue();
+			assertThat(jdbc.sql("""
+					SELECT string_agg(role_code || ':' || binding_type || ':' || reason, ',' ORDER BY role_code)
+					FROM %s.admin_role_bindings
+					WHERE user_id = :adminUserId
+					""".formatted(schema))
+				.param("adminUserId", ADMIN_USER_ID)
+				.query(String.class)
+				.single()).isEqualTo("auditor:jit:Incident review,support:permanent:Support rotation");
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
 			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(current.migrate().migrationsExecuted).isZero();
