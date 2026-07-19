@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
-	private static final int CURRENT_SCHEMA_VERSION = 20;
+	private static final int CURRENT_SCHEMA_VERSION = 21;
 
 	private static final UUID TENANT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742901");
 
@@ -261,6 +261,30 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					     'client_credentials', 'openid')
 					""".formatted(schema)).param("clientId", CLIENT_ID).update())
 				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+			assertThat(current.validateWithResult().validationSuccessful).isTrue();
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
+			assertThat(current.migrate().migrationsExecuted).isZero();
+		}
+		finally {
+			jdbc.sql("DROP SCHEMA IF EXISTS " + schema + " CASCADE").update();
+		}
+	}
+
+	@Test
+	void upgradesExistingInstallationsToAdminRbac() {
+		String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		JdbcClient jdbc = JdbcClient.create(this.dataSource);
+		try {
+			Flyway historical = flyway(schema, "20");
+			assertThat(historical.migrate().migrationsExecuted).isEqualTo(20);
+
+			Flyway current = flyway(schema, null);
+			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(count(jdbc, schema, "admin_roles")).isEqualTo(5);
+			assertThat(count(jdbc, schema, "admin_permissions")).isEqualTo(23);
+			assertThat(count(jdbc, schema, "admin_role_permissions")).isEqualTo(38);
+			assertThat(count(jdbc, schema, "admin_role_grant_rules")).isEqualTo(8);
+			assertThat(count(jdbc, schema, "admin_role_bindings")).isZero();
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
 			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(current.migrate().migrationsExecuted).isZero();
