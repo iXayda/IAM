@@ -125,6 +125,7 @@ IAM 不负责：
 - SCIM Users/Groups 资源命名空间的专用 JWT profile 校验与 `scim.read` / `scim.write` 授权边界
 - SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - 租户隔离的 SCIM User 单资源读取、属性选择和统一的资源不可见响应
+- 租户隔离的 SCIM Group 单资源读取、direct User 成员引用和统一的资源不可见响应
 - 有界的 SCIM Users 集合分页，以及 `id`、`userName` 精确查询
 - 租户隔离的 SCIM User 创建、受限可写属性和不泄露标识的唯一性冲突响应
 - 租户隔离的 SCIM User 完整替换、原子局部修改与软删除，以及标识更新和内部锁定状态保护
@@ -239,6 +240,7 @@ POST /scim/v2/Users
 PUT /scim/v2/Users/{id}
 PATCH /scim/v2/Users/{id}
 DELETE /scim/v2/Users/{id}
+GET /scim/v2/Groups/{id}
 ```
 
 discovery 接口匿名开放。Users 读取使用带 `scim.read` scope 的机器 token，创建使用 `scim.write`，
@@ -259,8 +261,10 @@ User URN 路径以及 `emails.value`、`phoneNumbers.value` 的过滤 add/remove
 phone 形式的 `userName` 与对应的 `emails` 或 `phoneNumbers` 值是同一登录标识；修改 linked value 会同步
 `userName`，删除 primary alias 或用不同 secondary value 覆盖它会被拒绝。SCIM POST、PUT 和 PATCH 请求体
 限制为 128 KiB。DELETE 使用 `scim.write`，成功时返回空的 `204 No Content`；删除后资源不可见，但出于
-账号接管防护，原有 `userName`、email 和 phone 登录标识保持保留，不能立即用于创建新用户。Groups
-provisioning 尚未实现。
+账号接管防护，原有 `userName`、email 和 phone 登录标识保持保留，不能立即用于创建新用户。
+
+Groups 单资源读取使用 `scim.read`，返回 direct User members 的 `value`、`type: User` 和 canonical `$ref`，
+并支持 `attributes`、`excludedAttributes`。Groups 集合查询和写入 provisioning 尚未实现。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：

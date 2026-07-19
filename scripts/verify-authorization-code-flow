@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly TENANT_ID="00000000-0000-0000-0000-000000000001"
 readonly USER_ID="00000000-0000-0000-0000-000000000101"
+readonly GROUP_ID="00000000-0000-0000-0000-000000000104"
 readonly CLIENT_ID="00000000-0000-0000-0000-000000000102"
 readonly CLIENT_IDENTIFIER="release-check-client"
 readonly SERVICE_CLIENT_ID="00000000-0000-0000-0000-000000000103"
@@ -102,7 +103,7 @@ decode_jwt_payload() {
 seed_fixture() {
 	database --set=user_id="${USER_ID}" --set=client_id="${CLIENT_ID}" \
 		--set=service_client_id="${SERVICE_CLIENT_ID}" \
-		--set=tenant_id="${TENANT_ID}" --set=username="${USERNAME}" \
+		--set=tenant_id="${TENANT_ID}" --set=group_id="${GROUP_ID}" --set=username="${USERNAME}" \
 		--set=encoded_password="${ENCODED_PASSWORD}" --set=client_identifier="${CLIENT_IDENTIFIER}" \
 		--set=service_client_identifier="${SERVICE_CLIENT_IDENTIFIER}" \
 		--set=encoded_client_secret="${ENCODED_CLIENT_SECRET}" \
@@ -116,6 +117,10 @@ VALUES
     (:'tenant_id', :'user_id', 'username', :'username', :'username');
 INSERT INTO user_password_credentials (tenant_id, user_id, encoded_password)
 VALUES (:'tenant_id', :'user_id', :'encoded_password');
+INSERT INTO groups (group_id, tenant_id, display_name)
+VALUES (:'group_id', :'tenant_id', 'Release Check Group');
+INSERT INTO group_memberships (tenant_id, group_id, user_id)
+VALUES (:'tenant_id', :'group_id', :'user_id');
 INSERT INTO oauth_clients
 	    (client_id, tenant_id, client_identifier, display_name, client_type, authentication_method,
 	     encoded_client_secret, client_secret_issued_at, client_secret_expires_at,
@@ -391,6 +396,21 @@ jq -e --arg id "${USER_ID}" --arg username "${USERNAME}" --arg location "${scim_
 [[ "$(header_value Content-Location "${headers}")" == "${scim_user_location}" ]] \
 	|| fail "SCIM user Content-Location is invalid"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Groups/${GROUP_ID}")"
+[[ "${status}" == "200" ]] || fail "SCIM read token did not retrieve its tenant group: HTTP ${status}"
+scim_group_location="${scim_base_url}/Groups/${GROUP_ID}"
+jq -e --arg id "${GROUP_ID}" --arg user_id "${USER_ID}" --arg user_location "${scim_user_location}" \
+	--arg location "${scim_group_location}" \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:Group"]
+	 and .id == $id and .displayName == "Release Check Group"
+	 and .members == [{"value":$user_id,"$ref":$user_location,"type":"User"}]
+	 and .meta.resourceType == "Group" and .meta.location == $location' \
+	"${body}" >/dev/null || fail "SCIM group representation is invalid"
+[[ "$(header_value Content-Location "${headers}")" == "${scim_group_location}" ]] \
+	|| fail "SCIM group Content-Location is invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
 	--write-out '%{http_code}' --get \
 	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
 	--data-urlencode "filter=userName eq \"${USERNAME}\"" --data-urlencode 'count=1' \
@@ -422,6 +442,11 @@ jq -e \
 	 and (.refresh_token | not) and (.id_token | not)' \
 	"${service_token_response}" >/dev/null || fail "Client Credentials write-token response is invalid"
 service_write_access_token="$(jq -er '.access_token' "${service_token_response}")"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_write_access_token}" \
+	"${base_url}/scim/v2/Groups/${GROUP_ID}")"
+[[ "${status}" == "403" ]] && jq -e '.status == "403"' "${body}" >/dev/null \
+	|| fail "SCIM Group read was not rejected for a write-only token"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
 	--write-out '%{http_code}' --request POST \
 	--header 'Accept: application/scim+json' --header 'Content-Type: application/scim+json' \

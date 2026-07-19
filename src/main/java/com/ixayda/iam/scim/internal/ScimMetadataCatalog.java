@@ -22,8 +22,6 @@ import org.springframework.stereotype.Component;
 @Component
 final class ScimMetadataCatalog {
 
-	private static final String GROUPS_PATH = "/Groups";
-
 	private static final List<AuthenticationScheme> AUTHENTICATION_SCHEMES = List.of(new AuthenticationScheme(
 			"OAuth 2.0 Bearer Token", "OAuth 2.0 bearer tokens scoped to a tenant and the SCIM resource server.",
 			URI.create("https://www.rfc-editor.org/rfc/rfc6750"), null, "oauthbearertoken", true));
@@ -44,7 +42,7 @@ final class ScimMetadataCatalog {
 		userResourceType.setMeta(metadata("ResourceType", properties.endpoint(
 				ScimMetadataController.RESOURCE_TYPES_PATH, "User")));
 		ResourceTypeResource groupResourceType = new ResourceTypeResource("Group", "Group",
-				URI.create(GROUPS_PATH), URI.create(ScimGroupSchema.URN));
+				URI.create(ScimGroupController.GROUPS_PATH), URI.create(ScimGroupSchema.URN));
 		groupResourceType.setMeta(metadata("ResourceType", properties.endpoint(
 				ScimMetadataController.RESOURCE_TYPES_PATH, "Group")));
 		this.schemas = List.of(userSchema, groupSchema);
