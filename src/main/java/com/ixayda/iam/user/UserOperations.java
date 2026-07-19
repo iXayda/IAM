@@ -19,6 +19,8 @@ public interface UserOperations {
 
 	User updateProfile(TenantId tenantId, UserId userId, long expectedVersion, UserProfile profile);
 
+	User replace(TenantId tenantId, UserId userId, long expectedVersion, ReplaceUserRequest request);
+
 	User activate(TenantId tenantId, UserId userId);
 
 	User disable(TenantId tenantId, UserId userId);

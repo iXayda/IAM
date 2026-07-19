@@ -127,6 +127,7 @@ IAM 不负责：
 - 租户隔离的 SCIM User 单资源读取、属性选择和统一的资源不可见响应
 - 有界的 SCIM Users 集合分页，以及 `id`、`userName` 精确查询
 - 租户隔离的 SCIM User 创建、受限可写属性和不泄露标识的唯一性冲突响应
+- 租户隔离的 SCIM User 完整替换、原子标识更新和内部锁定状态保护
 - Actuator 健康检查、Prometheus 指标和 OpenTelemetry tracing
 - 接入本地密码登录的 Redis 原子限流、隐私保护键空间和多实例共享计数
 - Redis 一次性安全状态、租户与用途绑定、原子消费和自动过期
@@ -235,6 +236,7 @@ GET /scim/v2/ResourceTypes/{id}
 GET /scim/v2/Users
 GET /scim/v2/Users/{id}
 POST /scim/v2/Users
+PUT /scim/v2/Users/{id}
 ```
 
 discovery 接口匿名开放。Users 读取使用带 `scim.read` scope 的机器 token，创建使用 `scim.write`，
@@ -242,10 +244,12 @@ discovery 接口匿名开放。Users 读取使用带 `scim.read` scope 的机器
 中宣告为通用 filtering 能力的 `id eq`、`userName eq` 精确查询；所有返回资源的操作均支持
 `attributes`、`excludedAttributes`。
 
-创建 User 时 `userName` 和唯一的 core User schema URN 必填；支持 `displayName`、`name.formatted`、
+创建和完整替换 User 时 `userName` 和唯一的 core User schema URN 必填；支持 `displayName`、`name.formatted`、
 `name.givenName`、`name.familyName`、单个 `emails.value`、单个 `phoneNumbers.value` 和 `active`。
 `id`、`meta`、`groups` 按 read-only 规则忽略，其他未发布的写属性返回固定 `invalidValue`。
-Users 更新、删除以及 Groups provisioning 尚未实现。
+PUT 会清空请求中省略的可选资料和登录标识；省略或设置 `active: null` 时保留当前状态，显式
+`active: false` 不会把内部 `LOCKED` 状态降级。登录标识或 active 状态发生变化时，现有用户会话失效；
+仅资料变化不影响会话。SCIM PATCH、Users 删除以及 Groups provisioning 尚未实现。
 部署必须通过 `IAM_SCIM_BASE_URL` 提供客户端可访问的 canonical SCIM base URL。
 
 IAM 管理与自服务接口：

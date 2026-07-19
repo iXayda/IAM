@@ -17,6 +17,7 @@ import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginIdentifier;
+import com.ixayda.iam.user.LoginKey;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserOperations;
 import com.ixayda.iam.user.UserProfile;
@@ -47,6 +48,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -147,9 +149,9 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 		String request = """
 				{
 				  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
-				  "id": "client-controlled-id",
-				  "meta": {"location": "https://attacker.example.test/Users/1"},
-				  "groups": [{"value": "client-controlled-group"}],
+				  "id": {"invalid": "client-controlled-id"},
+				  "meta": 42,
+				  "groups": "invalid-read-only-groups",
 				  "userName": "provisioned-user",
 				  "displayName": "Provisioned User",
 				  "name": {
@@ -218,6 +220,190 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.active").doesNotExist())
 			.andExpect(jsonPath("$.meta.location").isNotEmpty())
 			.andExpect(jsonPath("$.meta.created").doesNotExist());
+	}
+
+	@Test
+	void replacesATenantScopedUserAndIgnoresReadOnlyAttributesOfAnyType() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User current = createUser(tenant.id());
+		String location = "https://scim.example.test/scim/v2/Users/" + current.id();
+		String request = """
+				{
+				  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+				  "id": {"invalid": true},
+				  "meta": 42,
+				  "groups": "invalid-read-only-value",
+				  "futureAttribute": {"ignored": true},
+				  "userName": "replacement-user",
+				  "displayName": "Replacement User",
+				  "name": {"formatted": "Replacement Q. User", "givenName": "Replacement", "familyName": "User"},
+				  "emails": [{"value": "Replacement@Example.com"}],
+				  "phoneNumbers": [{"value": "tel:+1-555-123-4501"}],
+				  "active": false
+				}
+				""";
+
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("tenant_id", other.id().toString())
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isOk())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(header().string(HttpHeaders.LOCATION, location))
+			.andExpect(header().string(HttpHeaders.CONTENT_LOCATION, location))
+			.andExpect(header().doesNotExist(HttpHeaders.ETAG))
+			.andExpect(jsonPath("$.schemas[0]").value(ScimUserSchema.URN))
+			.andExpect(jsonPath("$.id").value(current.id().toString()))
+			.andExpect(jsonPath("$.userName").value("replacement-user"))
+			.andExpect(jsonPath("$.displayName").value("Replacement User"))
+			.andExpect(jsonPath("$.name.formatted").value("Replacement Q. User"))
+			.andExpect(jsonPath("$.emails[0].value").value("replacement@example.com"))
+			.andExpect(jsonPath("$.phoneNumbers[0].value").value("tel:+15551234501"))
+			.andExpect(jsonPath("$.active").value(false))
+			.andExpect(jsonPath("$.meta.location").value(location))
+			.andExpect(jsonPath("$.futureAttribute").doesNotExist())
+			.andExpect(jsonPath("$.groups").doesNotExist());
+
+		User stored = this.users.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(stored.status()).isEqualTo(UserStatus.DISABLED);
+		assertThat(stored.version()).isEqualTo(current.version() + 1);
+		assertThat(stored.securityVersion()).isEqualTo(current.securityVersion() + 1);
+		assertThat(stored.identifiers()).containsExactly(LoginIdentifier.username("replacement-user"),
+				LoginIdentifier.email("Replacement@Example.com"), LoginIdentifier.phone("+1-555-123-4501"));
+		assertThat(stored.profile()).isEqualTo(
+				new UserProfile("Replacement User", "Replacement Q. User", "Replacement", "User"));
+		assertThat(this.users.findByLogin(tenant.id(), LoginKey.from("alice"))).isEmpty();
+		assertThat(this.users.findById(other.id(), current.id())).isEmpty();
+	}
+
+	@Test
+	void clearsOmittedOptionalAttributesAndPreservesUnspecifiedInternalLockState() throws Exception {
+		Tenant tenant = createTenant();
+		User locked = this.users.lock(tenant.id(), createUser(tenant.id()).id());
+		String request = "{\"schemas\":[\"" + ScimUserSchema.URN + "\"],\"userName\":\"alice\"}";
+
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", locked.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.userName").value("alice"))
+			.andExpect(jsonPath("$.active").value(false))
+			.andExpect(jsonPath("$.displayName").doesNotExist())
+			.andExpect(jsonPath("$.name").doesNotExist())
+			.andExpect(jsonPath("$.emails", hasSize(0)))
+			.andExpect(jsonPath("$.phoneNumbers", hasSize(0)));
+
+		User cleared = this.users.findById(tenant.id(), locked.id()).orElseThrow();
+		assertThat(cleared.status()).isEqualTo(UserStatus.LOCKED);
+		assertThat(cleared.identifiers()).containsExactly(LoginIdentifier.username("alice"));
+		assertThat(cleared.profile()).isEqualTo(UserProfile.empty());
+		String preserve = "{\"schemas\":[\"" + ScimUserSchema.URN
+				+ "\"],\"userName\":\"alice\",\"active\":null}";
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", locked.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(preserve))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.active").value(false));
+		assertThat(this.users.findById(tenant.id(), locked.id()).orElseThrow().status()).isEqualTo(UserStatus.LOCKED);
+
+		String activate = "{\"schemas\":[\"" + ScimUserSchema.URN
+				+ "\"],\"userName\":\"alice\",\"active\":true}";
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", locked.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("attributes", "userName")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(activate))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.userName").value("alice"))
+			.andExpect(jsonPath("$.active").doesNotExist())
+			.andExpect(jsonPath("$.meta").doesNotExist());
+		assertThat(this.users.findById(tenant.id(), locked.id()).orElseThrow().status()).isEqualTo(UserStatus.ACTIVE);
+	}
+
+	@Test
+	void doesNotUpsertAndUsesOneNotFoundResponseAcrossReplacementBoundaries() throws Exception {
+		Tenant owner = createTenant();
+		Tenant other = createTenant();
+		Tenant disabled = createTenant();
+		User visible = createUser(owner.id());
+		User deleted = createUser(owner.id(), "replace-deleted");
+		User disabledTenantUser = createUser(disabled.id(), "replace-disabled");
+		this.users.delete(owner.id(), deleted.id());
+		this.tenants.disable(disabled.id());
+		long countBefore = userCount();
+
+		String missing = replaceResponseBody(owner.id(), UUID.randomUUID().toString());
+		String malformed = replaceResponseBody(owner.id(), "not-a-uuid");
+		String nonCanonical = replaceResponseBody(owner.id(), visible.id().toString().toUpperCase(Locale.ROOT));
+		String crossTenant = replaceResponseBody(other.id(), visible.id().toString());
+		String deletedBody = replaceResponseBody(owner.id(), deleted.id().toString());
+		String disabledTenantBody = replaceResponseBody(disabled.id(), disabledTenantUser.id().toString());
+
+		assertThat(List.of(malformed, nonCanonical, crossTenant, deletedBody, disabledTenantBody)).containsOnly(missing);
+		assertThat(missing).contains(NOT_FOUND_DETAIL).doesNotContain(visible.id().toString());
+		assertThat(userCount()).isEqualTo(countBefore);
+	}
+
+	@Test
+	void rollsBackReplacementConflictsWithoutReflectingIdentifiers() throws Exception {
+		Tenant tenant = createTenant();
+		User reserved = createUser(tenant.id(), "replace-reserved");
+		User current = createUser(tenant.id(), "replace-current");
+		String request = """
+				{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],
+				 "userName":"replace-new-secret","displayName":"Secret Replacement",
+				 "emails":[{"value":"REPLACE-RESERVED@example.com"}],"active":false}
+				""";
+
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.scimType").value("uniqueness"))
+			.andExpect(content().string(not(containsString("replace-new-secret"))))
+			.andExpect(content().string(not(containsString("REPLACE-RESERVED@example.com"))));
+
+		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
+		assertThat(this.users.findByLogin(tenant.id(), LoginKey.from("replace-current"))).contains(current);
+		assertThat(this.users.findByLogin(tenant.id(), LoginKey.from("replace-new-secret"))).isEmpty();
+		assertThat(this.users.findById(tenant.id(), reserved.id())).contains(reserved);
+	}
+
+	@Test
+	void rejectsUnsupportedPreconditionsInvalidProjectionAndReadOnlyScopeBeforeReplacement() throws Exception {
+		Tenant tenant = createTenant();
+		User current = createUser(tenant.id());
+		String request = "{\"schemas\":[\"" + ScimUserSchema.URN + "\"],\"userName\":\"unchanged-user\"}";
+
+		assertReplaceError(tenant.id(), current.id().toString(), request, "scim.write", HttpHeaders.IF_MATCH,
+				"*", "invalidValue");
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("attributes", "userName")
+			.queryParam("excludedAttributes", "emails")
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.scimType").value("invalidValue"));
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isForbidden());
+
+		assertThat(this.users.findById(tenant.id(), current.id())).contains(current);
 	}
 
 	@Test
@@ -591,6 +777,42 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
 			.andReturn();
 		return result.getResponse().getContentAsString();
+	}
+
+	private String replaceResponseBody(TenantId tenantId, String userId) throws Exception {
+		String request = "{\"schemas\":[\"" + ScimUserSchema.URN + "\"],\"userName\":\"not-upserted\"}";
+		MvcResult result = this.mockMvc.perform(put("/scim/v2/Users/{id}", userId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isNotFound())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("404"))
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
+			.andReturn();
+		return result.getResponse().getContentAsString();
+	}
+
+	private void assertReplaceError(TenantId tenantId, String userId, String request, String scope,
+			String headerName, String headerValue, String scimType) throws Exception {
+		this.mockMvc.perform(put("/scim/v2/Users/{id}", userId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, scope)))
+			.header(headerName, headerValue)
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(request))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.scimType").value(scimType));
+	}
+
+	private long userCount() {
+		return this.jdbcClient.sql("SELECT count(*) FROM users")
+			.query(Long.class)
+			.single();
 	}
 
 	private void assertCreateError(String authorization, String request, String scimType, String secret)

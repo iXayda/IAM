@@ -6,6 +6,7 @@ import java.util.List;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserPage;
+import com.unboundid.scim2.common.exceptions.BadRequestException;
 import com.unboundid.scim2.common.exceptions.ScimException;
 import com.unboundid.scim2.common.messages.ListResponse;
 import com.unboundid.scim2.common.types.UserResource;
@@ -17,10 +18,13 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.node.ObjectNode;
 
 @RestController
 @RequestMapping(ScimMetadataController.BASE_PATH)
@@ -36,12 +40,15 @@ final class ScimUserController {
 
 	private final ScimProperties properties;
 
+	private final ScimJsonCodec codec;
+
 	ScimUserController(ScimTenantResolver tenantResolver, ScimUserService users, ScimUserMapper mapper,
-			ScimProperties properties) {
+			ScimProperties properties, ScimJsonCodec codec) {
 		this.tenantResolver = tenantResolver;
 		this.users = users;
 		this.mapper = mapper;
 		this.properties = properties;
+		this.codec = codec;
 	}
 
 	@GetMapping(value = USERS_PATH,
@@ -72,13 +79,13 @@ final class ScimUserController {
 	@PostMapping(value = USERS_PATH,
 			consumes = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE },
 			produces = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE })
-	ResponseEntity<UserResource> createUser(@AuthenticationPrincipal Jwt jwt, @RequestBody ScimUserCreateResource resource,
+	ResponseEntity<UserResource> createUser(@AuthenticationPrincipal Jwt jwt, @RequestBody ObjectNode resource,
 			@RequestParam(name = "attributes", required = false) List<String> attributes,
 			@RequestParam(name = "excludedAttributes", required = false) List<String> excludedAttributes)
 			throws ScimException {
 		ScimUserAttributeSelection selection = ScimUserAttributeSelection.parse(attributes, excludedAttributes)
 			.requiring("meta", "location");
-		ScimUserCreateRequest command = ScimUserCreateRequest.parse(resource);
+		ScimUserCreateRequest command = ScimUserCreateRequest.parse(resource, this.codec);
 		TenantId tenantId = this.tenantResolver.resolve(jwt);
 		User created = this.users.create(tenantId, command);
 		URI location = this.properties.endpoint(USERS_PATH, created.id().toString());
@@ -86,6 +93,29 @@ final class ScimUserController {
 		return ResponseEntity.created(location)
 			.header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString())
 			.body(response);
+	}
+
+	@PutMapping(value = USERS_PATH + "/{id}",
+			consumes = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE },
+			produces = { ScimMediaTypes.SCIM_JSON_VALUE, MediaType.APPLICATION_JSON_VALUE })
+	ResponseEntity<UserResource> replaceUser(@PathVariable String id, @AuthenticationPrincipal Jwt jwt,
+			@RequestBody ObjectNode resource,
+			@RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+			@RequestParam(name = "attributes", required = false) List<String> attributes,
+			@RequestParam(name = "excludedAttributes", required = false) List<String> excludedAttributes)
+			throws ScimException {
+		ScimUserAttributeSelection selection = ScimUserAttributeSelection.parse(attributes, excludedAttributes);
+		if (ifMatch != null) {
+			throw BadRequestException.invalidValue("SCIM entity tags are not supported.");
+		}
+		ScimUserCreateRequest command = ScimUserCreateRequest.parse(resource, this.codec);
+		TenantId tenantId = this.tenantResolver.resolve(jwt);
+		User replaced = this.users.replace(tenantId, id, command);
+		URI location = this.properties.endpoint(USERS_PATH, replaced.id().toString());
+		return ResponseEntity.ok()
+			.header(HttpHeaders.LOCATION, location.toASCIIString())
+			.header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString())
+			.body(this.mapper.map(replaced, location, selection));
 	}
 
 	@GetMapping(value = USERS_PATH + "/{id}",

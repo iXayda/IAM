@@ -6,15 +6,36 @@ import java.util.Set;
 
 import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginIdentifier;
+import com.ixayda.iam.user.ReplaceUserRequest;
 import com.ixayda.iam.user.UserProfile;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
 import com.unboundid.scim2.common.types.Email;
 import com.unboundid.scim2.common.types.Name;
 import com.unboundid.scim2.common.types.PhoneNumber;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.node.ObjectNode;
 
-record ScimUserCreateRequest(CreateUserRequest request, boolean active) {
+record ScimUserCreateRequest(CreateUserRequest request, Boolean active) {
 
-	private static final String INVALID_DETAIL = "The SCIM User create request contains an invalid or unsupported value.";
+	private static final String INVALID_DETAIL = "The SCIM User request contains an invalid or unsupported value.";
+
+	static ScimUserCreateRequest parse(ObjectNode source, ScimJsonCodec codec) throws BadRequestException {
+		if (source == null) {
+			throw invalid();
+		}
+		ObjectNode writable = source.deepCopy();
+		List<String> readOnly = writable.propertyNames().stream()
+			.filter((name) -> name.equalsIgnoreCase("id") || name.equalsIgnoreCase("meta")
+					|| name.equalsIgnoreCase("groups"))
+			.toList();
+		writable.remove(readOnly);
+		try {
+			return parse(codec.jsonMapper().treeToValue(writable, ScimUserCreateResource.class));
+		}
+		catch (JacksonException exception) {
+			throw invalid();
+		}
+	}
 
 	static ScimUserCreateRequest parse(ScimUserCreateResource resource) throws BadRequestException {
 		if (resource == null) {
@@ -30,12 +51,19 @@ record ScimUserCreateRequest(CreateUserRequest request, boolean active) {
 			Name name = resource.getName();
 			UserProfile profile = new UserProfile(resource.getDisplayName(), name == null ? null : name.getFormatted(),
 					name == null ? null : name.getGivenName(), name == null ? null : name.getFamilyName());
-			return new ScimUserCreateRequest(new CreateUserRequest(identifiers, profile),
-					!Boolean.FALSE.equals(resource.getActive()));
+			return new ScimUserCreateRequest(new CreateUserRequest(identifiers, profile), resource.getActive());
 		}
 		catch (RuntimeException exception) {
 			throw invalid();
 		}
+	}
+
+	boolean activeOrDefault() {
+		return !Boolean.FALSE.equals(this.active);
+	}
+
+	ReplaceUserRequest replacement() {
+		return new ReplaceUserRequest(this.request.identifiers(), this.request.profile(), this.active);
 	}
 
 	private static void validateSchemas(ScimUserCreateResource resource) throws BadRequestException {

@@ -7,7 +7,9 @@ import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserAlreadyExistsException;
 import com.ixayda.iam.user.UserDirectoryQuery;
+import com.ixayda.iam.user.UserConcurrentUpdateException;
 import com.ixayda.iam.user.UserId;
+import com.ixayda.iam.user.UserNotFoundException;
 import com.ixayda.iam.user.UserOperations;
 import com.ixayda.iam.user.UserPage;
 import com.unboundid.scim2.common.exceptions.BadRequestException;
@@ -68,13 +70,32 @@ class ScimUserService {
 			throws ResourceConflictException, ResourceNotFoundException {
 		try {
 			User created = this.users.create(tenantId, command.request());
-			return command.active() ? created : this.users.disable(tenantId, created.id());
+			return command.activeOrDefault() ? created : this.users.disable(tenantId, created.id());
 		}
 		catch (UserAlreadyExistsException exception) {
 			throw ResourceConflictException.uniqueness(
 					"A SCIM User with the same login identifier already exists.");
 		}
 		catch (TenantDisabledException | TenantNotFoundException exception) {
+			throw notFound();
+		}
+	}
+
+	@Transactional(rollbackFor = com.unboundid.scim2.common.exceptions.ScimException.class)
+	public User replace(TenantId tenantId, String userId, ScimUserCreateRequest command)
+			throws ResourceConflictException, ResourceNotFoundException {
+		User current = find(tenantId, userId);
+		try {
+			return this.users.replace(tenantId, current.id(), current.version(), command.replacement());
+		}
+		catch (UserAlreadyExistsException exception) {
+			throw ResourceConflictException.uniqueness(
+					"A SCIM User with the same login identifier already exists.");
+		}
+		catch (UserConcurrentUpdateException exception) {
+			throw new ResourceConflictException("The SCIM User changed during replacement.");
+		}
+		catch (TenantDisabledException | TenantNotFoundException | UserNotFoundException exception) {
 			throw notFound();
 		}
 	}

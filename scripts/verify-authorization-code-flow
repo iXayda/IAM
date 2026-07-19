@@ -440,11 +440,29 @@ jq -e --arg location "${created_scim_user_location}" \
 [[ "$(header_value Location "${headers}")" == "${created_scim_user_location}" \
 	&& "$(header_value Content-Location "${headers}")" == "${created_scim_user_location}" ]] \
 	|| fail "Created SCIM User location headers are invalid"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --request PUT \
+	--header 'Accept: application/scim+json' --header 'Content-Type: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	--data '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"release-replaced-user","displayName":"Release Replaced User","active":true}' \
+	"${base_url}/scim/v2/Users/${created_scim_user_id}")"
+[[ "${status}" == "200" ]] || fail "SCIM write token did not replace a tenant user: HTTP ${status}"
+jq -e --arg id "${created_scim_user_id}" --arg location "${created_scim_user_location}" \
+	'.schemas == ["urn:ietf:params:scim:schemas:core:2.0:User"] and .id == $id
+	 and .userName == "release-replaced-user" and .displayName == "Release Replaced User" and .active == true
+	 and .meta.resourceType == "User" and .meta.location == $location
+	 and (.emails | length == 0) and (.phoneNumbers | length == 0) and (has("password") | not)' \
+	"${body}" >/dev/null || fail "Replaced SCIM User representation is invalid"
+[[ "$(header_value Location "${headers}")" == "${created_scim_user_location}" \
+	&& "$(header_value Content-Location "${headers}")" == "${created_scim_user_location}" ]] \
+	|| fail "Replaced SCIM User location headers are invalid"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
 	"${base_url}/scim/v2/Users/${created_scim_user_id}")"
-[[ "${status}" == "200" ]] && jq -e '.userName == "release-created-user" and .active == false' "${body}" >/dev/null \
-	|| fail "Created SCIM User was not readable through the native service"
+[[ "${status}" == "200" ]] \
+	&& jq -e '.userName == "release-replaced-user" and .displayName == "Release Replaced User" and .active == true' \
+		"${body}" >/dev/null \
+	|| fail "Replaced SCIM User was not readable through the native service"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request POST --header 'Accept: application/scim+json' \
 	--header "Authorization: Bearer ${service_write_access_token}" "${base_url}/scim/v2/Groups")"

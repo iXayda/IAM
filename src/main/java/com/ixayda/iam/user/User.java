@@ -80,6 +80,29 @@ public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifie
 				Math.incrementExact(this.version), this.securityVersion, this.createdAt, changedAt, this.lastLoginAt);
 	}
 
+	public User replace(ReplaceUserRequest replacement, Instant changedAt) {
+		Objects.requireNonNull(replacement, "User replacement must not be null");
+		Objects.requireNonNull(changedAt, "User replacement time must not be null");
+		if (isDeleted()) {
+			throw new IllegalStateException("Deleted user cannot be replaced");
+		}
+		if (changedAt.isBefore(this.updatedAt)) {
+			throw new IllegalArgumentException("User replacement time must not be before its last update");
+		}
+		UserStatus replacementStatus = replacementStatus(replacement.active());
+		boolean identifiersChanged = !this.identifiers.equals(replacement.identifiers());
+		boolean profileChanged = !this.profile.equals(replacement.profile());
+		boolean statusChanged = this.status != replacementStatus;
+		if (!identifiersChanged && !profileChanged && !statusChanged) {
+			return this;
+		}
+		long replacementSecurityVersion = identifiersChanged || statusChanged
+				? Math.incrementExact(this.securityVersion)
+				: this.securityVersion;
+		return new User(this.id, this.tenantId, replacement.identifiers(), replacement.profile(), replacementStatus,
+				Math.incrementExact(this.version), replacementSecurityVersion, this.createdAt, changedAt, this.lastLoginAt);
+	}
+
 	public User membershipsChanged(Instant changedAt) {
 		Objects.requireNonNull(changedAt, "User membership change time must not be null");
 		if (isDeleted()) {
@@ -115,6 +138,13 @@ public record User(UserId id, TenantId tenantId, List<LoginIdentifier> identifie
 		return new User(this.id, this.tenantId, this.identifiers, this.profile, targetStatus,
 				Math.incrementExact(this.version), Math.incrementExact(this.securityVersion),
 				this.createdAt, changedAt, this.lastLoginAt);
+	}
+
+	private UserStatus replacementStatus(Boolean active) {
+		if (active == null || (!active && !isActive())) {
+			return this.status;
+		}
+		return active ? UserStatus.ACTIVE : UserStatus.DISABLED;
 	}
 
 	private boolean canTransitionTo(UserStatus targetStatus) {

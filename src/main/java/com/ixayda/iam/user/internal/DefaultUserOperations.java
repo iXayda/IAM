@@ -12,6 +12,7 @@ import com.ixayda.iam.tenant.TenantNotFoundException;
 import com.ixayda.iam.tenant.TenantOperations;
 import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginKey;
+import com.ixayda.iam.user.ReplaceUserRequest;
 import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserConcurrentUpdateException;
 import com.ixayda.iam.user.UserDeletionParticipant;
@@ -93,6 +94,28 @@ class DefaultUserOperations implements UserOperations {
 		}
 		User changed = current.updateProfile(profile, transitionTime(current));
 		return changed == current ? current : this.repository.updateProfile(current, changed);
+	}
+
+	@Override
+	@Transactional
+	public User replace(TenantId tenantId, UserId userId, long expectedVersion, ReplaceUserRequest request) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		Objects.requireNonNull(request, "Replace user request must not be null");
+		if (expectedVersion < 0) {
+			throw new IllegalArgumentException("Expected user version must not be negative");
+		}
+		this.tenants.requireActiveForExclusiveWrite(tenantId);
+		User current = this.repository.findByIdForUpdate(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		if (current.isDeleted()) {
+			throw new UserNotFoundException(tenantId, userId);
+		}
+		if (current.version() != expectedVersion) {
+			throw new UserConcurrentUpdateException(tenantId, userId, expectedVersion);
+		}
+		User changed = current.replace(request, transitionTime(current));
+		return changed == current ? current : this.repository.replace(current, changed);
 	}
 
 	@Override

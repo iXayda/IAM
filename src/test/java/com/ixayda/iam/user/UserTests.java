@@ -98,6 +98,67 @@ class UserTests {
 	}
 
 	@Test
+	void replacesWritableDirectoryStateWithOneRevision() {
+		User original = user(UserStatus.ACTIVE);
+		Instant changedAt = UPDATED_AT.plusSeconds(60);
+		List<LoginIdentifier> identifiers = List.of(LoginIdentifier.username("replacement"),
+				LoginIdentifier.email("replacement@example.com"));
+
+		User changed = original.replace(new ReplaceUserRequest(identifiers, PROFILE, false), changedAt);
+
+		assertThat(changed.identifiers()).isEqualTo(identifiers);
+		assertThat(changed.profile()).isEqualTo(PROFILE);
+		assertThat(changed.status()).isEqualTo(UserStatus.DISABLED);
+		assertThat(changed.version()).isOne();
+		assertThat(changed.securityVersion()).isOne();
+		assertThat(changed.updatedAt()).isEqualTo(changedAt);
+		assertThat(changed.createdAt()).isEqualTo(original.createdAt());
+		assertThat(changed.lastLoginAt()).isEqualTo(original.lastLoginAt());
+	}
+
+	@Test
+	void advancesSecurityRevisionWhenOnlyLoginIdentifiersChange() {
+		User original = user(UserStatus.ACTIVE);
+		Instant changedAt = UPDATED_AT.plusSeconds(60);
+		List<LoginIdentifier> identifiers = List.of(LoginIdentifier.username("replacement"));
+
+		User changed = original.replace(new ReplaceUserRequest(identifiers, original.profile(), null), changedAt);
+
+		assertThat(changed.identifiers()).isEqualTo(identifiers);
+		assertThat(changed.status()).isEqualTo(original.status());
+		assertThat(changed.version()).isOne();
+		assertThat(changed.securityVersion()).isOne();
+	}
+
+	@Test
+	void preservesSecurityAndInternalLockStateWhenReplacementDoesNotChangeThem() {
+		User locked = user(UserStatus.LOCKED);
+		Instant changedAt = UPDATED_AT.plusSeconds(60);
+
+		User profileOnly = locked.replace(new ReplaceUserRequest(locked.identifiers(), PROFILE, false), changedAt);
+
+		assertThat(profileOnly.status()).isEqualTo(UserStatus.LOCKED);
+		assertThat(profileOnly.version()).isOne();
+		assertThat(profileOnly.securityVersion()).isEqualTo(locked.securityVersion());
+		assertThat(profileOnly.replace(new ReplaceUserRequest(profileOnly.identifiers(), PROFILE, null),
+				changedAt.plusSeconds(1))).isSameAs(profileOnly);
+		User activated = profileOnly.replace(new ReplaceUserRequest(profileOnly.identifiers(), PROFILE, true),
+				changedAt.plusSeconds(1));
+		assertThat(activated.status()).isEqualTo(UserStatus.ACTIVE);
+		assertThat(activated.securityVersion()).isOne();
+	}
+
+	@Test
+	void rejectsInvalidReplacementState() {
+		ReplaceUserRequest request = new ReplaceUserRequest(List.of(USERNAME), PROFILE, null);
+
+		assertThatThrownBy(() -> user(UserStatus.DELETED).replace(request, UPDATED_AT.plusSeconds(1)))
+			.isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(() -> user(UserStatus.ACTIVE).replace(request, UPDATED_AT.minusSeconds(1)))
+			.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
 	void advancesOnlyTheDirectoryRevisionWhenMembershipsChange() {
 		User original = user(UserStatus.LOCKED);
 		Instant changedAt = UPDATED_AT.plusSeconds(60);

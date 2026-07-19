@@ -347,6 +347,69 @@ class JdbcUserRepository {
 		return changed;
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY)
+	public User replace(User current, User changed) {
+		Objects.requireNonNull(current, "Current user must not be null");
+		Objects.requireNonNull(changed, "Changed user must not be null");
+		requireWriteTransaction();
+		boolean identifiersChanged = !current.identifiers().equals(changed.identifiers());
+		boolean profileChanged = !current.profile().equals(changed.profile());
+		boolean statusChanged = current.status() != changed.status();
+		long expectedSecurityVersion = identifiersChanged || statusChanged
+				? Math.incrementExact(current.securityVersion())
+				: current.securityVersion();
+		if (!current.id().equals(changed.id()) || !current.tenantId().equals(changed.tenantId())
+				|| current.isDeleted() || changed.isDeleted() || (!identifiersChanged && !profileChanged && !statusChanged)
+				|| !current.createdAt().equals(changed.createdAt())
+				|| !Objects.equals(current.lastLoginAt(), changed.lastLoginAt()) || current.version() == Long.MAX_VALUE
+				|| changed.version() != current.version() + 1
+				|| changed.securityVersion() != expectedSecurityVersion
+				|| changed.updatedAt().isBefore(current.updatedAt())) {
+			throw new IllegalArgumentException(
+					"User replacement must preserve ownership and immutable state, and advance one version");
+		}
+
+		int affected = this.jdbcClient.sql("""
+				UPDATE users
+				SET status = :newStatus,
+				    display_name = :displayName,
+				    formatted_name = :formattedName,
+				    given_name = :givenName,
+				    family_name = :familyName,
+				    version = :newVersion,
+				    security_version = :newSecurityVersion,
+				    updated_at = :updatedAt
+				WHERE tenant_id = :tenantId
+				  AND user_id = :userId
+				  AND version = :expectedVersion
+				  AND security_version = :expectedSecurityVersion
+				  AND status = :expectedStatus
+				""")
+			.param("newStatus", databaseValue(changed.status()))
+			.param("displayName", changed.profile().displayName())
+			.param("formattedName", changed.profile().formattedName())
+			.param("givenName", changed.profile().givenName())
+			.param("familyName", changed.profile().familyName())
+			.param("newVersion", changed.version())
+			.param("newSecurityVersion", changed.securityVersion())
+			.param("updatedAt", databaseValue(changed.updatedAt()))
+			.param("tenantId", current.tenantId().value())
+			.param("userId", current.id().value())
+			.param("expectedVersion", current.version())
+			.param("expectedSecurityVersion", current.securityVersion())
+			.param("expectedStatus", databaseValue(current.status()))
+			.update();
+		if (affected == 0) {
+			throw new UserConcurrentUpdateException(current.tenantId(), current.id(), current.version());
+		}
+		if (affected != 1) {
+			throw new IllegalStateException("Replacing a user affected an unexpected number of rows: " + affected);
+		}
+
+		reconcileIdentifiers(current, changed);
+		return changed;
+	}
+
 	@Transactional(propagation = Propagation.MANDATORY, noRollbackFor = UserConcurrentUpdateException.class)
 	public User updateMemberships(User current, User changed) {
 		Objects.requireNonNull(current, "Current user must not be null");
@@ -413,6 +476,75 @@ class JdbcUserRepository {
 			throw new IllegalStateException("Creating a login identifier affected an unexpected number of rows: "
 					+ affected);
 		}
+	}
+
+	private void reconcileIdentifiers(User current, User changed) {
+		for (LoginIdentifier existing : current.identifiers()) {
+			LoginIdentifier replacement = findIdentifier(changed.identifiers(), existing);
+			if (replacement == null) {
+				deleteIdentifier(current, existing);
+			}
+			else if (!existing.value().equals(replacement.value())) {
+				updateIdentifierValue(current, existing, replacement, changed.updatedAt());
+			}
+		}
+		for (LoginIdentifier replacement : changed.identifiers()) {
+			if (findIdentifier(current.identifiers(), replacement) == null) {
+				insertIdentifier(changed, replacement);
+			}
+		}
+	}
+
+	private void deleteIdentifier(User user, LoginIdentifier identifier) {
+		int affected = this.jdbcClient.sql("""
+				DELETE FROM user_login_identifiers
+				WHERE tenant_id = :tenantId
+				  AND user_id = :userId
+				  AND identifier_type = :type
+				  AND canonical_value = :canonicalValue
+				""")
+			.param("tenantId", user.tenantId().value())
+			.param("userId", user.id().value())
+			.param("type", databaseValue(identifier.type()))
+			.param("canonicalValue", identifier.canonicalValue())
+			.update();
+		if (affected != 1) {
+			throw new IllegalStateException("Removing a replaced login identifier affected an unexpected number of rows: "
+					+ affected);
+		}
+	}
+
+	private void updateIdentifierValue(User user, LoginIdentifier existing, LoginIdentifier replacement,
+			Instant updatedAt) {
+		int affected = this.jdbcClient.sql("""
+				UPDATE user_login_identifiers
+				SET identifier_value = :newValue, updated_at = :updatedAt
+				WHERE tenant_id = :tenantId
+				  AND user_id = :userId
+				  AND identifier_type = :type
+				  AND canonical_value = :canonicalValue
+				  AND identifier_value = :expectedValue
+				""")
+			.param("newValue", replacement.value())
+			.param("updatedAt", databaseValue(updatedAt))
+			.param("tenantId", user.tenantId().value())
+			.param("userId", user.id().value())
+			.param("type", databaseValue(existing.type()))
+			.param("canonicalValue", existing.canonicalValue())
+			.param("expectedValue", existing.value())
+			.update();
+		if (affected != 1) {
+			throw new IllegalStateException("Updating a replaced login identifier affected an unexpected number of rows: "
+					+ affected);
+		}
+	}
+
+	private static LoginIdentifier findIdentifier(List<LoginIdentifier> identifiers, LoginIdentifier expectedKey) {
+		return identifiers.stream()
+			.filter((identifier) -> identifier.type() == expectedKey.type()
+					&& identifier.canonicalValue().equals(expectedKey.canonicalValue()))
+			.findFirst()
+			.orElse(null);
 	}
 
 	private static void requireWriteTransaction() {
