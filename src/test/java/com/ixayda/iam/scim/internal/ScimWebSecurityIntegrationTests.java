@@ -75,10 +75,12 @@ class ScimWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(status().isNoContent());
 		this.mockMvc.perform(delete(USERS_PATH + "/user-1")
 			.header(HttpHeaders.AUTHORIZATION, bearer(token("scim.write"))))
-			.andExpect(status().isNoContent());
+			.andExpect(status().isNotFound());
 
 		assertForbidden(get(USERS_PATH).header(HttpHeaders.AUTHORIZATION, bearer(token("scim.write"))), "scim.read");
 		assertForbidden(post(USERS_PATH).header(HttpHeaders.AUTHORIZATION, bearer(token("scim.read"))), "scim.write");
+		assertForbidden(delete(USERS_PATH + "/user-1")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token("scim.read"))), "scim.write");
 		assertForbidden(get(USERS_PATH).header(HttpHeaders.AUTHORIZATION, bearer(token(null))), "scim.read");
 		assertForbiddenWithoutScope(post(USERS_PATH + "/user-1")
 			.header(HttpHeaders.AUTHORIZATION, bearer(token("scim.write"))));
@@ -232,7 +234,12 @@ class ScimWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			return ResponseEntity.noContent().build();
 		}
 
-		@RequestMapping(path = { USERS_PATH + "/{id}", GROUPS_PATH + "/{id}" },
+		@RequestMapping(path = USERS_PATH + "/{id}", method = { RequestMethod.PUT, RequestMethod.PATCH })
+		ResponseEntity<Void> writeUserResource() {
+			return ResponseEntity.noContent().build();
+		}
+
+		@RequestMapping(path = GROUPS_PATH + "/{id}",
 				method = { RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE })
 		ResponseEntity<Void> writeResource() {
 			return ResponseEntity.noContent().build();

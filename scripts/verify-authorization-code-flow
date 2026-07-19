@@ -493,6 +493,37 @@ status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-ou
 		"${body}" >/dev/null \
 	|| fail "Patched SCIM User was not readable through the native service"
 status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request DELETE --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Users/${created_scim_user_id}")"
+[[ "${status}" == "403" ]] && jq -e '.status == "403"' "${body}" >/dev/null \
+	|| fail "SCIM delete was not rejected for a read-only token"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --dump-header "${headers}" \
+	--write-out '%{http_code}' --request DELETE --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	"${base_url}/scim/v2/Users/${created_scim_user_id}")"
+[[ "${status}" == "204" && ! -s "${body}" \
+	&& -z "$(header_value Content-Type "${headers}")" \
+	&& -z "$(header_value Location "${headers}")" \
+	&& -z "$(header_value Content-Location "${headers}")" \
+	&& -z "$(header_value ETag "${headers}")" ]] \
+	|| fail "SCIM write token did not delete a tenant user with a strict empty response: HTTP ${status}"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--header 'Accept: application/scim+json' --header "Authorization: Bearer ${service_access_token}" \
+	"${base_url}/scim/v2/Users/${created_scim_user_id}")"
+[[ "${status}" == "404" ]] \
+	&& jq -e '.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "404"' \
+		"${body}" >/dev/null \
+	|| fail "Deleted SCIM User remained visible through the native service"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
+	--request DELETE --header 'Accept: application/scim+json' \
+	--header "Authorization: Bearer ${service_write_access_token}" \
+	"${base_url}/scim/v2/Users/${created_scim_user_id}")"
+[[ "${status}" == "404" ]] \
+	&& jq -e '.schemas == ["urn:ietf:params:scim:api:messages:2.0:Error"] and .status == "404"' \
+		"${body}" >/dev/null \
+	|| fail "Repeated SCIM User delete did not return a protocol not-found response"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" --write-out '%{http_code}' \
 	--request POST --header 'Accept: application/scim+json' \
 	--header "Authorization: Bearer ${service_write_access_token}" "${base_url}/scim/v2/Groups")"
 [[ "${status}" == "404" ]] || fail "SCIM write token did not pass the resource-server boundary: HTTP ${status}"

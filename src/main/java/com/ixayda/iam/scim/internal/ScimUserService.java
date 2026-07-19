@@ -125,6 +125,16 @@ class ScimUserService {
 		}
 	}
 
+	public void delete(TenantId tenantId, String userId) throws ResourceNotFoundException {
+		User current = find(tenantId, userId);
+		try {
+			this.users.delete(tenantId, current.id());
+		}
+		catch (TenantDisabledException | TenantNotFoundException | UserNotFoundException exception) {
+			throw notFound();
+		}
+	}
+
 	private static ResourceNotFoundException notFound() {
 		return new ResourceNotFoundException(NOT_FOUND_DETAIL);
 	}

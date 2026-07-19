@@ -48,6 +48,7 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -537,6 +538,76 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 		}
 
 		assertThat(this.users.findById(tenant.id(), locked.id())).contains(locked);
+	}
+
+	@Test
+	void deletesATenantScopedUserWithAnEmptyResponseAndReservedIdentifiers() throws Exception {
+		Tenant tenant = createTenant();
+		Tenant other = createTenant();
+		User current = createUser(tenant.id());
+
+		this.mockMvc.perform(delete("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.queryParam("tenant_id", other.id().toString())
+			.accept(SCIM_JSON))
+			.andExpect(status().isNoContent())
+			.andExpect(content().string(""))
+			.andExpect(header().doesNotExist(HttpHeaders.CONTENT_TYPE))
+			.andExpect(header().doesNotExist(HttpHeaders.LOCATION))
+			.andExpect(header().doesNotExist(HttpHeaders.CONTENT_LOCATION))
+			.andExpect(header().doesNotExist(HttpHeaders.ETAG));
+
+		User deleted = this.users.findById(tenant.id(), current.id()).orElseThrow();
+		assertThat(deleted.status()).isEqualTo(UserStatus.DELETED);
+		assertThat(deleted.version()).isEqualTo(current.version() + 1);
+		assertThat(deleted.securityVersion()).isEqualTo(current.securityVersion() + 1);
+		this.mockMvc.perform(get("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.read")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL));
+		this.mockMvc.perform(delete("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL));
+
+		String recreate = "{\"schemas\":[\"" + ScimUserSchema.URN + "\"],\"userName\":\"alice\"}";
+		this.mockMvc.perform(post("/scim/v2/Users")
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenant.id(), "scim.write")))
+			.contentType(SCIM_JSON)
+			.accept(SCIM_JSON)
+			.content(recreate))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.scimType").value("uniqueness"));
+	}
+
+	@Test
+	void rejectsInvisibleConditionalAndReadOnlyUserDeletesWithoutChangingData() throws Exception {
+		Tenant owner = createTenant();
+		Tenant other = createTenant();
+		Tenant disabled = createTenant();
+		User current = createUser(owner.id());
+		User deleted = createUser(owner.id(), "delete-already-deleted");
+		User disabledTenantUser = createUser(disabled.id(), "delete-disabled");
+		this.users.delete(owner.id(), deleted.id());
+		this.tenants.disable(disabled.id());
+
+		assertDeleteError(owner.id(), current.id().toString(), HttpHeaders.IF_MATCH, "*", "invalidValue");
+		this.mockMvc.perform(delete("/scim/v2/Users/{id}", current.id())
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(owner.id(), "scim.read")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isForbidden());
+		String missing = assertDeleteNotFound(owner.id(), UUID.randomUUID().toString());
+		String malformed = assertDeleteNotFound(owner.id(), "not-a-uuid");
+		String nonCanonical = assertDeleteNotFound(owner.id(), current.id().toString().toUpperCase(Locale.ROOT));
+		String crossTenant = assertDeleteNotFound(other.id(), current.id().toString());
+		String alreadyDeleted = assertDeleteNotFound(owner.id(), deleted.id().toString());
+		String disabledTenant = assertDeleteNotFound(disabled.id(), disabledTenantUser.id().toString());
+		assertThat(List.of(malformed, nonCanonical, crossTenant, alreadyDeleted, disabledTenant))
+			.containsOnly(missing);
+		assertThat(this.users.findById(owner.id(), current.id())).contains(current);
+		assertThat(this.users.findById(disabled.id(), disabledTenantUser.id())).contains(disabledTenantUser);
 	}
 
 	@Test
@@ -1152,6 +1223,31 @@ class ScimUserWebIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
 			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
 			.andExpect(jsonPath("$.scimType").value(scimType));
+	}
+
+	private void assertDeleteError(TenantId tenantId, String userId, String headerName, String headerValue,
+			String scimType) throws Exception {
+		this.mockMvc.perform(delete("/scim/v2/Users/{id}", userId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.header(headerName, headerValue)
+			.accept(SCIM_JSON))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.scimType").value(scimType));
+	}
+
+	private String assertDeleteNotFound(TenantId tenantId, String userId) throws Exception {
+		MvcResult result = this.mockMvc.perform(delete("/scim/v2/Users/{id}", userId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token(tenantId, "scim.write")))
+			.accept(SCIM_JSON))
+			.andExpect(status().isNotFound())
+			.andExpect(content().contentTypeCompatibleWith(SCIM_JSON))
+			.andExpect(jsonPath("$.schemas[0]").value(ERROR_SCHEMA))
+			.andExpect(jsonPath("$.status").value("404"))
+			.andExpect(jsonPath("$.detail").value(NOT_FOUND_DETAIL))
+			.andReturn();
+		return result.getResponse().getContentAsString();
 	}
 
 	private long userCount() {

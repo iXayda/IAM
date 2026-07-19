@@ -15,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -140,6 +141,17 @@ final class ScimUserController {
 			.header(HttpHeaders.LOCATION, location.toASCIIString())
 			.header(HttpHeaders.CONTENT_LOCATION, location.toASCIIString())
 			.body(this.mapper.map(patched, location, selection));
+	}
+
+	@DeleteMapping(USERS_PATH + "/{id}")
+	ResponseEntity<Void> deleteUser(@PathVariable String id, @AuthenticationPrincipal Jwt jwt,
+			@RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch) throws ScimException {
+		if (ifMatch != null) {
+			throw BadRequestException.invalidValue("SCIM entity tags are not supported.");
+		}
+		TenantId tenantId = this.tenantResolver.resolve(jwt);
+		this.users.delete(tenantId, id);
+		return ResponseEntity.noContent().build();
 	}
 
 	@GetMapping(value = USERS_PATH + "/{id}",
