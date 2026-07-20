@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
-	private static final int CURRENT_SCHEMA_VERSION = 24;
+	private static final int CURRENT_SCHEMA_VERSION = 25;
 
 	private static final UUID TENANT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742901");
 
@@ -186,6 +186,15 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				.param("clientId", CLIENT_ID)
 				.query(String.class)
 				.single()).isEqualTo("authorization_code|authorization_code|authorization_code");
+			assertThat(jdbc.sql("""
+					SELECT factors.factor || '|' || (factors.issued_at = sessions.authenticated_at)
+					FROM %s.user_session_authentication_factors factors
+					JOIN %s.user_sessions sessions USING (tenant_id, session_id)
+					WHERE factors.session_id = :sessionId
+					""".formatted(schema, schema))
+				.param("sessionId", SESSION_ID)
+				.query(String.class)
+				.single()).isEqualTo("password|true");
 			assertThat(jdbc.sql("""
 					SELECT redirect_uris.authorization_grant_type || '|'
 					       || post_logout_uris.authorization_grant_type || '|'

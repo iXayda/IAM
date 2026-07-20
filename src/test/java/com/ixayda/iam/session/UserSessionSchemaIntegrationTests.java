@@ -114,6 +114,32 @@ class UserSessionSchemaIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void storesTenantBoundAuthenticationFactorsAndCascadesTheirLifecycle() {
+		insertTenant();
+		insertUser(DEFAULT_TENANT_ID, USER_ID);
+		insertSession(DEFAULT_TENANT_ID, SESSION_ID, USER_ID, 0, 0);
+
+		insertFactor(DEFAULT_TENANT_ID, SESSION_ID, "password", AUTHENTICATED_AT.minusSeconds(1));
+		insertFactor(DEFAULT_TENANT_ID, SESSION_ID, "totp", AUTHENTICATED_AT);
+
+		assertThat(factorCount()).isEqualTo(2);
+		assertThatThrownBy(() -> insertFactor(DEFAULT_TENANT_ID, SESSION_ID, "password", AUTHENTICATED_AT))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertFactor(DEFAULT_TENANT_ID, SESSION_ID, "webauthn", AUTHENTICATED_AT))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertFactor(SECOND_TENANT_ID, SESSION_ID, "password", AUTHENTICATED_AT))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertFactor(DEFAULT_TENANT_ID, SESSION_ID, "recovery_code",
+				OffsetDateTime.of(1969, 12, 31, 23, 59, 59, 0, ZoneOffset.UTC)))
+			.isInstanceOf(DataIntegrityViolationException.class);
+
+		this.jdbcClient.sql("DELETE FROM user_sessions WHERE session_id = :sessionId")
+			.param("sessionId", SESSION_ID)
+			.update();
+		assertThat(factorCount()).isZero();
+	}
+
+	@Test
 	void rejectsInvalidSessionLifecycleMetadata() {
 		insertUser(DEFAULT_TENANT_ID, USER_ID);
 
@@ -235,6 +261,18 @@ class UserSessionSchemaIntegrationTests extends ApplicationIntegrationTest {
 			.update();
 	}
 
+	private void insertFactor(UUID tenantId, UUID sessionId, String factor, OffsetDateTime issuedAt) {
+		this.jdbcClient.sql("""
+				INSERT INTO user_session_authentication_factors (tenant_id, session_id, factor, issued_at)
+				VALUES (:tenantId, :sessionId, :factor, :issuedAt)
+				""")
+			.param("tenantId", tenantId)
+			.param("sessionId", sessionId)
+			.param("factor", factor)
+			.param("issuedAt", issuedAt)
+			.update();
+	}
+
 	private int sessionCount() {
 		return this.jdbcClient.sql("""
 				SELECT count(*)
@@ -243,6 +281,17 @@ class UserSessionSchemaIntegrationTests extends ApplicationIntegrationTest {
 				""")
 			.param("sessionId", SESSION_ID)
 			.param("secondSessionId", SECOND_SESSION_ID)
+			.query(Integer.class)
+			.single();
+	}
+
+	private int factorCount() {
+		return this.jdbcClient.sql("""
+				SELECT count(*)
+				FROM user_session_authentication_factors
+				WHERE session_id = :sessionId
+				""")
+			.param("sessionId", SESSION_ID)
 			.query(Integer.class)
 			.single();
 	}
