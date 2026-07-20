@@ -13,6 +13,7 @@ iam:
     server:
       issuer: ${IAM_AUTHORIZATION_ISSUER:http://127.0.0.1:8080}
       service-token-audience: ${IAM_AUTHORIZATION_SERVICE_TOKEN_AUDIENCE:http://127.0.0.1:8080/scim/v2}
+      admin-token-audience: ${IAM_AUTHORIZATION_ADMIN_TOKEN_AUDIENCE:http://127.0.0.1:8080/iam/admin}
     signing-key-protection:
       # Local-only default. Production must provide a dedicated shared Base64 key.
       active-key-id: v1

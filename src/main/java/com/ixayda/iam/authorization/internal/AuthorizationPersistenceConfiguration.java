@@ -100,13 +100,33 @@ class AuthorizationPersistenceConfiguration {
 	}
 
 	@Bean
+	JwtDecoder adminJwtDecoder(JWKSource<SecurityContext> jwkSource, AuthorizationServerProperties properties) {
+		Clock clock = Clock.systemUTC();
+		JwtTimestampValidator timestampValidator =
+				new JwtTimestampValidator(AdminTokenJwtValidator.ALLOWED_CLOCK_SKEW);
+		timestampValidator.setAllowEmptyExpiryClaim(false);
+		timestampValidator.setAllowEmptyNotBeforeClaim(false);
+		timestampValidator.setClock(clock);
+		NimbusJwtDecoder decoder = jwtDecoder(jwkSource);
+		decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+				new JwtIssuerValidator(properties.issuer().toASCIIString()), timestampValidator,
+				new AdminTokenJwtValidator(properties.adminTokenAudience(), clock)));
+		return decoder;
+	}
+
+	@Bean
 	AuthorizationServerSettings authorizationServerSettings(AuthorizationServerProperties properties) {
 		return AuthorizationServerSettings.builder().issuer(properties.issuer().toASCIIString()).build();
 	}
 
 	@Bean
 	OAuth2TokenCustomizer<JwtEncodingContext> authorizationJwtCustomizer(AuthorizationServerProperties properties) {
-		return new ServiceTokenJwtCustomizer(properties.serviceTokenAudience());
+		ServiceTokenJwtCustomizer serviceTokens = new ServiceTokenJwtCustomizer(properties.serviceTokenAudience());
+		AdminTokenJwtCustomizer adminTokens = new AdminTokenJwtCustomizer(properties.adminTokenAudience());
+		return (context) -> {
+			serviceTokens.customize(context);
+			adminTokens.customize(context);
+		};
 	}
 
 	@Bean

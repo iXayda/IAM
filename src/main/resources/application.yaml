@@ -85,6 +85,7 @@ iam:
     server:
       issuer: ${IAM_AUTHORIZATION_ISSUER:}
       service-token-audience: ${IAM_AUTHORIZATION_SERVICE_TOKEN_AUDIENCE:}
+      admin-token-audience: ${IAM_AUTHORIZATION_ADMIN_TOKEN_AUDIENCE:}
     signing-key-protection:
       active-key-id: ${IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID:}
       keys:

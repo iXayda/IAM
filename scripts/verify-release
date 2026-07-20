@@ -180,6 +180,7 @@ start_app() {
 		SPRING_DATA_REDIS_PORT="${redis_port}" \
 		IAM_AUTHORIZATION_ISSUER=https://issuer.release-check.invalid \
 		IAM_AUTHORIZATION_SERVICE_TOKEN_AUDIENCE=https://scim.release-check.invalid/scim/v2 \
+		IAM_AUTHORIZATION_ADMIN_TOKEN_AUDIENCE=https://admin.release-check.invalid/iam/admin \
 		IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID=v1 \
 		IAM_AUTHORIZATION_SIGNING_KEY_V1="${authorization_signing_key_secret}" \
 		IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID=v1 \

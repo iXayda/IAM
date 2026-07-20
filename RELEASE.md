@@ -60,6 +60,7 @@ GitHub Actions 在 pull request、`master` push、手动触发和每周定时任
 | 环境标签 | `IAM_DEPLOYMENT_ENVIRONMENT` 和 `IAM_SERVICE_NAMESPACE` |
 | Authorization issuer | `IAM_AUTHORIZATION_ISSUER`，稳定的环境专用 HTTPS URL |
 | Service token audience | `IAM_AUTHORIZATION_SERVICE_TOKEN_AUDIENCE`，稳定的 SCIM resource HTTPS URL |
+| Admin token audience | `IAM_AUTHORIZATION_ADMIN_TOKEN_AUDIENCE`，稳定的 Admin resource HTTPS URL |
 | SCIM base URL | `IAM_SCIM_BASE_URL`，以 `/scim/v2` 结尾的稳定 HTTPS URL |
 | Token 加密 key | `IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID` 和对应的 32 字节 Base64 key |
 | Signing key 加密 key | `IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID` 和对应的独立 32 字节 Base64 key |

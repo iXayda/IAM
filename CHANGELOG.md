@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Session-bound Admin access-token profile with an explicit scope, dedicated audience, and Refresh Token continuity.
 - Transactional administrator role bootstrap, hierarchical permanent or bounded JIT grants, fail-closed effective permission resolution, and retained revocation history.
 - Tenant-safe administrator RBAC schema with built-in least-privilege roles, stable permissions, and permanent or expiring user bindings.
 - Tenant-scoped SCIM Group deletion with strict empty responses, atomic membership cleanup, directory revision updates, and confidential failures.

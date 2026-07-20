@@ -396,6 +396,11 @@ UUID、合法 client identifier 以及 `sub == client_id`。已签发 JWT 不执
 最多 5 分钟，并允许 30 秒验证时钟偏差。考虑签发端与资源端允许的相对时钟偏差，禁用 client 后的
 运维处置窗口按最坏约 6 分钟计算。
 
+获得 `iam.admin` scope 的 Authorization Code 或 Refresh Token access token 使用
+`IAM_AUTHORIZATION_ADMIN_TOKEN_AUDIENCE` 配置独立的 Admin resource audience。该 token 绑定 tenant、
+User、登录 session、认证方式和认证时间；普通 OIDC access token 不包含 Admin audience。Admin resource
+server 仍须在线校验 session 当前可用并从 RBAC 数据实时解析权限，不能把 token 中的 scope 当作管理权限。
+
 首次启动会在 PostgreSQL 中并发安全地创建一把 RSA-3072 active signing key。`kid` 使用 RFC 7638
 thumbprint，私钥以 PKCS#8 编码并由独立的 AES-256-GCM key ring 加密，数据库不保存明文私钥。生产环境
 必须配置 `IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID` 和对应的
