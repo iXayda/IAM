@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
-	private static final int CURRENT_SCHEMA_VERSION = 23;
+	private static final int CURRENT_SCHEMA_VERSION = 24;
 
 	private static final UUID TENANT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742901");
 
@@ -378,7 +378,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 					""".formatted(schema)).param("userId", USER_ID).update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 22);
 			assertThat(count(jdbc, schema, "user_totp_credentials")).isZero();
 			jdbc.sql("""
 					INSERT INTO %s.user_totp_credentials

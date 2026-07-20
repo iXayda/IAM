@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- One-time recovery code generation with adaptive hashes, atomic consumption, and transaction-bound verification.
 - Two-phase TOTP enrollment and verification with encrypted secrets, atomic replay prevention, key rotation, and fail-closed readiness.
 - Permission-protected Admin role catalog endpoint with live RBAC authorization.
 - Stateless Admin resource-server boundary with live session checks, dynamic RBAC authorities, and deny-by-default routing.
