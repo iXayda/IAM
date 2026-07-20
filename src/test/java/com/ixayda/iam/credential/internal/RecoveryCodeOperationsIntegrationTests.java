@@ -75,8 +75,10 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 
 	@Test
 	void replacesHashesConsumesOnceAndRejectsOldSets() {
+		assertThat(this.operations.hasAvailableCode(TenantId.DEFAULT, USER_ID)).isFalse();
 		char[][] first = replaceAndCopy();
 		try {
+			assertThat(this.operations.hasAvailableCode(TenantId.DEFAULT, USER_ID)).isTrue();
 			assertThat(this.repository.countAvailable(TenantId.DEFAULT, USER_ID))
 				.isEqualTo(GeneratedRecoveryCodes.CODE_COUNT);
 			assertThat(storedValue(first[0])).doesNotContain(new String(first[0])).startsWith("{");

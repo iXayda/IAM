@@ -81,6 +81,7 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void enrollsActivatesConsumesAndRevokesTotpCredentials() {
+		assertThat(this.operations.hasActiveCredential(TenantId.DEFAULT, USER_ID)).isFalse();
 		try (TotpEnrollment enrollment = this.operations.beginEnrollment(TenantId.DEFAULT, USER_ID)) {
 			byte[] secret = enrollment.copySecret();
 			try {
@@ -89,6 +90,7 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 					assertThat(this.operations.activate(TenantId.DEFAULT, USER_ID, enrollment.credentialId(), activation))
 						.isTrue();
 				}
+				assertThat(this.operations.hasActiveCredential(TenantId.DEFAULT, USER_ID)).isTrue();
 
 				try (TotpCodeAttempt replay = attempt(secret, timeStep)) {
 					assertThat(verify(replay)).isFalse();
@@ -105,6 +107,7 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 				assertThat(this.operations.revoke(TenantId.DEFAULT, USER_ID, enrollment.credentialId())).isTrue();
 				assertThat(this.operations.revoke(TenantId.DEFAULT, USER_ID, enrollment.credentialId())).isFalse();
+				assertThat(this.operations.hasActiveCredential(TenantId.DEFAULT, USER_ID)).isFalse();
 				StoredTotpCredential revoked = this.repository
 					.findById(TenantId.DEFAULT, USER_ID, enrollment.credentialId())
 					.orElseThrow();

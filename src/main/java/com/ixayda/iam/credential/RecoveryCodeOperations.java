@@ -6,6 +6,13 @@ import com.ixayda.iam.user.UserId;
 public interface RecoveryCodeOperations {
 
 	/**
+	 * Returns whether the user currently has at least one unconsumed recovery code.
+	 * This is a point-in-time query; callers that make a later write must use their own
+	 * lifecycle guard.
+	 */
+	boolean hasAvailableCode(TenantId tenantId, UserId userId);
+
+	/**
 	 * Atomically replaces all existing recovery codes and returns the new plaintext
 	 * values once. The caller must close the returned set after presenting it.
 	 */

@@ -58,6 +58,12 @@ class DefaultTotpOperations implements TotpOperations {
 	}
 
 	@Override
+	public boolean hasActiveCredential(TenantId tenantId, UserId userId) {
+		requireKey(tenantId, userId);
+		return this.repository.findActiveByUser(tenantId, userId).isPresent();
+	}
+
+	@Override
 	public TotpEnrollment beginEnrollment(TenantId tenantId, UserId userId) {
 		requireKey(tenantId, userId);
 		requireNoTransaction();

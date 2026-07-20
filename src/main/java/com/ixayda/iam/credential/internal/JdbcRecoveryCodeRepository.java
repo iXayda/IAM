@@ -89,6 +89,20 @@ class JdbcRecoveryCodeRepository {
 			.optional();
 	}
 
+	boolean hasAvailable(TenantId tenantId, UserId userId) {
+		requireKey(tenantId, userId);
+		return this.jdbcClient.sql("""
+				SELECT EXISTS (
+				    SELECT 1 FROM user_recovery_codes
+				    WHERE tenant_id = :tenantId AND user_id = :userId AND consumed_at IS NULL
+				)
+				""")
+			.param("tenantId", tenantId.value())
+			.param("userId", userId.value())
+			.query(Boolean.class)
+			.single();
+	}
+
 	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<StoredRecoveryCode> consume(StoredRecoveryCode observed, Instant consumedAt) {
 		Objects.requireNonNull(observed, "Observed recovery code must not be null");

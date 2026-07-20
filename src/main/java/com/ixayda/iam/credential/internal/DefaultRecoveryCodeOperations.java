@@ -54,6 +54,12 @@ class DefaultRecoveryCodeOperations implements RecoveryCodeOperations {
 	}
 
 	@Override
+	public boolean hasAvailableCode(TenantId tenantId, UserId userId) {
+		requireKey(tenantId, userId);
+		return this.repository.hasAvailable(tenantId, userId);
+	}
+
+	@Override
 	public GeneratedRecoveryCodes replace(TenantId tenantId, UserId userId) {
 		requireKey(tenantId, userId);
 		requireNoTransaction();

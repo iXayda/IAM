@@ -6,6 +6,13 @@ import com.ixayda.iam.user.UserId;
 public interface TotpOperations {
 
 	/**
+	 * Returns whether the user currently has an active TOTP credential. This is a
+	 * point-in-time query; callers that make a later write must use their own lifecycle
+	 * guard.
+	 */
+	boolean hasActiveCredential(TenantId tenantId, UserId userId);
+
+	/**
 	 * Replaces any pending enrollment and returns a caller-owned secret that must be
 	 * closed after presentation to the user.
 	 */
