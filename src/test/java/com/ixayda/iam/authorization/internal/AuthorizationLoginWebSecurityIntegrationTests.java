@@ -35,6 +35,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
+import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.client.ClientAuthenticationMethod;
@@ -770,8 +771,8 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 		try (ConfidentialClientFixture client = createAdminClient(TenantId.DEFAULT, "admin-token")) {
 			UserFixture user = createUser(TenantId.DEFAULT, "admin-token");
 			AuthorizationCodeFixture authorizationCode = authorize(user, client.client(),
-					"openid profile " + AdminTokenJwtCustomizer.ADMIN_SCOPE, "profile",
-					AdminTokenJwtCustomizer.ADMIN_SCOPE);
+					"openid profile " + AdminAccessTokenClaims.SCOPE, "profile",
+					AdminAccessTokenClaims.SCOPE);
 			JsonNode initial = exchangeAuthorizationCode(client, authorizationCode);
 			Jwt initialAccessToken = this.adminJwtDecoder.decode(initial.get("access_token").stringValue());
 			assertAdminClaims(initialAccessToken, user.user());
@@ -784,10 +785,10 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 				.getContentAsString());
 			Jwt refreshedAccessToken = this.adminJwtDecoder.decode(refreshed.get("access_token").stringValue());
 			assertAdminClaims(refreshedAccessToken, user.user());
-			assertThat(refreshedAccessToken.getClaimAsString(AdminTokenJwtCustomizer.SESSION_ID_CLAIM))
-				.isEqualTo(initialAccessToken.getClaimAsString(AdminTokenJwtCustomizer.SESSION_ID_CLAIM));
-			assertThat(refreshedAccessToken.getClaimAsInstant(AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM))
-				.isEqualTo(initialAccessToken.getClaimAsInstant(AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM));
+			assertThat(refreshedAccessToken.getClaimAsString(AdminAccessTokenClaims.SESSION_ID))
+				.isEqualTo(initialAccessToken.getClaimAsString(AdminAccessTokenClaims.SESSION_ID));
+			assertThat(refreshedAccessToken.getClaimAsInstant(AdminAccessTokenClaims.AUTHENTICATION_TIME))
+				.isEqualTo(initialAccessToken.getClaimAsInstant(AdminAccessTokenClaims.AUTHENTICATION_TIME));
 
 			JsonNode reduced = JSON.readTree(this.mockMvc
 				.perform(refreshRequest(client, refreshed.get("refresh_token").stringValue(), "openid profile"))
@@ -800,8 +801,8 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			assertThat(reducedAccessToken.getAudience()).containsExactly(client.client().identifier().value());
 			assertThat(reducedAccessToken.getClaimAsStringList("scope"))
 				.containsExactlyInAnyOrder("openid", "profile");
-			assertThat(reducedAccessToken.hasClaim(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM)).isFalse();
-			assertThat(reducedAccessToken.hasClaim(AdminTokenJwtCustomizer.SESSION_ID_CLAIM)).isFalse();
+			assertThat(reducedAccessToken.hasClaim(AdminAccessTokenClaims.TENANT_ID)).isFalse();
+			assertThat(reducedAccessToken.hasClaim(AdminAccessTokenClaims.SESSION_ID)).isFalse();
 			assertThatThrownBy(() -> this.adminJwtDecoder.decode(reducedAccessTokenValue))
 				.isInstanceOf(JwtException.class);
 		}
@@ -905,7 +906,7 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 				"Admin Authorization Client", ClientType.CONFIDENTIAL,
 				ClientAuthenticationMethod.CLIENT_SECRET_BASIC, Set.of(new ClientRedirectUri(REDIRECT_URI)), Set.of(),
 				Set.of(new ClientScope("openid"), new ClientScope("profile"),
-						new ClientScope(AdminTokenJwtCustomizer.ADMIN_SCOPE)),
+						new ClientScope(AdminAccessTokenClaims.SCOPE)),
 				ClientTokenPolicy.refreshEnabledDefaults());
 		try (ClientRegistration registration = this.clients.create(tenantId, request)) {
 			this.clientsToDelete.add(registration.client().id());
@@ -970,16 +971,16 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	private static void assertAdminClaims(Jwt accessToken, User user) {
 		assertThat(accessToken.getSubject()).isEqualTo(user.id().toString());
 		assertThat(accessToken.getAudience()).containsExactly("https://admin.example.test/iam/admin");
-		assertThat(accessToken.getClaimAsString(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM))
+		assertThat(accessToken.getClaimAsString(AdminAccessTokenClaims.TENANT_ID))
 			.isEqualTo(user.tenantId().toString());
-		assertThat(accessToken.getClaimAsString(AdminTokenJwtCustomizer.USER_ID_CLAIM))
+		assertThat(accessToken.getClaimAsString(AdminAccessTokenClaims.USER_ID))
 			.isEqualTo(user.id().toString());
-		assertThat(accessToken.getClaimAsString(AdminTokenJwtCustomizer.SESSION_ID_CLAIM)).isNotBlank();
-		assertThat(accessToken.getClaimAsString(AdminTokenJwtCustomizer.AUTHENTICATION_METHOD_CLAIM))
+		assertThat(accessToken.getClaimAsString(AdminAccessTokenClaims.SESSION_ID)).isNotBlank();
+		assertThat(accessToken.getClaimAsString(AdminAccessTokenClaims.AUTHENTICATION_METHOD))
 			.isEqualTo("password");
-		assertThat(accessToken.getClaimAsInstant(AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM)).isNotNull();
+		assertThat(accessToken.getClaimAsInstant(AdminAccessTokenClaims.AUTHENTICATION_TIME)).isNotNull();
 		assertThat(accessToken.getClaimAsStringList("scope"))
-			.contains(AdminTokenJwtCustomizer.ADMIN_SCOPE);
+			.contains(AdminAccessTokenClaims.SCOPE);
 	}
 
 	private JsonNode exchangeAuthorizationCode(ConfidentialClientFixture client,

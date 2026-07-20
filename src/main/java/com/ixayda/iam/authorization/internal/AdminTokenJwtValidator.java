@@ -10,6 +10,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
+import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
@@ -53,14 +54,13 @@ final class AdminTokenJwtValidator implements OAuth2TokenValidator<Jwt> {
 			return invalid();
 		}
 
-		String tenantId = stringClaim(token, ServiceTokenJwtCustomizer.TENANT_ID_CLAIM);
-		String userId = stringClaim(token, AdminTokenJwtCustomizer.USER_ID_CLAIM);
-		String sessionId = stringClaim(token, AdminTokenJwtCustomizer.SESSION_ID_CLAIM);
+		String tenantId = stringClaim(token, AdminAccessTokenClaims.TENANT_ID);
+		String userId = stringClaim(token, AdminAccessTokenClaims.USER_ID);
+		String sessionId = stringClaim(token, AdminAccessTokenClaims.SESSION_ID);
 		String subject = stringClaim(token, "sub");
 		if (!isCanonicalUuid(tenantId) || !isCanonicalUuid(userId) || !isCanonicalUuid(sessionId)
 				|| !userId.equals(subject) || !hasAdminScope(token)
-				|| !isAuthenticationMethod(stringClaim(token,
-						AdminTokenJwtCustomizer.AUTHENTICATION_METHOD_CLAIM))) {
+				|| !isAuthenticationMethod(stringClaim(token, AdminAccessTokenClaims.AUTHENTICATION_METHOD))) {
 			return invalid();
 		}
 		return OAuth2TokenValidatorResult.success();
@@ -72,7 +72,7 @@ final class AdminTokenJwtValidator implements OAuth2TokenValidator<Jwt> {
 			return false;
 		}
 		return scopes.stream().allMatch(String.class::isInstance)
-				&& scopes.contains(AdminTokenJwtCustomizer.ADMIN_SCOPE);
+				&& scopes.contains(AdminAccessTokenClaims.SCOPE);
 	}
 
 	private boolean hasExactAudience(Jwt token) {
@@ -82,7 +82,7 @@ final class AdminTokenJwtValidator implements OAuth2TokenValidator<Jwt> {
 	}
 
 	private static Instant authenticationTime(Jwt token) {
-		Object value = token.getClaims().get(AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM);
+		Object value = token.getClaims().get(AdminAccessTokenClaims.AUTHENTICATION_TIME);
 		if (value instanceof Instant instant) {
 			return instant;
 		}

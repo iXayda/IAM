@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -62,31 +63,31 @@ class AdminTokenJwtValidatorTests {
 				arguments("additional audience", mutation((claims) -> claims.put("aud", List.of(AUDIENCE,
 						"https://api.example.test")))),
 				arguments("non-list audience", mutation((claims) -> claims.put("aud", AUDIENCE))),
-				arguments("missing tenant", mutation((claims) -> claims.remove(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM))),
-				arguments("non-string tenant", mutation((claims) -> claims.put(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM,
+				arguments("missing tenant", mutation((claims) -> claims.remove(AdminAccessTokenClaims.TENANT_ID))),
+				arguments("non-string tenant", mutation((claims) -> claims.put(AdminAccessTokenClaims.TENANT_ID,
 						List.of(TENANT_ID)))),
-				arguments("malformed tenant", mutation((claims) -> claims.put(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM,
+				arguments("malformed tenant", mutation((claims) -> claims.put(AdminAccessTokenClaims.TENANT_ID,
 						"not-a-uuid"))),
-				arguments("non-canonical tenant", mutation((claims) -> claims.put(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM,
+				arguments("non-canonical tenant", mutation((claims) -> claims.put(AdminAccessTokenClaims.TENANT_ID,
 						"00000000-0000-0000-0000-00000000000A"))),
-				arguments("missing user", mutation((claims) -> claims.remove(AdminTokenJwtCustomizer.USER_ID_CLAIM))),
+				arguments("missing user", mutation((claims) -> claims.remove(AdminAccessTokenClaims.USER_ID))),
 				arguments("non-string subject", mutation((claims) -> claims.put("sub", List.of(USER_ID)))),
 				arguments("mismatched subject", mutation((claims) -> claims.put("sub",
 						"019c61d7-47d1-79ca-8052-1b731e742999"))),
-				arguments("missing session", mutation((claims) -> claims.remove(AdminTokenJwtCustomizer.SESSION_ID_CLAIM))),
+				arguments("missing session", mutation((claims) -> claims.remove(AdminAccessTokenClaims.SESSION_ID))),
 				arguments("missing scope", mutation((claims) -> claims.remove("scope"))),
 				arguments("missing admin scope", mutation((claims) -> claims.put("scope", List.of("openid")))),
-				arguments("non-list scope", mutation((claims) -> claims.put("scope", AdminTokenJwtCustomizer.ADMIN_SCOPE))),
+				arguments("non-list scope", mutation((claims) -> claims.put("scope", AdminAccessTokenClaims.SCOPE))),
 				arguments("missing authentication method", mutation((claims) ->
-						claims.remove(AdminTokenJwtCustomizer.AUTHENTICATION_METHOD_CLAIM))),
+						claims.remove(AdminAccessTokenClaims.AUTHENTICATION_METHOD))),
 				arguments("unknown authentication method", mutation((claims) -> claims.put(
-						AdminTokenJwtCustomizer.AUTHENTICATION_METHOD_CLAIM, "unknown"))),
+						AdminAccessTokenClaims.AUTHENTICATION_METHOD, "unknown"))),
 				arguments("missing authentication time", mutation((claims) ->
-						claims.remove(AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM))),
+						claims.remove(AdminAccessTokenClaims.AUTHENTICATION_TIME))),
 				arguments("malformed authentication time", mutation((claims) -> claims.put(
-						AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM, "not-a-time"))),
+						AdminAccessTokenClaims.AUTHENTICATION_TIME, "not-a-time"))),
 				arguments("authentication after issuance", mutation((claims) -> claims.put(
-						AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM, NOW))));
+						AdminAccessTokenClaims.AUTHENTICATION_TIME, NOW))));
 	}
 
 	private static Stream<Arguments> invalidLifetimes() {
@@ -105,12 +106,12 @@ class AdminTokenJwtValidatorTests {
 		claims.put("iss", "https://issuer.example.test");
 		claims.put("sub", USER_ID);
 		claims.put("aud", List.of(AUDIENCE));
-		claims.put("scope", List.of("openid", AdminTokenJwtCustomizer.ADMIN_SCOPE));
-		claims.put(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM, TENANT_ID);
-		claims.put(AdminTokenJwtCustomizer.USER_ID_CLAIM, USER_ID);
-		claims.put(AdminTokenJwtCustomizer.SESSION_ID_CLAIM, SESSION_ID);
-		claims.put(AdminTokenJwtCustomizer.AUTHENTICATION_METHOD_CLAIM, "password");
-		claims.put(AdminTokenJwtCustomizer.AUTHENTICATION_TIME_CLAIM, NOW.minusSeconds(60).getEpochSecond());
+		claims.put("scope", List.of("openid", AdminAccessTokenClaims.SCOPE));
+		claims.put(AdminAccessTokenClaims.TENANT_ID, TENANT_ID);
+		claims.put(AdminAccessTokenClaims.USER_ID, USER_ID);
+		claims.put(AdminAccessTokenClaims.SESSION_ID, SESSION_ID);
+		claims.put(AdminAccessTokenClaims.AUTHENTICATION_METHOD, "password");
+		claims.put(AdminAccessTokenClaims.AUTHENTICATION_TIME, NOW.minusSeconds(60).getEpochSecond());
 		mutation.accept(claims);
 		return new Jwt("token", issuedAt, expiresAt, Map.of("alg", "RS256"), claims);
 	}

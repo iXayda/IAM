@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
+import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.client.OAuthClientSettings;
@@ -15,16 +16,6 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Toke
 
 final class AdminTokenJwtCustomizer implements OAuth2TokenCustomizer<JwtEncodingContext> {
 
-	static final String ADMIN_SCOPE = "iam.admin";
-
-	static final String USER_ID_CLAIM = "user_id";
-
-	static final String SESSION_ID_CLAIM = "session_id";
-
-	static final String AUTHENTICATION_METHOD_CLAIM = "authentication_method";
-
-	static final String AUTHENTICATION_TIME_CLAIM = "auth_time";
-
 	private final String audience;
 
 	AdminTokenJwtCustomizer(URI audience) {
@@ -34,7 +25,7 @@ final class AdminTokenJwtCustomizer implements OAuth2TokenCustomizer<JwtEncoding
 	@Override
 	public void customize(JwtEncodingContext context) {
 		if (!OAuth2TokenType.ACCESS_TOKEN.equals(context.getTokenType())
-				|| !context.getAuthorizedScopes().contains(ADMIN_SCOPE)
+				|| !context.getAuthorizedScopes().contains(AdminAccessTokenClaims.SCOPE)
 				|| !isUserGrant(context.getAuthorizationGrantType())) {
 			return;
 		}
@@ -51,11 +42,12 @@ final class AdminTokenJwtCustomizer implements OAuth2TokenCustomizer<JwtEncoding
 		context.getClaims()
 			.subject(principal.userId().toString())
 			.audience(List.of(this.audience))
-			.claim(ServiceTokenJwtCustomizer.TENANT_ID_CLAIM, tenantId)
-			.claim(USER_ID_CLAIM, principal.userId().toString())
-			.claim(SESSION_ID_CLAIM, principal.sessionId().toString())
-			.claim(AUTHENTICATION_METHOD_CLAIM, principal.authenticationMethod().name().toLowerCase(Locale.ROOT))
-			.claim(AUTHENTICATION_TIME_CLAIM, principal.authenticatedAt().getEpochSecond());
+			.claim(AdminAccessTokenClaims.TENANT_ID, tenantId)
+			.claim(AdminAccessTokenClaims.USER_ID, principal.userId().toString())
+			.claim(AdminAccessTokenClaims.SESSION_ID, principal.sessionId().toString())
+			.claim(AdminAccessTokenClaims.AUTHENTICATION_METHOD,
+					principal.authenticationMethod().name().toLowerCase(Locale.ROOT))
+			.claim(AdminAccessTokenClaims.AUTHENTICATION_TIME, principal.authenticatedAt().getEpochSecond());
 	}
 
 	private static boolean isUserGrant(AuthorizationGrantType grantType) {

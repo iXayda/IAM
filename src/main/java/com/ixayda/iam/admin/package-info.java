@@ -1,3 +1,3 @@
 @org.springframework.modulith.ApplicationModule(displayName = "Administration",
-		allowedDependencies = { "tenant", "user" })
+		allowedDependencies = { "authorization", "session", "tenant", "user" })
 package com.ixayda.iam.admin;

@@ -399,7 +399,9 @@ UUID、合法 client identifier 以及 `sub == client_id`。已签发 JWT 不执
 获得 `iam.admin` scope 的 Authorization Code 或 Refresh Token access token 使用
 `IAM_AUTHORIZATION_ADMIN_TOKEN_AUDIENCE` 配置独立的 Admin resource audience。该 token 绑定 tenant、
 User、登录 session、认证方式和认证时间；普通 OIDC access token 不包含 Admin audience。Admin resource
-server 仍须在线校验 session 当前可用并从 RBAC 数据实时解析权限，不能把 token 中的 scope 当作管理权限。
+server 会在线校验 session 当前可用并从 RBAC 数据实时解析权限，不能把 token 中的 scope 当作管理权限。
+`/iam/admin/**` 使用独立的无状态 Bearer security chain；只有显式声明精确 permission 的路由可访问，
+其余路径默认拒绝。
 
 首次启动会在 PostgreSQL 中并发安全地创建一把 RSA-3072 active signing key。`kid` 使用 RFC 7638
 thumbprint，私钥以 PKCS#8 编码并由独立的 AES-256-GCM key ring 加密，数据库不保存明文私钥。生产环境
