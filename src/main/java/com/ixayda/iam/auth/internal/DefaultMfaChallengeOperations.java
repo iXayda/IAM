@@ -84,6 +84,9 @@ class DefaultMfaChallengeOperations implements MfaChallengeOperations {
 	public MfaChallengeConsumeStatus consume(MfaChallenge challenge, LoginAttemptSource source) {
 		Objects.requireNonNull(challenge, "MFA challenge must not be null");
 		Objects.requireNonNull(source, "Login attempt source must not be null");
+		if (!this.timeSource.now().isBefore(challenge.expiresAt())) {
+			return MfaChallengeConsumeStatus.REJECTED;
+		}
 		SecurityStateConsumeStatus status = this.states.consume(
 				key(challenge.tenantId(), challenge.userId(), challenge.passwordVerifiedAt(), challenge.expiresAt(),
 						challenge.factors(), source),

@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class DefaultMfaChallengeOperationsTests {
@@ -99,6 +100,16 @@ class DefaultMfaChallengeOperationsTests {
 			.thenReturn(SecurityStateConsumeStatus.REJECTED, SecurityStateConsumeStatus.UNAVAILABLE);
 		assertThat(this.operations.consume(challenge, SOURCE)).isEqualTo(MfaChallengeConsumeStatus.REJECTED);
 		assertThat(this.operations.consume(challenge, SOURCE)).isEqualTo(MfaChallengeConsumeStatus.UNAVAILABLE);
+	}
+
+	@Test
+	void rejectsAnExpiredChallengeBeforeAccessingState() {
+		MfaChallenge expired = new MfaChallenge(
+				com.ixayda.iam.auth.MfaChallengeToken.from(STATE_TOKEN.value()), TenantId.DEFAULT, USER_ID,
+				NOW.minusSeconds(300), NOW, Set.of(MfaFactor.TOTP));
+
+		assertThat(this.operations.consume(expired, SOURCE)).isEqualTo(MfaChallengeConsumeStatus.REJECTED);
+		verifyNoInteractions(this.states);
 	}
 
 	@Test
