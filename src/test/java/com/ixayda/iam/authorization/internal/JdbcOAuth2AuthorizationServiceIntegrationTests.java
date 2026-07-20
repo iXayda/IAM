@@ -32,7 +32,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataRetrievalFailureException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.FactorGrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
@@ -283,6 +285,67 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 
 		this.authorizations.remove(replayed);
 		assertThat(this.authorizations.findById(authorizationId.toString())).isNull();
+	}
+
+	@Test
+	void roundTripsIndependentAuthenticationFactorTimes() {
+		UUID authorizationId = UUID.randomUUID();
+		Instant passwordVerifiedAt = AUTHENTICATED_AT.minusSeconds(60);
+		Instant oneTimeTokenVerifiedAt = AUTHENTICATED_AT;
+		List<GrantedAuthority> authorities = List.of(
+				FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY)
+					.issuedAt(passwordVerifiedAt)
+					.build(),
+				FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.OTT_AUTHORITY)
+					.issuedAt(oneTimeTokenVerifiedAt)
+					.build());
+		OAuth2Authorization authorization = baseAuthorization(authorizationId, authorities)
+			.attribute(OAuth2ParameterNames.STATE, "mfa-consent-state")
+			.build();
+
+		this.authorizations.save(authorization);
+		OAuth2Authorization stored = this.authorizations.findById(authorizationId.toString());
+
+		AuthorizationUserAuthentication authentication = stored.getAttribute(Principal.class.getName());
+		assertThat(authentication.getAuthorities()).filteredOn(FactorGrantedAuthority.class::isInstance)
+			.map(FactorGrantedAuthority.class::cast)
+			.containsExactlyInAnyOrder(
+					FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY)
+						.issuedAt(passwordVerifiedAt)
+						.build(),
+					FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.OTT_AUTHORITY)
+						.issuedAt(oneTimeTokenVerifiedAt)
+						.build());
+	}
+
+	@Test
+	void rejectsMissingOrFutureDatedStoredPasswordFactors() {
+		UUID authorizationId = UUID.randomUUID();
+		this.authorizations.save(pendingAuthorization(authorizationId, "factor-integrity-state"));
+		this.jdbcClient.sql("""
+				UPDATE oauth_authorization_principal_authorities
+				SET issued_at = :issuedAt
+				WHERE authorization_id = :authorizationId AND authority = :authority
+				""")
+			.param("issuedAt", offset(AUTHENTICATED_AT.plusSeconds(1)))
+			.param("authorizationId", authorizationId)
+			.param("authority", FactorGrantedAuthority.PASSWORD_AUTHORITY)
+			.update();
+
+		assertThatThrownBy(() -> this.authorizations.findById(authorizationId.toString()))
+			.isInstanceOf(DataRetrievalFailureException.class)
+			.hasMessage("Stored authorization factor was issued after session authentication");
+
+		this.jdbcClient.sql("""
+				DELETE FROM oauth_authorization_principal_authorities
+				WHERE authorization_id = :authorizationId AND authority = :authority
+				""")
+			.param("authorizationId", authorizationId)
+			.param("authority", FactorGrantedAuthority.PASSWORD_AUTHORITY)
+			.update();
+		assertThatThrownBy(() -> this.authorizations.findById(authorizationId.toString()))
+			.isInstanceOf(DataRetrievalFailureException.class)
+			.hasMessage("Stored authorization is missing its password factor authority");
 	}
 
 	@Test
@@ -664,11 +727,19 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 	private OAuth2Authorization.Builder baseAuthorization(UUID authorizationId) {
 		AuthorizationPrincipal principal = new AuthorizationPrincipal(TenantId.DEFAULT, new UserId(USER_ID),
 				new SessionId(SESSION_ID), SessionAuthenticationMethod.PASSWORD, AUTHENTICATED_AT);
-		AuthorizationUserAuthentication authentication = AuthorizationUserAuthentication.authenticated(principal,
+		return baseAuthorization(authorizationId,
 				List.of(new SimpleGrantedAuthority("ROLE_USER"), FactorGrantedAuthority
 					.withAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY)
 					.issuedAt(principal.authenticatedAt())
 					.build()));
+	}
+
+	private OAuth2Authorization.Builder baseAuthorization(UUID authorizationId,
+			List<? extends GrantedAuthority> authorities) {
+		AuthorizationPrincipal principal = new AuthorizationPrincipal(TenantId.DEFAULT, new UserId(USER_ID),
+				new SessionId(SESSION_ID), SessionAuthenticationMethod.PASSWORD, AUTHENTICATED_AT);
+		AuthorizationUserAuthentication authentication =
+				AuthorizationUserAuthentication.authenticated(principal, authorities);
 		return OAuth2Authorization.withRegisteredClient(registeredClient())
 			.id(authorizationId.toString())
 			.principalName(USER_ID.toString())

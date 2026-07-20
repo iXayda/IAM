@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Session-bound authentication factor evidence with independent issuance timestamps.
+- Session- and authorization-bound authentication factor evidence with independent issuance timestamps.
 - Source-bound MFA login challenges with atomic TOTP or recovery-code completion before session creation.
 - One-time recovery code generation with adaptive hashes, atomic consumption, and transaction-bound verification.
 - Two-phase TOTP enrollment and verification with encrypted secrets, atomic replay prevention, key rotation, and fail-closed readiness.

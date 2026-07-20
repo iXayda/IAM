@@ -197,10 +197,10 @@ final class AuthorizationSnapshotMapper {
 		return Collections.unmodifiableMap(validated);
 	}
 
-	private static Set<String> authorities(AuthorizationUserAuthentication authentication,
+	private static Set<AuthorizationAuthoritySnapshot> authorities(AuthorizationUserAuthentication authentication,
 			AuthorizationPrincipal principal) {
-		Set<String> authorities = new LinkedHashSet<>();
-		boolean authenticationFactorPresent = false;
+		Map<String, AuthorizationAuthoritySnapshot> authorities = new LinkedHashMap<>();
+		boolean passwordFactorPresent = false;
 		for (GrantedAuthority authority : authentication.getAuthorities()) {
 			String value = authority.getAuthority();
 			if (value == null || value.isEmpty() || value.length() > 256
@@ -209,21 +209,28 @@ final class AuthorizationSnapshotMapper {
 			}
 			if (authority instanceof FactorGrantedAuthority factor) {
 				if (principal.authenticationMethod() != SessionAuthenticationMethod.PASSWORD
-						|| !FactorGrantedAuthority.PASSWORD_AUTHORITY.equals(value)
-						|| !principal.authenticatedAt().equals(factor.getIssuedAt())) {
+						|| (!FactorGrantedAuthority.PASSWORD_AUTHORITY.equals(value)
+								&& !FactorGrantedAuthority.OTT_AUTHORITY.equals(value))
+						|| factor.getIssuedAt().isAfter(principal.authenticatedAt())) {
 					throw new IllegalArgumentException("Authorization principal contains an unsupported factor authority");
 				}
-				authenticationFactorPresent = true;
+				passwordFactorPresent |= FactorGrantedAuthority.PASSWORD_AUTHORITY.equals(value);
 			}
 			else if (value.startsWith("FACTOR_")) {
 				throw new IllegalArgumentException("Authorization principal factor authorities must retain their type");
 			}
-			authorities.add(value);
+			Instant issuedAt = authority instanceof FactorGrantedAuthority factor
+					? AuthorizationTime.toDatabasePrecision(factor.getIssuedAt()) : null;
+			AuthorizationAuthoritySnapshot snapshot = new AuthorizationAuthoritySnapshot(value, issuedAt);
+			AuthorizationAuthoritySnapshot existing = authorities.putIfAbsent(value, snapshot);
+			if (existing != null && !existing.equals(snapshot)) {
+				throw new IllegalArgumentException("Authorization principal contains conflicting authorities");
+			}
 		}
-		if (!authenticationFactorPresent) {
-			throw new IllegalArgumentException("Authorization principal authentication factor is required");
+		if (!passwordFactorPresent) {
+			throw new IllegalArgumentException("Authorization principal password factor is required");
 		}
-		return Collections.unmodifiableSet(authorities);
+		return Collections.unmodifiableSet(new LinkedHashSet<>(authorities.values()));
 	}
 
 	private static Map<AuthorizationTokenKind, AuthorizationTokenSnapshot> tokens(

@@ -155,13 +155,36 @@ class AuthorizationSnapshotMapperTests {
 			.hasMessage("Authorization principal must be an authenticated credential-free IAM user");
 		assertThatThrownBy(() -> this.mapper.toSnapshot(missingFactor))
 			.isInstanceOf(IllegalArgumentException.class)
-			.hasMessage("Authorization principal authentication factor is required");
+			.hasMessage("Authorization principal password factor is required");
 		assertThatThrownBy(() -> this.mapper.toSnapshot(refreshToken))
 			.isInstanceOf(IllegalArgumentException.class)
 			.hasMessage("Refresh tokens require an issued access token");
 		assertThatThrownBy(() -> this.mapper.toSnapshot(customToken))
 			.isInstanceOf(IllegalArgumentException.class)
 			.hasMessage("Authorization contains unsupported token state");
+	}
+
+	@Test
+	void preservesIndependentMultiFactorIssuanceTimes() {
+		AuthorizationPrincipal principal = new AuthorizationPrincipal(TenantId.DEFAULT, new UserId(USER_ID),
+				new SessionId(SESSION_ID), SessionAuthenticationMethod.PASSWORD, ISSUED_AT.minusSeconds(30));
+		Instant passwordVerifiedAt = principal.authenticatedAt().minusSeconds(60);
+		Instant oneTimeTokenVerifiedAt = principal.authenticatedAt();
+		AuthorizationUserAuthentication authentication = AuthorizationUserAuthentication.authenticated(principal,
+				List.of(FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY)
+					.issuedAt(passwordVerifiedAt)
+					.build(), FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.OTT_AUTHORITY)
+						.issuedAt(oneTimeTokenVerifiedAt)
+						.build()));
+		OAuth2Authorization authorization = baseAuthorization(authorizationRequest())
+			.attribute(Principal.class.getName(), authentication)
+			.build();
+
+		AuthorizationSnapshot snapshot = this.mapper.toSnapshot(authorization);
+
+		assertThat(snapshot.principalAuthorities()).containsExactlyInAnyOrder(
+				new AuthorizationAuthoritySnapshot(FactorGrantedAuthority.PASSWORD_AUTHORITY, passwordVerifiedAt),
+				new AuthorizationAuthoritySnapshot(FactorGrantedAuthority.OTT_AUTHORITY, oneTimeTokenVerifiedAt));
 	}
 
 	@Test

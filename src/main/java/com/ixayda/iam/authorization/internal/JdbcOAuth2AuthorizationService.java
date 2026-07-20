@@ -414,16 +414,17 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 	}
 
 	private void insertPrincipalAuthorities(AuthorizationSnapshot snapshot) {
-		for (String authority : snapshot.principalAuthorities()) {
+		for (AuthorizationAuthoritySnapshot authority : snapshot.principalAuthorities()) {
 			this.jdbcClient.sql("""
 					INSERT INTO oauth_authorization_principal_authorities
-					    (tenant_id, client_id, authorization_id, authority)
-					VALUES (:tenantId, :clientId, :authorizationId, :authority)
+					    (tenant_id, client_id, authorization_id, authority, issued_at)
+					VALUES (:tenantId, :clientId, :authorizationId, :authority, CAST(:issuedAt AS timestamptz))
 					""")
 				.param("tenantId", snapshot.tenantId())
 				.param("clientId", snapshot.clientId())
 				.param("authorizationId", snapshot.authorizationId())
-				.param("authority", authority)
+				.param("authority", authority.authority())
+				.param("issuedAt", offset(authority.issuedAt()))
 				.update();
 		}
 	}
@@ -656,8 +657,13 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				new UserId(stored.userId()), new SessionId(stored.sessionId()),
 				SessionAuthenticationMethod.valueOf(stored.authenticationMethod().toUpperCase()),
 				stored.authenticatedAt());
+		Set<AuthorizationAuthoritySnapshot> storedAuthorities = loadPrincipalAuthorities(stored);
+		if (storedAuthorities.stream().noneMatch(authority ->
+				FactorGrantedAuthority.PASSWORD_AUTHORITY.equals(authority.authority()))) {
+			throw new DataRetrievalFailureException("Stored authorization is missing its password factor authority");
+		}
 		AuthorizationUserAuthentication authentication = AuthorizationUserAuthentication.authenticated(principal,
-				loadPrincipalAuthorities(stored).stream().map(authority -> storedAuthority(authority, principal)).toList());
+				storedAuthorities.stream().map(authority -> storedAuthority(authority, principal)).toList());
 		RegisteredClient.Builder registeredClient = RegisteredClient.withId(stored.clientId().toString())
 			.clientId(stored.clientIdentifier())
 			.clientAuthenticationMethod(org.springframework.security.oauth2.core.ClientAuthenticationMethod.NONE)
@@ -775,19 +781,37 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		return loadStrings("oauth_authorization_scopes", "scope", stored);
 	}
 
-	private Set<String> loadPrincipalAuthorities(StoredAuthorization stored) {
-		return loadStrings("oauth_authorization_principal_authorities", "authority", stored);
+	private Set<AuthorizationAuthoritySnapshot> loadPrincipalAuthorities(StoredAuthorization stored) {
+		List<AuthorizationAuthoritySnapshot> values = this.jdbcClient.sql("""
+				SELECT authority, issued_at
+				FROM oauth_authorization_principal_authorities
+				WHERE tenant_id = :tenantId AND client_id = :clientId AND authorization_id = :authorizationId
+				ORDER BY authority
+				""")
+			.param("tenantId", stored.tenantId())
+			.param("clientId", stored.clientId())
+			.param("authorizationId", stored.authorizationId())
+			.query((resultSet, rowNumber) -> new AuthorizationAuthoritySnapshot(
+					resultSet.getString("authority"), instantOrNull(resultSet, "issued_at")))
+			.list();
+		return Collections.unmodifiableSet(new LinkedHashSet<>(values));
 	}
 
-	private static GrantedAuthority storedAuthority(String authority, AuthorizationPrincipal principal) {
-		if (FactorGrantedAuthority.PASSWORD_AUTHORITY.equals(authority)
+	private static GrantedAuthority storedAuthority(AuthorizationAuthoritySnapshot authority,
+			AuthorizationPrincipal principal) {
+		if ((FactorGrantedAuthority.PASSWORD_AUTHORITY.equals(authority.authority())
+				|| FactorGrantedAuthority.OTT_AUTHORITY.equals(authority.authority()))
 				&& principal.authenticationMethod() == SessionAuthenticationMethod.PASSWORD) {
-			return FactorGrantedAuthority.withAuthority(authority).issuedAt(principal.authenticatedAt()).build();
+			if (authority.issuedAt().isAfter(principal.authenticatedAt())) {
+				throw new DataRetrievalFailureException(
+						"Stored authorization factor was issued after session authentication");
+			}
+			return FactorGrantedAuthority.withAuthority(authority.authority()).issuedAt(authority.issuedAt()).build();
 		}
-		if (authority.startsWith("FACTOR_")) {
+		if (authority.authority().startsWith("FACTOR_")) {
 			throw new DataRetrievalFailureException("Stored authorization contains an unsupported factor authority");
 		}
-		return new SimpleGrantedAuthority(authority);
+		return new SimpleGrantedAuthority(authority.authority());
 	}
 
 	private Set<String> loadStrings(String table, String column, StoredAuthorization stored) {

@@ -14,7 +14,8 @@ import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 
 record AuthorizationSnapshot(UUID authorizationId, UUID tenantId, UUID clientId, String clientIdentifier,
-		AuthorizationGrantKind grantType, AuthorizationPrincipal principal, Set<String> principalAuthorities, String authorizationUri,
+		AuthorizationGrantKind grantType, AuthorizationPrincipal principal,
+		Set<AuthorizationAuthoritySnapshot> principalAuthorities, String authorizationUri,
 		String redirectUri, String clientState, Map<String, Object> requestParameters, Set<String> requestedScopes,
 		Set<String> authorizedScopes, String consentState, Long expectedVersion,
 		Map<AuthorizationTokenKind, AuthorizationTokenSnapshot> tokens) {

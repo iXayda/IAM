@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
-	private static final int CURRENT_SCHEMA_VERSION = 25;
+	private static final int CURRENT_SCHEMA_VERSION = 26;
 
 	private static final UUID TENANT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742901");
 
@@ -195,6 +195,17 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				.param("sessionId", SESSION_ID)
 				.query(String.class)
 				.single()).isEqualTo("password|true");
+			assertThat(jdbc.sql("""
+					SELECT authorities.authority || '|' || (authorities.issued_at = sessions.authenticated_at)
+					FROM %s.oauth_authorization_principal_authorities authorities
+					JOIN %s.oauth_authorizations authorizations
+					  USING (tenant_id, client_id, authorization_id)
+					JOIN %s.user_sessions sessions USING (tenant_id, session_id)
+					WHERE authorities.authorization_id = :authorizationId
+					""".formatted(schema, schema, schema))
+				.param("authorizationId", AUTHORIZATION_ID)
+				.query(String.class)
+				.single()).isEqualTo("FACTOR_PASSWORD|true");
 			assertThat(jdbc.sql("""
 					SELECT redirect_uris.authorization_grant_type || '|'
 					       || post_logout_uris.authorization_grant_type || '|'
@@ -513,6 +524,16 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				     decode(repeat('03', 17), 'hex'), now(), now() + interval '5 minutes')
 				""".formatted(schema))
 			.param("tokenId", TOKEN_ID)
+			.param("clientId", CLIENT_ID)
+			.param("authorizationId", AUTHORIZATION_ID)
+			.update();
+		jdbc.sql("""
+				INSERT INTO %s.oauth_authorization_principal_authorities
+				    (tenant_id, client_id, authorization_id, authority)
+				VALUES
+				    ('00000000-0000-0000-0000-000000000001', :clientId, :authorizationId,
+				     'FACTOR_PASSWORD')
+				""".formatted(schema))
 			.param("clientId", CLIENT_ID)
 			.param("authorizationId", AUTHORIZATION_ID)
 			.update();
