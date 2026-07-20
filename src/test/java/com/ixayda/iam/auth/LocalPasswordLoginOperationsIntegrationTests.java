@@ -9,9 +9,11 @@ import java.util.List;
 import java.util.UUID;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
+import com.ixayda.iam.credential.GeneratedRecoveryCodes;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.ratelimit.LoginAttemptSource;
 import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.session.UserSession;
@@ -48,6 +50,12 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 	private PasswordOperations passwords;
 
 	@Autowired
+	private RecoveryCodeOperations recoveryCodes;
+
+	@Autowired
+	private MfaChallengeOperations challenges;
+
+	@Autowired
 	private SessionOperations sessions;
 
 	@Autowired
@@ -65,6 +73,10 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 	@AfterEach
 	void deleteFixtures() {
 		this.usersToDelete.forEach(reference -> {
+			this.jdbcClient.sql("DELETE FROM user_recovery_codes WHERE tenant_id = :tenantId AND user_id = :userId")
+				.param("tenantId", reference.tenantId().value())
+				.param("userId", reference.userId().value())
+				.update();
 			this.jdbcClient.sql("DELETE FROM user_sessions WHERE tenant_id = :tenantId AND user_id = :userId")
 				.param("tenantId", reference.tenantId().value())
 				.param("userId", reference.userId().value())
@@ -89,6 +101,29 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 			.sql("DELETE FROM tenants WHERE tenant_id = :tenantId")
 			.param("tenantId", tenantId.value())
 			.update());
+	}
+
+	@Test
+	void issuesASourceBoundChallengeWithoutCreatingASessionWhenMfaIsConfigured() {
+		User user = createUser(TenantId.DEFAULT, "mfa-required");
+		setPassword(user, "correct-password");
+		try (GeneratedRecoveryCodes ignored = this.recoveryCodes.replace(TenantId.DEFAULT, user.id())) {
+		}
+		LoginAttemptSource source = trustedSource("mfa-required");
+
+		LocalPasswordLoginResult result =
+				login(TenantId.DEFAULT, loginKey(user), source, "correct-password");
+
+		assertThat(result.status()).isEqualTo(LocalPasswordLoginStatus.MFA_REQUIRED);
+		assertThat(result.authenticated()).isFalse();
+		assertThat(result.mfaRequired()).isTrue();
+		assertThat(result.session()).isEmpty();
+		assertThat(result.challenge()).hasValueSatisfying(challenge -> {
+			assertThat(challenge.userId()).isEqualTo(user.id());
+			assertThat(challenge.factors()).containsExactly(MfaFactor.RECOVERY_CODE);
+			assertThat(this.challenges.consume(challenge, source)).isEqualTo(MfaChallengeConsumeStatus.CONSUMED);
+		});
+		assertThat(sessionCount(TenantId.DEFAULT, user.id())).isZero();
 	}
 
 	@Test

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Set;
 
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
@@ -53,8 +54,28 @@ class LocalPasswordLoginResultTests {
 	}
 
 	@Test
+	void exposesMfaRequiredWithoutSessionOrBearerDiagnostics() {
+		MfaChallenge challenge = new MfaChallenge(
+				MfaChallengeToken.from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), TenantId.DEFAULT,
+				UserId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e63"),
+				Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:05:00Z"),
+				Set.of(MfaFactor.TOTP));
+		LocalPasswordLoginResult required = LocalPasswordLoginResult.mfaRequired(challenge);
+
+		assertThat(required.status()).isEqualTo(LocalPasswordLoginStatus.MFA_REQUIRED);
+		assertThat(required.mfaRequired()).isTrue();
+		assertThat(required.authenticated()).isFalse();
+		assertThat(required.session()).isEmpty();
+		assertThat(required.challenge()).contains(challenge);
+		assertThat(required.retryAfter()).isEmpty();
+		assertThat(required.toString()).doesNotContain(challenge.token().value());
+	}
+
+	@Test
 	void rejectsInvalidFactoryArguments() {
 		assertThatThrownBy(() -> LocalPasswordLoginResult.success(null))
+			.isInstanceOf(NullPointerException.class);
+		assertThatThrownBy(() -> LocalPasswordLoginResult.mfaRequired(null))
 			.isInstanceOf(NullPointerException.class);
 		assertThatThrownBy(() -> LocalPasswordLoginResult.throttled(null))
 			.isInstanceOf(NullPointerException.class);

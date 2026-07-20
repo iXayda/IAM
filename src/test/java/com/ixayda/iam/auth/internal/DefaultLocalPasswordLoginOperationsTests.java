@@ -13,9 +13,15 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Set;
 
 import com.ixayda.iam.auth.LocalPasswordLoginResult;
 import com.ixayda.iam.auth.LocalPasswordLoginStatus;
+import com.ixayda.iam.auth.MfaChallenge;
+import com.ixayda.iam.auth.MfaChallengeIssue;
+import com.ixayda.iam.auth.MfaChallengeOperations;
+import com.ixayda.iam.auth.MfaChallengeToken;
+import com.ixayda.iam.auth.MfaFactor;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.ratelimit.LoginAttemptDecision;
 import com.ixayda.iam.ratelimit.LoginAttemptKey;
@@ -48,8 +54,10 @@ class DefaultLocalPasswordLoginOperationsTests {
 
 	private final TransactionalLocalPasswordLogin transactionalLogin = mock(TransactionalLocalPasswordLogin.class);
 
+	private final MfaChallengeOperations challenges = mock(MfaChallengeOperations.class);
+
 	private final DefaultLocalPasswordLoginOperations operations =
-			new DefaultLocalPasswordLoginOperations(this.limiter, this.transactionalLogin);
+			new DefaultLocalPasswordLoginOperations(this.limiter, this.transactionalLogin, this.challenges);
 
 	@Test
 	void recordsSuccessOnlyAfterAuthenticationReturns() {
@@ -57,7 +65,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
 			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
-				.thenReturn(LocalPasswordLoginResult.success(session));
+				.thenReturn(PasswordLoginTransactionResult.authenticated(session));
 
 			LocalPasswordLoginResult result =
 					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
@@ -75,7 +83,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
 			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
-				.thenReturn(LocalPasswordLoginResult.rejected());
+				.thenReturn(PasswordLoginTransactionResult.rejected());
 
 			LocalPasswordLoginResult result =
 					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
@@ -97,6 +105,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 			assertThat(result.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
 			assertThat(result.retryAfter()).contains(retryAfter);
 			verifyNoInteractions(this.transactionalLogin);
+			verifyNoInteractions(this.challenges);
 			verify(this.limiter, never()).recordSuccess(any(), any());
 		}
 	}
@@ -111,6 +120,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 
 			assertThat(result).isSameAs(LocalPasswordLoginResult.unavailable());
 			verifyNoInteractions(this.transactionalLogin);
+			verifyNoInteractions(this.challenges);
 			verify(this.limiter, never()).recordSuccess(any(), any());
 		}
 	}
@@ -135,7 +145,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
 			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
-				.thenReturn(LocalPasswordLoginResult.success(session));
+				.thenReturn(PasswordLoginTransactionResult.authenticated(session));
 			doThrow(new IllegalStateException("unexpected reset failure"))
 				.when(this.limiter)
 				.recordSuccess(ATTEMPT_KEY, LEASE);
@@ -145,6 +155,44 @@ class DefaultLocalPasswordLoginOperationsTests {
 
 			assertThat(result.session()).contains(session);
 			verify(this.limiter).recordSuccess(ATTEMPT_KEY, LEASE);
+		}
+	}
+
+	@Test
+	void issuesAChallengeAndRecordsPasswordSuccessWithoutCreatingASession() {
+		MfaChallenge challenge = challenge();
+		PasswordLoginTransactionResult verified = PasswordLoginTransactionResult.mfaRequired(
+				challenge.userId(), challenge.passwordVerifiedAt(), challenge.factors());
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt)).thenReturn(verified);
+			when(this.challenges.issue(TenantId.DEFAULT, challenge.userId(), SOURCE,
+					challenge.passwordVerifiedAt(), challenge.factors()))
+				.thenReturn(MfaChallengeIssue.issued(challenge));
+
+			LocalPasswordLoginResult result =
+					this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
+
+			assertThat(result.mfaRequired()).isTrue();
+			assertThat(result.challenge()).contains(challenge);
+			verify(this.limiter).recordSuccess(ATTEMPT_KEY, LEASE);
+		}
+	}
+
+	@Test
+	void failsClosedWhenAChallengeCannotBeIssued() {
+		MfaChallenge challenge = challenge();
+		PasswordLoginTransactionResult verified = PasswordLoginTransactionResult.mfaRequired(
+				challenge.userId(), challenge.passwordVerifiedAt(), challenge.factors());
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt)).thenReturn(verified);
+			when(this.challenges.issue(any(), any(), any(), any(), any()))
+				.thenReturn(MfaChallengeIssue.unavailable());
+
+			assertThat(this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
+				.isSameAs(LocalPasswordLoginResult.unavailable());
+			verify(this.limiter, never()).recordSuccess(ATTEMPT_KEY, LEASE);
 		}
 	}
 
@@ -159,7 +207,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 				.isInstanceOf(NullPointerException.class);
 			assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, null))
 				.isInstanceOf(NullPointerException.class);
-			verifyNoInteractions(this.limiter, this.transactionalLogin);
+			verifyNoInteractions(this.limiter, this.transactionalLogin, this.challenges);
 		}
 	}
 
@@ -175,7 +223,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 			finally {
 				TransactionSynchronizationManager.setActualTransactionActive(false);
 			}
-			verifyNoInteractions(this.limiter, this.transactionalLogin);
+			verifyNoInteractions(this.limiter, this.transactionalLogin, this.challenges);
 		}
 	}
 
@@ -188,6 +236,13 @@ class DefaultLocalPasswordLoginOperationsTests {
 		return UserSession.start(SessionId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e61"), TenantId.DEFAULT,
 				UserId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e62"), SessionAuthenticationMethod.PASSWORD,
 				0, 0, now, now.plus(Duration.ofHours(8)));
+	}
+
+	private MfaChallenge challenge() {
+		Instant now = Instant.parse("2026-01-01T00:00:00Z");
+		return new MfaChallenge(MfaChallengeToken.from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+				TenantId.DEFAULT, UserId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e63"), now,
+				now.plusSeconds(300), Set.of(MfaFactor.TOTP));
 	}
 
 }

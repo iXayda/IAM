@@ -4,6 +4,8 @@ import java.util.Objects;
 
 import com.ixayda.iam.auth.LocalPasswordLoginOperations;
 import com.ixayda.iam.auth.LocalPasswordLoginResult;
+import com.ixayda.iam.auth.MfaChallengeIssue;
+import com.ixayda.iam.auth.MfaChallengeOperations;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.ratelimit.LoginAttemptDecision;
 import com.ixayda.iam.ratelimit.LoginAttemptKey;
@@ -27,10 +29,13 @@ class DefaultLocalPasswordLoginOperations implements LocalPasswordLoginOperation
 
 	private final TransactionalLocalPasswordLogin transactionalLogin;
 
+	private final MfaChallengeOperations challenges;
+
 	DefaultLocalPasswordLoginOperations(LoginAttemptLimiter limiter,
-			TransactionalLocalPasswordLogin transactionalLogin) {
+			TransactionalLocalPasswordLogin transactionalLogin, MfaChallengeOperations challenges) {
 		this.limiter = limiter;
 		this.transactionalLogin = transactionalLogin;
+		this.challenges = challenges;
 	}
 
 	@Override
@@ -54,12 +59,26 @@ class DefaultLocalPasswordLoginOperations implements LocalPasswordLoginOperation
 	private LocalPasswordLoginResult authenticate(LoginAttemptKey attemptKey, LoginAttemptDecision decision,
 			PasswordAttempt password) {
 		LoginAttemptLease lease = decision.lease().orElseThrow();
-		LocalPasswordLoginResult result = this.transactionalLogin.authenticate(attemptKey.tenantId(),
+		PasswordLoginTransactionResult transaction = this.transactionalLogin.authenticate(attemptKey.tenantId(),
 				attemptKey.loginKey(), password);
-		if (result.authenticated()) {
+		LocalPasswordLoginResult result = result(attemptKey, transaction);
+		if (result.authenticated() || result.mfaRequired()) {
 			recordSuccess(attemptKey, lease);
 		}
 		return result;
+	}
+
+	private LocalPasswordLoginResult result(LoginAttemptKey attemptKey, PasswordLoginTransactionResult transaction) {
+		if (transaction.authenticated()) {
+			return LocalPasswordLoginResult.success(transaction.session().orElseThrow());
+		}
+		if (!transaction.mfaRequired()) {
+			return LocalPasswordLoginResult.rejected();
+		}
+		MfaChallengeIssue issue = this.challenges.issue(attemptKey.tenantId(), transaction.userId().orElseThrow(),
+				attemptKey.source(), transaction.passwordVerifiedAt().orElseThrow(), transaction.factors());
+		return issue.issued() ? LocalPasswordLoginResult.mfaRequired(issue.challenge().orElseThrow())
+				: LocalPasswordLoginResult.unavailable();
 	}
 
 	private void recordSuccess(LoginAttemptKey attemptKey, LoginAttemptLease lease) {
@@ -67,7 +86,7 @@ class DefaultLocalPasswordLoginOperations implements LocalPasswordLoginOperation
 			this.limiter.recordSuccess(attemptKey, lease);
 		}
 		catch (RuntimeException exception) {
-			logger.warn("Login rate-limit success acknowledgement failed after session commit; failure_type={}",
+			logger.warn("Login rate-limit success acknowledgement failed after accepted login step; failure_type={}",
 					exception.getClass().getName());
 		}
 	}

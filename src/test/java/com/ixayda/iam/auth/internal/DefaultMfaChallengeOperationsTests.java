@@ -42,7 +42,7 @@ class DefaultMfaChallengeOperationsTests {
 
 	private final DefaultMfaChallengeOperations operations = new DefaultMfaChallengeOperations(this.states,
 			new MfaChallengeProperties(Duration.ofMinutes(5)),
-			new MfaChallengeTimeSource(Clock.fixed(NOW, ZoneOffset.UTC)));
+			new AuthenticationTimeSource(Clock.fixed(NOW, ZoneOffset.UTC)));
 
 	@Test
 	void issuesAndConsumesTheSameBoundChallengeMetadata() {

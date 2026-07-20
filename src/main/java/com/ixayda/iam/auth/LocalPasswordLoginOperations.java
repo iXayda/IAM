@@ -8,9 +8,11 @@ import com.ixayda.iam.user.LoginKey;
 public interface LocalPasswordLoginOperations {
 
 	/**
-	 * Applies login-attempt limits, authenticates a local user, and starts its session.
-	 * The source must have been canonicalized by a trusted ingress. The caller retains
-	 * ownership of {@code password} and should close it after this method returns.
+	 * Applies login-attempt limits and authenticates a local user. Starts a session when
+	 * no second factor is configured; otherwise issues a source-bound MFA challenge
+	 * without creating a session. The source must have been canonicalized by a trusted
+	 * ingress. The caller retains ownership of {@code password} and should close it
+	 * after this method returns.
 	 */
 	LocalPasswordLoginResult login(TenantId tenantId, LoginKey loginKey, LoginAttemptSource source,
 			PasswordAttempt password);

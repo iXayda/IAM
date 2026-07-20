@@ -9,8 +9,8 @@ import org.springframework.context.annotation.Configuration;
 class LocalPasswordLoginConfiguration {
 
 	@Bean
-	MfaChallengeTimeSource mfaChallengeTimeSource() {
-		return new MfaChallengeTimeSource();
+	AuthenticationTimeSource authenticationTimeSource() {
+		return new AuthenticationTimeSource();
 	}
 
 }

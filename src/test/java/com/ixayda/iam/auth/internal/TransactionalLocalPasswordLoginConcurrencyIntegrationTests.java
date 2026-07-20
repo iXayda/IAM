@@ -12,7 +12,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
-import com.ixayda.iam.auth.LocalPasswordLoginResult;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
@@ -83,9 +82,9 @@ class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends Applica
 		AtomicInteger disableBackendId = new AtomicInteger();
 
 		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-			Future<LocalPasswordLoginResult> login = executor.submit(() -> transactionTemplate().execute(status -> {
+			Future<PasswordLoginTransactionResult> login = executor.submit(() -> transactionTemplate().execute(status -> {
 				loginBackendId.set(backendId());
-				LocalPasswordLoginResult result = loginInCurrentTransaction("correct-password");
+				PasswordLoginTransactionResult result = loginInCurrentTransaction("correct-password");
 				sessionStarted.countDown();
 				await(releaseLogin, "Timed out holding the successful login transaction");
 				return result;
@@ -105,7 +104,7 @@ class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends Applica
 				releaseLogin.countDown();
 			}
 
-			LocalPasswordLoginResult result = login.get(5, TimeUnit.SECONDS);
+			PasswordLoginTransactionResult result = login.get(5, TimeUnit.SECONDS);
 			assertThat(result.authenticated()).isTrue();
 			assertThat(disable.get(5, TimeUnit.SECONDS).status()).isEqualTo(UserStatus.DISABLED);
 		}
@@ -133,7 +132,7 @@ class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends Applica
 				await(releaseDisable, "Timed out holding the user disable transaction");
 				return disabled;
 			}));
-			Future<LocalPasswordLoginResult> login;
+			Future<PasswordLoginTransactionResult> login;
 			try {
 				assertThat(userDisabled.await(5, TimeUnit.SECONDS)).isTrue();
 				login = executor.submit(() -> transactionTemplate().execute(status -> {
@@ -149,7 +148,7 @@ class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends Applica
 			}
 
 			assertThat(disable.get(5, TimeUnit.SECONDS).status()).isEqualTo(UserStatus.DISABLED);
-			assertThat(login.get(5, TimeUnit.SECONDS)).isSameAs(LocalPasswordLoginResult.rejected());
+			assertThat(login.get(5, TimeUnit.SECONDS)).isSameAs(PasswordLoginTransactionResult.rejected());
 		}
 
 		assertThat(sessionCount()).isZero();
@@ -167,7 +166,7 @@ class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends Applica
 		}
 	}
 
-	private LocalPasswordLoginResult loginInCurrentTransaction(String value) {
+	private PasswordLoginTransactionResult loginInCurrentTransaction(String value) {
 		try (PasswordAttempt attempt = new PasswordAttempt(value.toCharArray())) {
 			return this.login.authenticate(TenantId.DEFAULT, loginKey(), attempt);
 		}

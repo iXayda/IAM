@@ -60,6 +60,8 @@ final class AuthorizationLocalPasswordAuthenticationProvider implements Authenti
 				LocalPasswordLoginResult result = this.logins.login(tenantId, loginKey, details.source(), passwordAttempt);
 				return switch (result.status()) {
 					case AUTHENTICATED -> authenticated(tenantId, result.session().orElseThrow());
+					case MFA_REQUIRED -> throw new AuthorizationMfaRequiredException(
+							result.challenge().orElseThrow());
 					case REJECTED -> throw badCredentials();
 					case THROTTLED -> throw new LockedException("Local password authentication is temporarily throttled");
 					case UNAVAILABLE -> throw new AuthenticationServiceException(

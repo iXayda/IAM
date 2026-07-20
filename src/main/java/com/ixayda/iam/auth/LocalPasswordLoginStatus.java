@@ -4,6 +4,8 @@ public enum LocalPasswordLoginStatus {
 
 	AUTHENTICATED,
 
+	MFA_REQUIRED,
+
 	REJECTED,
 
 	THROTTLED,

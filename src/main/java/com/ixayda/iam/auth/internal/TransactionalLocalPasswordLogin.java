@@ -1,11 +1,14 @@
 package com.ixayda.iam.auth.internal;
 
+import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.ixayda.iam.auth.LocalPasswordLoginResult;
+import com.ixayda.iam.auth.MfaFactor;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.credential.RecoveryCodeOperations;
+import com.ixayda.iam.credential.TotpOperations;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.session.UserSession;
@@ -23,20 +26,30 @@ class TransactionalLocalPasswordLogin {
 
 	private final PasswordOperations passwords;
 
+	private final TotpOperations totp;
+
+	private final RecoveryCodeOperations recoveryCodes;
+
 	private final SessionOperations sessions;
 
 	private final LocalPasswordLoginProperties properties;
 
-	TransactionalLocalPasswordLogin(UserOperations users, PasswordOperations passwords, SessionOperations sessions,
-			LocalPasswordLoginProperties properties) {
+	private final AuthenticationTimeSource timeSource;
+
+	TransactionalLocalPasswordLogin(UserOperations users, PasswordOperations passwords, TotpOperations totp,
+			RecoveryCodeOperations recoveryCodes, SessionOperations sessions, LocalPasswordLoginProperties properties,
+			AuthenticationTimeSource timeSource) {
 		this.users = users;
 		this.passwords = passwords;
+		this.totp = totp;
+		this.recoveryCodes = recoveryCodes;
 		this.sessions = sessions;
 		this.properties = properties;
+		this.timeSource = timeSource;
 	}
 
 	@Transactional
-	public LocalPasswordLoginResult authenticate(TenantId tenantId, LoginKey loginKey, PasswordAttempt password) {
+	public PasswordLoginTransactionResult authenticate(TenantId tenantId, LoginKey loginKey, PasswordAttempt password) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(loginKey, "Login key must not be null");
 		Objects.requireNonNull(password, "Password attempt must not be null");
@@ -45,16 +58,27 @@ class TransactionalLocalPasswordLogin {
 		User user = candidate.orElse(null);
 		if (user == null || !user.isActive()) {
 			this.passwords.performDummyVerification(password);
-			return LocalPasswordLoginResult.rejected();
+			return PasswordLoginTransactionResult.rejected();
 		}
 
 		if (!this.passwords.verifyPassword(tenantId, user.id(), password)) {
-			return LocalPasswordLoginResult.rejected();
+			return PasswordLoginTransactionResult.rejected();
+		}
+
+		EnumSet<MfaFactor> factors = EnumSet.noneOf(MfaFactor.class);
+		if (this.totp.hasActiveCredential(tenantId, user.id())) {
+			factors.add(MfaFactor.TOTP);
+		}
+		if (this.recoveryCodes.hasAvailableCode(tenantId, user.id())) {
+			factors.add(MfaFactor.RECOVERY_CODE);
+		}
+		if (!factors.isEmpty()) {
+			return PasswordLoginTransactionResult.mfaRequired(user.id(), this.timeSource.now(), factors);
 		}
 
 		UserSession session = this.sessions.start(tenantId, user.id(), SessionAuthenticationMethod.PASSWORD,
 				this.properties.absoluteTtl());
-		return LocalPasswordLoginResult.success(session);
+		return PasswordLoginTransactionResult.authenticated(session);
 	}
 
 }

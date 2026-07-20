@@ -36,10 +36,10 @@ class DefaultMfaChallengeOperations implements MfaChallengeOperations {
 
 	private final MfaChallengeProperties properties;
 
-	private final MfaChallengeTimeSource timeSource;
+	private final AuthenticationTimeSource timeSource;
 
 	DefaultMfaChallengeOperations(SecurityStateOperations states, MfaChallengeProperties properties,
-			MfaChallengeTimeSource timeSource) {
+			AuthenticationTimeSource timeSource) {
 		this.states = states;
 		this.properties = properties;
 		this.timeSource = timeSource;

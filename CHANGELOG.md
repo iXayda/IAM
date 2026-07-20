@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Source-bound MFA login challenges that defer session creation until a configured second factor is verified.
 - One-time recovery code generation with adaptive hashes, atomic consumption, and transaction-bound verification.
 - Two-phase TOTP enrollment and verification with encrypted secrets, atomic replay prevention, key rotation, and fail-closed readiness.
 - Permission-protected Admin role catalog endpoint with live RBAC authorization.

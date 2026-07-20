@@ -5,16 +5,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 
-final class MfaChallengeTimeSource {
+final class AuthenticationTimeSource {
 
 	private final Clock clock;
 
-	MfaChallengeTimeSource() {
+	AuthenticationTimeSource() {
 		this(Clock.tick(Clock.systemUTC(), Duration.ofNanos(1_000)));
 	}
 
-	MfaChallengeTimeSource(Clock clock) {
-		this.clock = Objects.requireNonNull(clock, "MFA challenge clock must not be null");
+	AuthenticationTimeSource(Clock clock) {
+		this.clock = Objects.requireNonNull(clock, "Authentication clock must not be null");
 	}
 
 	Instant now() {

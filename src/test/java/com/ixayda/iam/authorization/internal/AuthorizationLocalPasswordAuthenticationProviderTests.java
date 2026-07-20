@@ -11,9 +11,13 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.Set;
 
 import com.ixayda.iam.auth.LocalPasswordLoginOperations;
 import com.ixayda.iam.auth.LocalPasswordLoginResult;
+import com.ixayda.iam.auth.MfaChallenge;
+import com.ixayda.iam.auth.MfaChallengeToken;
+import com.ixayda.iam.auth.MfaFactor;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.credential.PasswordAttempt;
@@ -118,6 +122,22 @@ class AuthorizationLocalPasswordAuthenticationProviderTests {
 			.isInstanceOf(LockedException.class);
 		assertThatThrownBy(() -> this.provider.authenticate(request("alice", "wrong-password")))
 			.isInstanceOf(AuthenticationServiceException.class);
+	}
+
+	@Test
+	void preservesTheSourceBoundChallengeInAnMfaRequiredFailure() {
+		MfaChallenge challenge = new MfaChallenge(
+				MfaChallengeToken.from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), TenantId.DEFAULT,
+				UserId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e63"),
+				Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:05:00Z"),
+				Set.of(MfaFactor.TOTP));
+		when(this.logins.login(any(), any(), any(), any()))
+			.thenReturn(LocalPasswordLoginResult.mfaRequired(challenge));
+
+		assertThatThrownBy(() -> this.provider.authenticate(request("alice", "candidate-password")))
+			.isInstanceOfSatisfying(AuthorizationMfaRequiredException.class,
+					exception -> assertThat(exception.challenge()).isEqualTo(challenge))
+			.hasMessage("Multi-factor authentication is required");
 	}
 
 	@Test

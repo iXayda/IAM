@@ -15,9 +15,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
-import com.ixayda.iam.auth.LocalPasswordLoginResult;
+import com.ixayda.iam.auth.MfaFactor;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.credential.RecoveryCodeOperations;
+import com.ixayda.iam.credential.TotpOperations;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionOperations;
@@ -44,22 +46,28 @@ class TransactionalLocalPasswordLoginTests {
 
 	private final PasswordOperations passwords = mock(PasswordOperations.class);
 
+	private final TotpOperations totp = mock(TotpOperations.class);
+
+	private final RecoveryCodeOperations recoveryCodes = mock(RecoveryCodeOperations.class);
+
 	private final SessionOperations sessions = mock(SessionOperations.class);
 
 	private final LocalPasswordLoginProperties properties =
 			new LocalPasswordLoginProperties(Duration.ofHours(8));
 
 	private final TransactionalLocalPasswordLogin login =
-			new TransactionalLocalPasswordLogin(this.users, this.passwords, this.sessions, this.properties);
+			new TransactionalLocalPasswordLogin(this.users, this.passwords, this.totp, this.recoveryCodes,
+					this.sessions, this.properties,
+					new AuthenticationTimeSource(java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC)));
 
 	@Test
 	void performsOneDummyVerificationForAnUnknownLogin() {
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.users.findByLogin(TenantId.DEFAULT, LOGIN_KEY)).thenReturn(Optional.empty());
 
-			LocalPasswordLoginResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
+			PasswordLoginTransactionResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
 
-			assertThat(result).isSameAs(LocalPasswordLoginResult.rejected());
+			assertThat(result).isSameAs(PasswordLoginTransactionResult.rejected());
 			verify(this.passwords).performDummyVerification(attempt);
 			verify(this.passwords, never()).verifyPassword(any(), any(), any());
 			verifyNoInteractions(this.sessions);
@@ -72,9 +80,9 @@ class TransactionalLocalPasswordLoginTests {
 			when(this.users.findByLogin(TenantId.DEFAULT, LOGIN_KEY))
 				.thenReturn(Optional.of(user(UserStatus.DISABLED)));
 
-			LocalPasswordLoginResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
+			PasswordLoginTransactionResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
 
-			assertThat(result).isSameAs(LocalPasswordLoginResult.rejected());
+			assertThat(result).isSameAs(PasswordLoginTransactionResult.rejected());
 			verify(this.passwords).performDummyVerification(attempt);
 			verify(this.passwords, never()).verifyPassword(any(), any(), any());
 			verifyNoInteractions(this.sessions);
@@ -88,9 +96,9 @@ class TransactionalLocalPasswordLoginTests {
 				.thenReturn(Optional.of(user(UserStatus.ACTIVE)));
 			when(this.passwords.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).thenReturn(false);
 
-			LocalPasswordLoginResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
+			PasswordLoginTransactionResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
 
-			assertThat(result).isSameAs(LocalPasswordLoginResult.rejected());
+			assertThat(result).isSameAs(PasswordLoginTransactionResult.rejected());
 			verify(this.passwords, never()).performDummyVerification(any());
 			verifyNoInteractions(this.sessions);
 		}
@@ -106,7 +114,7 @@ class TransactionalLocalPasswordLoginTests {
 			when(this.sessions.start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
 					this.properties.absoluteTtl())).thenReturn(session);
 
-			LocalPasswordLoginResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
+			PasswordLoginTransactionResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
 
 			assertThat(result.session()).contains(session);
 			InOrder order = inOrder(this.users, this.passwords, this.sessions);
@@ -119,6 +127,25 @@ class TransactionalLocalPasswordLoginTests {
 	}
 
 	@Test
+	void returnsAvailableSecondFactorsWithoutStartingASession() {
+		User user = user(UserStatus.ACTIVE);
+		try (PasswordAttempt attempt = attempt()) {
+			when(this.users.findByLogin(TenantId.DEFAULT, LOGIN_KEY)).thenReturn(Optional.of(user));
+			when(this.passwords.verifyPassword(TenantId.DEFAULT, USER_ID, attempt)).thenReturn(true);
+			when(this.totp.hasActiveCredential(TenantId.DEFAULT, USER_ID)).thenReturn(true);
+			when(this.recoveryCodes.hasAvailableCode(TenantId.DEFAULT, USER_ID)).thenReturn(true);
+
+			PasswordLoginTransactionResult result = this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
+
+			assertThat(result.mfaRequired()).isTrue();
+			assertThat(result.userId()).contains(USER_ID);
+			assertThat(result.passwordVerifiedAt()).contains(NOW);
+			assertThat(result.factors()).containsExactlyInAnyOrder(MfaFactor.TOTP, MfaFactor.RECOVERY_CODE);
+			verifyNoInteractions(this.sessions);
+		}
+	}
+
+	@Test
 	void rejectsNullInputBeforeTouchingAuthenticationState() {
 		try (PasswordAttempt attempt = attempt()) {
 			assertThatThrownBy(() -> this.login.authenticate(null, LOGIN_KEY, attempt))
@@ -127,7 +154,7 @@ class TransactionalLocalPasswordLoginTests {
 				.isInstanceOf(NullPointerException.class);
 			assertThatThrownBy(() -> this.login.authenticate(TenantId.DEFAULT, LOGIN_KEY, null))
 				.isInstanceOf(NullPointerException.class);
-			verifyNoInteractions(this.users, this.passwords, this.sessions);
+			verifyNoInteractions(this.users, this.passwords, this.totp, this.recoveryCodes, this.sessions);
 		}
 	}
 
