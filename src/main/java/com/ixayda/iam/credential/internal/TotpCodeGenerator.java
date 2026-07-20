@@ -18,7 +18,8 @@ final class TotpCodeGenerator {
 
 	private static final String HMAC_ALGORITHM = TimeBasedOneTimePasswordGenerator.TOTP_ALGORITHM_HMAC_SHA1;
 
-	private static final long MAX_TIME_STEP = Instant.MAX.getEpochSecond() / TotpCredential.STANDARD_PERIOD_SECONDS;
+	private static final long MAX_TIME_STEP =
+			Long.MAX_VALUE / (TotpCredential.STANDARD_PERIOD_SECONDS * 1_000L);
 
 	private final TimeBasedOneTimePasswordGenerator generator = new TimeBasedOneTimePasswordGenerator(
 			Duration.ofSeconds(TotpCredential.STANDARD_PERIOD_SECONDS), TotpCredential.STANDARD_DIGITS, HMAC_ALGORITHM);
@@ -28,7 +29,11 @@ final class TotpCodeGenerator {
 		if (instant.getEpochSecond() < 0) {
 			throw new IllegalArgumentException("TOTP evaluation time must not precede the Unix epoch");
 		}
-		return instant.getEpochSecond() / TotpCredential.STANDARD_PERIOD_SECONDS;
+		long timeStep = instant.getEpochSecond() / TotpCredential.STANDARD_PERIOD_SECONDS;
+		if (timeStep > MAX_TIME_STEP) {
+			throw new IllegalArgumentException("TOTP evaluation time is outside the supported range");
+		}
+		return timeStep;
 	}
 
 	String generate(byte[] secret, long timeStep) {

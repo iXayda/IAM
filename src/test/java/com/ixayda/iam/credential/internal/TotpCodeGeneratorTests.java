@@ -47,11 +47,17 @@ class TotpCodeGeneratorTests {
 
 	@Test
 	void rejectsInvalidSecretsTimesAndTimeSteps() {
+		long unsupportedTimeStep = Long.MAX_VALUE / 30_000L + 1;
 		assertThatThrownBy(() -> this.generator.generate(new byte[19], 0))
 			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> this.generator.generate(RFC_6238_SHA1_SECRET, -1))
 			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> this.generator.generate(RFC_6238_SHA1_SECRET, unsupportedTimeStep))
+			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> this.generator.timeStepAt(Instant.ofEpochSecond(-1)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> this.generator
+			.timeStepAt(Instant.ofEpochSecond(unsupportedTimeStep * 30)))
 			.isInstanceOf(IllegalArgumentException.class);
 	}
 

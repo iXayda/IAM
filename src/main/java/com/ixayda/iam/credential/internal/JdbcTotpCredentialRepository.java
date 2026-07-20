@@ -90,11 +90,23 @@ class JdbcTotpCredentialRepository {
 	}
 
 	Optional<StoredTotpCredential> findById(TenantId tenantId, UserId userId, TotpCredentialId credentialId) {
+		return findById(tenantId, userId, credentialId, false);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<StoredTotpCredential> findByIdForUpdate(TenantId tenantId, UserId userId,
+			TotpCredentialId credentialId) {
+		requireWriteTransaction();
+		return findById(tenantId, userId, credentialId, true);
+	}
+
+	private Optional<StoredTotpCredential> findById(TenantId tenantId, UserId userId,
+			TotpCredentialId credentialId, boolean forUpdate) {
 		requireKey(tenantId, userId);
 		Objects.requireNonNull(credentialId, "TOTP credential ID must not be null");
 		return this.jdbcClient.sql("SELECT " + COLUMNS
 				+ " FROM user_totp_credentials WHERE tenant_id = :tenantId AND user_id = :userId"
-				+ " AND credential_id = :credentialId")
+				+ " AND credential_id = :credentialId" + (forUpdate ? " FOR UPDATE" : ""))
 			.param("tenantId", tenantId.value())
 			.param("userId", userId.value())
 			.param("credentialId", credentialId.value())
@@ -103,11 +115,23 @@ class JdbcTotpCredentialRepository {
 	}
 
 	Optional<StoredTotpCredential> findPendingByUser(TenantId tenantId, UserId userId) {
-		return findByUserAndStatus(tenantId, userId, TotpCredentialStatus.PENDING);
+		return findByUserAndStatus(tenantId, userId, TotpCredentialStatus.PENDING, false);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<StoredTotpCredential> findPendingByUserForUpdate(TenantId tenantId, UserId userId) {
+		requireWriteTransaction();
+		return findByUserAndStatus(tenantId, userId, TotpCredentialStatus.PENDING, true);
 	}
 
 	Optional<StoredTotpCredential> findActiveByUser(TenantId tenantId, UserId userId) {
-		return findByUserAndStatus(tenantId, userId, TotpCredentialStatus.ACTIVE);
+		return findByUserAndStatus(tenantId, userId, TotpCredentialStatus.ACTIVE, false);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<StoredTotpCredential> findActiveByUserForUpdate(TenantId tenantId, UserId userId) {
+		requireWriteTransaction();
+		return findByUserAndStatus(tenantId, userId, TotpCredentialStatus.ACTIVE, true);
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY,
@@ -245,11 +269,11 @@ class JdbcTotpCredentialRepository {
 	}
 
 	private Optional<StoredTotpCredential> findByUserAndStatus(TenantId tenantId, UserId userId,
-			TotpCredentialStatus status) {
+			TotpCredentialStatus status, boolean forUpdate) {
 		requireKey(tenantId, userId);
 		return this.jdbcClient.sql("SELECT " + COLUMNS
 				+ " FROM user_totp_credentials WHERE tenant_id = :tenantId AND user_id = :userId"
-				+ " AND status = :status")
+				+ " AND status = :status" + (forUpdate ? " FOR UPDATE" : ""))
 			.param("tenantId", tenantId.value())
 			.param("userId", userId.value())
 			.param("status", databaseValue(status))

@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Two-phase TOTP credential storage with encrypted secrets, replay state, key rotation, and fail-closed readiness.
+- Two-phase TOTP enrollment and verification with encrypted secrets, atomic replay prevention, key rotation, and fail-closed readiness.
 - Permission-protected Admin role catalog endpoint with live RBAC authorization.
 - Stateless Admin resource-server boundary with live session checks, dynamic RBAC authorities, and deny-by-default routing.
 - Session-bound Admin access-token profile with an explicit scope, dedicated audience, and Refresh Token continuity.

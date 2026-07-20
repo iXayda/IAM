@@ -16,6 +16,8 @@ public record TotpCredential(TotpCredentialId id, TenantId tenantId, UserId user
 
 	public static final int STANDARD_PERIOD_SECONDS = 30;
 
+	public static final int STANDARD_SECRET_BYTES = 20;
+
 	public TotpCredential {
 		Objects.requireNonNull(id, "TOTP credential ID must not be null");
 		Objects.requireNonNull(tenantId, "TOTP credential tenant ID must not be null");

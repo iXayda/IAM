@@ -124,7 +124,7 @@ IAM 不负责：
 - 租户绑定的机器客户端、短期 SCIM audience JWT 和可信 `tenant_id` claim
 - SCIM Users/Groups 资源命名空间的专用 JWT profile 校验与 `scim.read` / `scim.write` 授权边界
 - 使用实时 `role.read` 权限校验的 Admin 角色目录接口
-- 两阶段 TOTP credential 基础、独立 AES-GCM secret 保护和 credential 级 replay 状态
+- 两阶段 TOTP enrollment、activation、verification、revocation，独立 AES-GCM secret 保护和原子 replay 防护
 - SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - 租户隔离的 SCIM User 单资源读取、属性选择和统一的资源不可见响应
 - 租户隔离的 SCIM Group 单资源与集合读取、direct User 成员引用和统一的资源不可见响应
@@ -416,6 +416,11 @@ TOTP 参数。生产环境必须配置 `IAM_TOTP_SECRET_ACTIVE_KEY_ID` 和对应
 `IAM_TOTP_SECRET_KEY_V1` 32 字节 Base64 key，并与 token、签名私钥等保护 key 分离。缺少 active key 时
 `totpSecretProtection` readiness 组件报告 `DOWN`。Pending enrollment 不能用于认证；credential 撤销时
 secret key ID、IV 和 ciphertext 必须原子清空，只保留生命周期审计元数据。
+
+TOTP 使用 RFC 6238 SHA-1、6 位 code、30 秒 period 和 160-bit secret。Enrollment 默认 10 分钟失效，
+验证默认接受当前 time step 前后各一个 step；可分别通过 `iam.credential.totp.enrollment-ttl` 和
+`iam.credential.totp.allowed-clock-skew-steps` 调整，clock-skew 上限为两个 step。每个 time step 只能由
+数据库条件更新原子消费一次，成功验证必须与后续 session 或 token 写入处于同一个读写事务。
 
 签名密钥元数据 attestation 会拒绝字段篡改和伪造记录，但不能检测整条历史合法记录的回放。当前版本尚未
 提供 signing key 在线轮换或保护 key 重加密命令，因此数据库引用的旧保护 key 必须保留。schema 已预留

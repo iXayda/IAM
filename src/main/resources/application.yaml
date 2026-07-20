@@ -102,6 +102,9 @@ iam:
     login:
       key-secret: ${IAM_LOGIN_RATE_LIMIT_KEY_SECRET:}
   credential:
+    totp:
+      enrollment-ttl: 10m
+      allowed-clock-skew-steps: 1
     totp-secret-protection:
       active-key-id: ${IAM_TOTP_SECRET_ACTIVE_KEY_ID:}
       keys:

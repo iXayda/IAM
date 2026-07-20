@@ -13,6 +13,7 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 import com.ixayda.iam.credential.TotpAlgorithm;
+import com.ixayda.iam.credential.TotpCredential;
 import com.ixayda.iam.credential.TotpCredentialId;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
@@ -20,7 +21,7 @@ import org.springframework.dao.DataRetrievalFailureException;
 
 final class TotpSecretCipher {
 
-	static final int SECRET_BYTES = 20;
+	static final int SECRET_BYTES = TotpCredential.STANDARD_SECRET_BYTES;
 
 	private static final int INITIALIZATION_VECTOR_BYTES = 12;
 

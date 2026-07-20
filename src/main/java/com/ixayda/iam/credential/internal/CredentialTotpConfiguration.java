@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(TotpSecretProtectionProperties.class)
+@EnableConfigurationProperties({ TotpSecretProtectionProperties.class, TotpSettingsProperties.class })
 class CredentialTotpConfiguration {
 
 	@Bean
@@ -18,6 +18,16 @@ class CredentialTotpConfiguration {
 	@Bean
 	TotpCodeGenerator totpCodeGenerator() {
 		return new TotpCodeGenerator();
+	}
+
+	@Bean
+	TotpSecretGenerator totpSecretGenerator() {
+		return new TotpSecretGenerator();
+	}
+
+	@Bean
+	TotpTimeSource totpTimeSource() {
+		return new TotpTimeSource();
 	}
 
 	@Bean
