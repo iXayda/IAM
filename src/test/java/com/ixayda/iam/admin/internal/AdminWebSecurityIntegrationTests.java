@@ -11,6 +11,12 @@ import java.util.UUID;
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.admin.AdminRoleCode;
 import com.ixayda.iam.admin.AdminRoleOperations;
+import com.ixayda.iam.audit.AppendAuditEvent;
+import com.ixayda.iam.audit.AuditAuthenticationFactor;
+import com.ixayda.iam.audit.AuditEvent;
+import com.ixayda.iam.audit.AuditEventOperations;
+import com.ixayda.iam.audit.AuditEventOutcome;
+import com.ixayda.iam.audit.AuditEventType;
 import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import com.ixayda.iam.authorization.AdminMfaPolicy;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
@@ -74,6 +80,9 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 
 	@Autowired
 	private AdminRoleOperations roles;
+
+	@Autowired
+	private AuditEventOperations auditEvents;
 
 	@Autowired
 	private AdminMfaPolicy mfaPolicy;
@@ -238,6 +247,53 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(status().isOk());
 	}
 
+	@Test
+	void requiresLiveAuditPermissionAndReturnsTenantBoundCursorPages() throws Exception {
+		Tenant tenant = createTenant("audit-events");
+		Tenant anotherTenant = createTenant("audit-events-other");
+		User superAdmin = createUser(tenant.id(), "audit-super-admin");
+		User auditor = createUser(tenant.id(), "auditor");
+		User limited = createUser(tenant.id(), "audit-limited");
+		this.roles.bootstrapSuperAdmin(tenant.id(), superAdmin.id());
+		this.roles.grantPermanent(tenant.id(), superAdmin.id(), auditor.id(), AdminRoleCode.from("auditor"),
+				"Audit review");
+		this.roles.grantPermanent(tenant.id(), superAdmin.id(), limited.id(), AdminRoleCode.from("support"),
+				"No audit access");
+		Instant occurredAt = Instant.now().minusSeconds(2);
+		AuditEvent older = appendAuditEvent(tenant.id(), occurredAt, "older");
+		AuditEvent newer = appendAuditEvent(tenant.id(), occurredAt.plusSeconds(1), "newer");
+		appendAuditEvent(anotherTenant.id(), occurredAt.plusSeconds(2), "foreign");
+		String auditorToken = encodedToken(startSession(tenant.id(), auditor));
+		String limitedToken = encodedToken(startSession(tenant.id(), limited));
+
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENTS_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(limitedToken)))
+			.andExpect(status().isForbidden());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENTS_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(auditorToken))
+			.queryParam("limit", "1"))
+			.andExpect(status().isOk())
+			.andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+			.andExpect(jsonPath("$.events", hasSize(1)))
+			.andExpect(jsonPath("$.events[0].id").value(newer.id().toString()))
+			.andExpect(jsonPath("$.events[0].type").value("authentication.login.succeeded"))
+			.andExpect(jsonPath("$.events[0].source").value("integration:newer"))
+			.andExpect(jsonPath("$.events[0].attributes.channel").value("web"))
+			.andExpect(jsonPath("$.nextCursor").value(newer.id().toString()));
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENTS_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(auditorToken))
+			.queryParam("limit", "1")
+			.queryParam("before", newer.id().toString()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.events", hasSize(1)))
+			.andExpect(jsonPath("$.events[0].id").value(older.id().toString()))
+			.andExpect(jsonPath("$.nextCursor").doesNotExist());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENTS_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(auditorToken))
+			.queryParam("limit", "201"))
+			.andExpect(status().isBadRequest());
+	}
+
 	private Tenant createTenant(String purpose) {
 		String suffix = UUID.randomUUID().toString().substring(0, 8);
 		Tenant tenant = this.tenants.create(new CreateTenantRequest("admin-web-" + purpose + "-" + suffix,
@@ -270,6 +326,12 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 				user.id(), SessionAuthenticationMethod.PASSWORD,
 				Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, authenticatedAt)),
 				SESSION_TTL));
+	}
+
+	private AuditEvent appendAuditEvent(TenantId tenantId, Instant occurredAt, String source) {
+		return this.auditEvents.append(new AppendAuditEvent(tenantId,
+				AuditEventType.from("authentication.login.succeeded"), AuditEventOutcome.SUCCEEDED, null, null,
+				AuditAuthenticationFactor.TOTP, "integration:" + source, occurredAt, Map.of("channel", "web")));
 	}
 
 	private String encodedToken(UserSession session) {

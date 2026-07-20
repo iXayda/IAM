@@ -32,6 +32,8 @@ class AdminWebSecurityConfiguration {
 
 	static final String ROLES_PATH = BASE_PATH + "/roles";
 
+	static final String AUDIT_EVENTS_PATH = BASE_PATH + "/audit-events";
+
 	@Bean
 	AdminJwtAuthenticationConverter adminJwtAuthenticationConverter(SessionOperations sessions,
 			AdminRoleOperations roles) {
@@ -46,10 +48,14 @@ class AdminWebSecurityConfiguration {
 		AuthorizationManager<RequestAuthorizationContext> mfa = mfaPolicy.authorizationManager();
 		AuthorizationManager<RequestAuthorizationContext> readRoles = AuthorizationManagers.allOf(
 				AuthorityAuthorizationManager.hasAuthority(AdminPermissionCode.READ_ROLES.value()), mfa);
+		AuthorizationManager<RequestAuthorizationContext> readAudit = AuthorizationManagers.allOf(
+				AuthorityAuthorizationManager.hasAuthority(AdminPermissionCode.READ_AUDIT.value()), mfa);
 		http.securityMatcher(BASE_PATH + "/**");
 		http.authorizeHttpRequests((authorize) -> authorize
 			.requestMatchers(HttpMethod.GET, ROLES_PATH)
 			.access(readRoles)
+			.requestMatchers(HttpMethod.GET, AUDIT_EVENTS_PATH)
+			.access(readAudit)
 			.anyRequest()
 			.denyAll());
 		http.csrf(AbstractHttpConfigurer::disable);

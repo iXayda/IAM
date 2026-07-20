@@ -12,6 +12,8 @@ public record AdminPermissionCode(String value) {
 
 	public static final AdminPermissionCode READ_ROLES = new AdminPermissionCode("role.read");
 
+	public static final AdminPermissionCode READ_AUDIT = new AdminPermissionCode("audit.read");
+
 	public AdminPermissionCode {
 		Objects.requireNonNull(value, "Admin permission code must not be null");
 		if (value.length() > 100 || !FORMAT.matcher(value).matches()) {

@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Append-only tenant audit events with UUIDv7 identifiers, bounded JSON attributes, and stable cursor paging.
+- MFA-protected Admin audit event queries with live `audit.read` permission checks and tenant-bound cursors.
 - Session- and authorization-bound authentication factor evidence with independent issuance timestamps.
 - OAuth authorization login continuation through CSRF-protected TOTP or recovery-code verification.
 - Source-bound MFA login challenges with atomic TOTP or recovery-code completion before session creation.
