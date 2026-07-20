@@ -1,5 +1,6 @@
 package com.ixayda.iam.admin.internal;
 
+import com.ixayda.iam.admin.AdminPermissionCode;
 import com.ixayda.iam.admin.AdminRoleOperations;
 import com.ixayda.iam.session.SessionOperations;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -8,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -23,6 +25,8 @@ class AdminWebSecurityConfiguration {
 
 	static final String BASE_PATH = "/iam/admin";
 
+	static final String ROLES_PATH = BASE_PATH + "/roles";
+
 	@Bean
 	AdminJwtAuthenticationConverter adminJwtAuthenticationConverter(SessionOperations sessions,
 			AdminRoleOperations roles) {
@@ -35,7 +39,11 @@ class AdminWebSecurityConfiguration {
 			@Qualifier("adminJwtDecoder") JwtDecoder adminJwtDecoder,
 			AdminJwtAuthenticationConverter authenticationConverter) throws Exception {
 		http.securityMatcher(BASE_PATH + "/**");
-		http.authorizeHttpRequests((authorize) -> authorize.anyRequest().denyAll());
+		http.authorizeHttpRequests((authorize) -> authorize
+			.requestMatchers(HttpMethod.GET, ROLES_PATH)
+			.hasAuthority(AdminPermissionCode.READ_ROLES.value())
+			.anyRequest()
+			.denyAll());
 		http.csrf(AbstractHttpConfigurer::disable);
 		http.requestCache(AbstractHttpConfigurer::disable);
 		http.sessionManagement((sessions) -> sessions.sessionCreationPolicy(SessionCreationPolicy.STATELESS));

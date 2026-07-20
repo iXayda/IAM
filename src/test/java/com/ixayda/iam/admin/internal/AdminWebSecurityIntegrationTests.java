@@ -44,9 +44,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -164,6 +167,41 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			.header(HttpHeaders.AUTHORIZATION, bearer(token)))
 			.andExpect(status().isUnauthorized())
 			.andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, containsString("error=\"invalid_token\"")));
+	}
+
+	@Test
+	void requiresLiveRoleReadPermissionForTheRoleCatalog() throws Exception {
+		Tenant tenant = createTenant("role-catalog");
+		User superAdmin = createUser(tenant.id(), "super-admin");
+		User reader = createUser(tenant.id(), "reader");
+		User limited = createUser(tenant.id(), "limited");
+		this.roles.bootstrapSuperAdmin(tenant.id(), superAdmin.id());
+		this.roles.grantPermanent(tenant.id(), superAdmin.id(), reader.id(), AdminRoleCode.ADMIN_MANAGER,
+				"Role catalog access");
+		this.roles.grantPermanent(tenant.id(), superAdmin.id(), limited.id(), AdminRoleCode.from("user_manager"),
+				"No role catalog access");
+		String readerToken = encodedToken(startSession(tenant.id(), reader));
+		String limitedToken = encodedToken(startSession(tenant.id(), limited));
+
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH))
+			.andExpect(status().isUnauthorized());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(limitedToken)))
+			.andExpect(status().isForbidden());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(readerToken)))
+			.andExpect(status().isOk())
+			.andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+			.andExpect(jsonPath("$.roles", hasSize(5)))
+			.andExpect(jsonPath("$.roles[*].code", contains("admin_manager", "auditor", "super_admin", "support",
+					"user_manager")))
+			.andExpect(jsonPath("$.roles[0].status").value("active"))
+			.andExpect(jsonPath("$.roles[0].protectedRole").value(true));
+
+		this.roles.revoke(tenant.id(), superAdmin.id(), reader.id(), AdminRoleCode.ADMIN_MANAGER);
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(readerToken)))
+			.andExpect(status().isForbidden());
 	}
 
 	private Tenant createTenant(String purpose) {

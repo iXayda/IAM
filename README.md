@@ -123,6 +123,7 @@ IAM 不负责：
 - OAuth 2.0 Authorization Code、PKCE、OpenID Connect、Refresh Token 和 Client Credentials
 - 租户绑定的机器客户端、短期 SCIM audience JWT 和可信 `tenant_id` claim
 - SCIM Users/Groups 资源命名空间的专用 JWT profile 校验与 `scim.read` / `scim.write` 授权边界
+- 使用实时 `role.read` 权限校验的 Admin 角色目录接口
 - SCIM 2.0 ServiceProviderConfig、Schemas 和 ResourceTypes discovery
 - 租户隔离的 SCIM User 单资源读取、属性选择和统一的资源不可见响应
 - 租户隔离的 SCIM Group 单资源与集合读取、direct User 成员引用和统一的资源不可见响应
@@ -401,7 +402,8 @@ UUID、合法 client identifier 以及 `sub == client_id`。已签发 JWT 不执
 User、登录 session、认证方式和认证时间；普通 OIDC access token 不包含 Admin audience。Admin resource
 server 会在线校验 session 当前可用并从 RBAC 数据实时解析权限，不能把 token 中的 scope 当作管理权限。
 `/iam/admin/**` 使用独立的无状态 Bearer security chain；只有显式声明精确 permission 的路由可访问，
-其余路径默认拒绝。
+其余路径默认拒绝。`GET /iam/admin/roles` 返回内置 Admin 角色目录，要求当前 session 有效且实时 RBAC
+权限包含 `role.read`；响应使用 `Cache-Control: no-store`。
 
 首次启动会在 PostgreSQL 中并发安全地创建一把 RSA-3072 active signing key。`kid` 使用 RFC 7638
 thumbprint，私钥以 PKCS#8 编码并由独立的 AES-256-GCM key ring 加密，数据库不保存明文私钥。生产环境
