@@ -16,6 +16,11 @@ class CredentialTotpConfiguration {
 	}
 
 	@Bean
+	TotpCodeGenerator totpCodeGenerator() {
+		return new TotpCodeGenerator();
+	}
+
+	@Bean
 	HealthIndicator totpSecretProtectionHealthIndicator(TotpSecretProtectionProperties properties) {
 		return () -> properties.isConfigured() ? Health.up().build()
 				: Health.down().withDetail("configuration", "active-key-not-configured").build();
