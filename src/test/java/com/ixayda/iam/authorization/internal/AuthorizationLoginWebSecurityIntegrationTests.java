@@ -20,6 +20,8 @@ import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -35,6 +37,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
+import com.ixayda.iam.auth.MfaChallenge;
 import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
@@ -50,8 +53,10 @@ import com.ixayda.iam.client.ClientTokenPolicy;
 import com.ixayda.iam.client.ClientType;
 import com.ixayda.iam.client.CreateClientRequest;
 import com.ixayda.iam.client.OAuthClient;
+import com.ixayda.iam.credential.GeneratedRecoveryCodes;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.tenant.CreateTenantRequest;
@@ -68,10 +73,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.authority.FactorGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
@@ -119,6 +126,9 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	private PasswordOperations passwords;
 
 	@Autowired
+	private RecoveryCodeOperations recoveryCodes;
+
+	@Autowired
 	private SessionOperations sessions;
 
 	@Autowired
@@ -148,6 +158,10 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 				.update();
 		});
 		this.usersToDelete.forEach((reference) -> {
+			this.jdbcClient.sql("DELETE FROM user_recovery_codes WHERE tenant_id = :tenantId AND user_id = :userId")
+				.param("tenantId", reference.tenantId().value())
+				.param("userId", reference.userId().value())
+				.update();
 			this.jdbcClient.sql("DELETE FROM user_sessions WHERE tenant_id = :tenantId AND user_id = :userId")
 				.param("tenantId", reference.tenantId().value())
 				.param("userId", reference.userId().value())
@@ -173,6 +187,148 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			.sql("DELETE FROM tenants WHERE tenant_id = :tenantId")
 			.param("tenantId", tenantId.value())
 			.update());
+	}
+
+	@Test
+	void completesMfaBeforeContinuingTheAuthorizationCodeFlow() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "mfa-authorization-code");
+		OAuthClient client = createClient(TenantId.DEFAULT, "mfa-authorization-code",
+				Set.of(new ClientScope("openid"), new ClientScope("profile")));
+		char[][] codes;
+		try (GeneratedRecoveryCodes generated = this.recoveryCodes.replace(TenantId.DEFAULT, user.user().id())) {
+			codes = generated.copy();
+		}
+		try {
+			String verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+			String clientState = "mfa-state-" + suffix();
+			MockHttpSession loginSession = beginAuthorization(client, "openid profile", clientState,
+					pkceChallenge(verifier), "mfa-nonce-" + suffix());
+			String sessionIdBeforeMfa = loginSession.getId();
+
+			MvcResult passwordResult = this.mockMvc
+				.perform(post("/login").session(loginSession).with(csrf()).param("username", user.username())
+					.param("password", PASSWORD))
+				.andExpect(status().isFound())
+				.andExpect(redirectedUrl(AuthorizationMfaLoginPageController.PATH))
+				.andExpect(unauthenticated())
+				.andReturn();
+			MockHttpSession mfaSession = (MockHttpSession) passwordResult.getRequest().getSession(false);
+			MfaChallenge pending = (MfaChallenge) mfaSession
+				.getAttribute(AuthorizationMfaLoginPageController.CHALLENGE_ATTRIBUTE);
+			assertThat(pending).isNotNull();
+			assertThat(sessionCount(user.user())).isZero();
+			assertThat(mfaSession.getId()).isEqualTo(sessionIdBeforeMfa);
+
+			this.mockMvc.perform(get(AuthorizationMfaLoginPageController.PATH).session(mfaSession))
+				.andExpect(status().isOk())
+				.andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+				.andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+				.andExpect(content().string(containsString("name=\"factor\" value=\"recovery_code\"")))
+				.andExpect(content().string(containsString("name=\"_csrf\"")))
+				.andExpect(content().string(org.hamcrest.Matchers.not(containsString(pending.token().value()))));
+
+			this.mockMvc.perform(post(AuthorizationMfaLoginPageController.PATH).session(mfaSession)
+				.param("factor", "recovery_code").param("code", new String(codes[0])))
+				.andExpect(status().isForbidden())
+				.andExpect(unauthenticated());
+			assertThat(mfaSession.getAttribute(AuthorizationMfaLoginPageController.CHALLENGE_ATTRIBUTE)).isEqualTo(pending);
+
+			MvcResult mfaResult = this.mockMvc
+				.perform(post(AuthorizationMfaLoginPageController.PATH).session(mfaSession).with(csrf())
+					.param("factor", "recovery_code").param("code", new String(codes[0])))
+				.andExpect(status().isFound())
+				.andExpect(header().string("Location", startsWith(ISSUER + "/oauth2/authorize?")))
+				.andExpect(authenticated().withAuthentication(authentication -> {
+					assertThat(authentication).isInstanceOf(AuthorizationUserAuthentication.class);
+					assertThat(authentication.getAuthorities()).extracting(authority -> authority.getAuthority())
+						.containsExactlyInAnyOrder(FactorGrantedAuthority.PASSWORD_AUTHORITY,
+								FactorGrantedAuthority.OTT_AUTHORITY);
+				}))
+				.andReturn();
+			MockHttpSession authenticatedSession = (MockHttpSession) mfaResult.getRequest().getSession(false);
+			assertThat(authenticatedSession.getId()).isNotEqualTo(sessionIdBeforeMfa);
+			assertThat(authenticatedSession.getAttribute(AuthorizationMfaLoginPageController.CHALLENGE_ATTRIBUTE)).isNull();
+			assertThat(sessionCount(user.user())).isOne();
+
+			MvcResult consentRedirect = this.mockMvc
+				.perform(get(URI.create(mfaResult.getResponse().getHeader("Location"))).session(authenticatedSession)
+					.accept(MediaType.TEXT_HTML))
+				.andExpect(status().isFound())
+				.andExpect(header().string("Location",
+						startsWith(ISSUER + AuthorizationConsentController.CONSENT_PATH + "?")))
+				.andReturn();
+			MvcResult consentPage = this.mockMvc
+				.perform(get(URI.create(consentRedirect.getResponse().getHeader("Location"))).session(authenticatedSession)
+					.accept(MediaType.TEXT_HTML))
+				.andExpect(status().isOk())
+				.andReturn();
+			MvcResult consent = this.mockMvc
+				.perform(post("/oauth2/authorize").session(authenticatedSession)
+					.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+					.param(OAuth2ParameterNames.CLIENT_ID, client.identifier().value())
+					.param(OAuth2ParameterNames.STATE,
+							consentState(consentPage.getResponse().getContentAsString()))
+					.param(OAuth2ParameterNames.SCOPE, "profile"))
+				.andExpect(status().isFound())
+				.andExpect(header().string("Location", startsWith(REDIRECT_URI + "?")))
+				.andReturn();
+			URI clientRedirect = URI.create(consent.getResponse().getHeader("Location"));
+			assertThat(queryParameter(clientRedirect, OAuth2ParameterNames.STATE)).isEqualTo(clientState);
+			assertThat(queryParameter(clientRedirect, OAuth2ParameterNames.CODE)).isNotBlank();
+			assertThat(principalFactors(client)).extracting(PrincipalFactor::authority)
+				.containsExactlyInAnyOrder(FactorGrantedAuthority.PASSWORD_AUTHORITY,
+						FactorGrantedAuthority.OTT_AUTHORITY);
+			assertThat(principalFactors(client)).extracting(PrincipalFactor::issuedAt).doesNotContainNull();
+		}
+		finally {
+			for (char[] code : codes) {
+				Arrays.fill(code, '\0');
+			}
+		}
+	}
+
+	@Test
+	void rejectsAndDiscardsReplayedMfaChallenges() throws Exception {
+		UserFixture user = createUser(TenantId.DEFAULT, "mfa-replay");
+		OAuthClient client = createClient(TenantId.DEFAULT, "mfa-replay");
+		char[][] codes;
+		try (GeneratedRecoveryCodes generated = this.recoveryCodes.replace(TenantId.DEFAULT, user.user().id())) {
+			codes = generated.copy();
+		}
+		try {
+			MockHttpSession loginSession = beginAuthorization(client);
+			MvcResult passwordResult = this.mockMvc
+				.perform(post("/login").session(loginSession).with(csrf()).param("username", user.username())
+					.param("password", PASSWORD))
+				.andExpect(status().isFound())
+				.andExpect(redirectedUrl(AuthorizationMfaLoginPageController.PATH))
+				.andReturn();
+			MockHttpSession mfaSession = (MockHttpSession) passwordResult.getRequest().getSession(false);
+			MfaChallenge consumed = (MfaChallenge) mfaSession
+				.getAttribute(AuthorizationMfaLoginPageController.CHALLENGE_ATTRIBUTE);
+
+			this.mockMvc.perform(post(AuthorizationMfaLoginPageController.PATH).session(mfaSession).with(csrf())
+				.param("factor", "recovery_code").param("code", "00000-00000-00000-00000"))
+				.andExpect(status().isFound())
+				.andExpect(redirectedUrl("/login?error"))
+				.andExpect(unauthenticated());
+			assertThat(mfaSession.getAttribute(AuthorizationMfaLoginPageController.CHALLENGE_ATTRIBUTE)).isNull();
+			assertThat(sessionCount(user.user())).isZero();
+
+			mfaSession.setAttribute(AuthorizationMfaLoginPageController.CHALLENGE_ATTRIBUTE, consumed);
+			this.mockMvc.perform(post(AuthorizationMfaLoginPageController.PATH).session(mfaSession).with(csrf())
+				.param("factor", "recovery_code").param("code", new String(codes[0])))
+				.andExpect(status().isFound())
+				.andExpect(redirectedUrl("/login?error"))
+				.andExpect(unauthenticated());
+			assertThat(mfaSession.getAttribute(AuthorizationMfaLoginPageController.CHALLENGE_ATTRIBUTE)).isNull();
+			assertThat(sessionCount(user.user())).isZero();
+		}
+		finally {
+			for (char[] code : codes) {
+				Arrays.fill(code, '\0');
+			}
+		}
 	}
 
 	@Test
@@ -1035,6 +1191,18 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			.list();
 	}
 
+	private List<PrincipalFactor> principalFactors(OAuthClient client) {
+		return this.jdbcClient.sql("""
+				SELECT authority, issued_at
+				FROM oauth_authorization_principal_authorities
+				WHERE client_id = :clientId AND authority LIKE 'FACTOR\\_%' ESCAPE '\\'
+				""")
+			.param("clientId", client.id().value())
+			.query((resultSet, rowNumber) -> new PrincipalFactor(resultSet.getString("authority"),
+					resultSet.getObject("issued_at", OffsetDateTime.class).toInstant()))
+			.list();
+	}
+
 	private List<String> authorizationScopes(OAuthClient client) {
 		return this.jdbcClient.sql("""
 				SELECT scope
@@ -1192,6 +1360,9 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	}
 
 	private record UserReference(TenantId tenantId, UserId userId) {
+	}
+
+	private record PrincipalFactor(String authority, Instant issuedAt) {
 	}
 
 	private record AuthorizationCodeFixture(String code, String verifier) {
