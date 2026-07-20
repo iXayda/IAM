@@ -1,6 +1,7 @@
 package com.ixayda.iam.auth;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
@@ -18,7 +19,12 @@ public record MfaChallenge(MfaChallengeToken token, TenantId tenantId, UserId us
 		Objects.requireNonNull(passwordVerifiedAt, "Password verification time must not be null");
 		Objects.requireNonNull(expiresAt, "MFA challenge expiration time must not be null");
 		Objects.requireNonNull(factors, "MFA challenge factors must not be null");
-		if (passwordVerifiedAt.isBefore(Instant.EPOCH) || !expiresAt.isAfter(passwordVerifiedAt)) {
+		if (passwordVerifiedAt.isBefore(Instant.EPOCH)) {
+			throw new IllegalArgumentException("MFA challenge timestamps are invalid");
+		}
+		passwordVerifiedAt = passwordVerifiedAt.truncatedTo(ChronoUnit.MICROS);
+		expiresAt = expiresAt.truncatedTo(ChronoUnit.MICROS);
+		if (!expiresAt.isAfter(passwordVerifiedAt)) {
 			throw new IllegalArgumentException("MFA challenge timestamps are invalid");
 		}
 		if (factors.isEmpty()) {

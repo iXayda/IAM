@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -106,7 +107,10 @@ class SessionOperationsIntegrationTests extends ApplicationIntegrationTest {
 		UserSession started = transactionTemplate().execute(status -> this.sessions.start(TenantId.DEFAULT,
 				user.id(), SessionAuthenticationMethod.PASSWORD, factors, EIGHT_HOURS));
 
-		assertThat(started.authenticationFactors()).isEqualTo(factors);
+		assertThat(started.authenticationFactors())
+			.extracting(SessionAuthenticationFactor::issuedAt)
+			.containsExactlyInAnyOrder(passwordVerifiedAt.truncatedTo(ChronoUnit.MICROS),
+					totpVerifiedAt.truncatedTo(ChronoUnit.MICROS));
 		assertThat(this.sessions.findById(TenantId.DEFAULT, started.id())).contains(started);
 	}
 

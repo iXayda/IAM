@@ -5,6 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.Objects;
 import java.util.Set;
@@ -61,9 +62,10 @@ class DefaultMfaChallengeOperations implements MfaChallengeOperations {
 				|| passwordVerifiedAt.isBefore(issuedAt.minus(this.properties.challengeTtl()))) {
 			throw new IllegalArgumentException("Password verification time is outside the MFA challenge window");
 		}
+		passwordVerifiedAt = passwordVerifiedAt.truncatedTo(ChronoUnit.MICROS);
 		Instant expiresAt;
 		try {
-			expiresAt = issuedAt.plus(this.properties.challengeTtl());
+			expiresAt = issuedAt.plus(this.properties.challengeTtl()).truncatedTo(ChronoUnit.MICROS);
 		}
 		catch (DateTimeException | ArithmeticException ex) {
 			throw new IllegalArgumentException("MFA challenge expiration time is outside the supported range", ex);

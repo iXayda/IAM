@@ -1,6 +1,7 @@
 package com.ixayda.iam.session;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashSet;
@@ -85,7 +86,9 @@ public record UserSession(SessionId id, TenantId tenantId, UserId userId,
 				throw new IllegalArgumentException(
 						"Session authentication factor issuance time must not be after authentication time");
 			}
-			if (byType.put(factor.type(), factor) != null) {
+			SessionAuthenticationFactor normalized = new SessionAuthenticationFactor(factor.type(),
+					factor.issuedAt().truncatedTo(ChronoUnit.MICROS));
+			if (byType.put(normalized.type(), normalized) != null) {
 				throw new IllegalArgumentException("Session authentication factor types must be unique");
 			}
 		}

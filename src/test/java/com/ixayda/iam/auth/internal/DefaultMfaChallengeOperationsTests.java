@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Set;
 
 import com.ixayda.iam.auth.MfaChallenge;
@@ -30,7 +31,7 @@ import static org.mockito.Mockito.when;
 
 class DefaultMfaChallengeOperationsTests {
 
-	private static final Instant NOW = Instant.parse("2026-07-20T00:00:00Z");
+	private static final Instant NOW = Instant.parse("2026-07-20T00:00:00.123456789Z");
 
 	private static final UserId USER_ID = UserId.from("019f5aff-f979-7653-8001-67ea4274f902");
 
@@ -49,7 +50,8 @@ class DefaultMfaChallengeOperationsTests {
 	void issuesAndConsumesTheSameBoundChallengeMetadata() {
 		when(this.states.issue(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
 			.thenReturn(SecurityStateIssue.issued(STATE_TOKEN));
-		MfaChallengeIssue issued = this.operations.issue(TenantId.DEFAULT, USER_ID, SOURCE, NOW.minusSeconds(1),
+		MfaChallengeIssue issued = this.operations.issue(TenantId.DEFAULT, USER_ID, SOURCE,
+				NOW.minusSeconds(1).plusNanos(789),
 				Set.of(MfaFactor.TOTP, MfaFactor.RECOVERY_CODE));
 		MfaChallenge challenge = issued.challenge().orElseThrow();
 		ArgumentCaptor<SecurityStateKey> issuedKey = ArgumentCaptor.forClass(SecurityStateKey.class);
@@ -64,7 +66,9 @@ class DefaultMfaChallengeOperationsTests {
 		assertThat(issuedKey.getValue()).isEqualTo(consumedKey.getValue());
 		assertThat(issuedKey.getValue().purpose()).isEqualTo("mfa.login");
 		assertThat(issuedKey.getValue().binding()).doesNotContain(SOURCE.value());
-		assertThat(challenge.expiresAt()).isEqualTo(NOW.plusSeconds(300));
+		assertThat(challenge.passwordVerifiedAt())
+			.isEqualTo(NOW.minusSeconds(1).plusNanos(789).truncatedTo(ChronoUnit.MICROS));
+		assertThat(challenge.expiresAt()).isEqualTo(NOW.plusSeconds(300).truncatedTo(ChronoUnit.MICROS));
 	}
 
 	@Test

@@ -34,6 +34,16 @@ class MfaChallengeValuesTests {
 	}
 
 	@Test
+	void normalizesTimestampsToPostgresPrecision() {
+		MfaChallenge challenge = new MfaChallenge(TOKEN, TenantId.DEFAULT, USER_ID,
+				Instant.parse("2026-01-01T00:00:00.123456789Z"),
+				Instant.parse("2026-01-01T00:05:00.987654321Z"), Set.of(MfaFactor.TOTP));
+
+		assertThat(challenge.passwordVerifiedAt()).isEqualTo(Instant.parse("2026-01-01T00:00:00.123456Z"));
+		assertThat(challenge.expiresAt()).isEqualTo(Instant.parse("2026-01-01T00:05:00.987654Z"));
+	}
+
+	@Test
 	void rejectsMalformedTokensTimestampsAndFactors() {
 		assertThatThrownBy(() -> MfaChallengeToken.from("short")).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> MfaChallengeToken.from("!AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
