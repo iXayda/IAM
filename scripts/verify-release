@@ -160,9 +160,13 @@ start_app() {
 	local configured=$1
 	local login_secret_value=""
 	local security_state_secret_value=""
+	local totp_key_id_value=""
+	local totp_secret_value=""
 	if [[ "${configured}" == "true" ]]; then
 		login_secret_value="${login_secret}"
 		security_state_secret_value="${security_state_secret}"
+		totp_key_id_value="v1"
+		totp_secret_value="${totp_secret}"
 	fi
 
 	: >"${app_log}"
@@ -188,6 +192,8 @@ start_app() {
 		IAM_SCIM_BASE_URL=https://scim.release-check.invalid/scim/v2 \
 		IAM_LOGIN_RATE_LIMIT_KEY_SECRET="${login_secret_value}" \
 		IAM_SECURITY_STATE_KEY_SECRET="${security_state_secret_value}" \
+		IAM_TOTP_SECRET_ACTIVE_KEY_ID="${totp_key_id_value}" \
+		IAM_TOTP_SECRET_KEY_V1="${totp_secret_value}" \
 		IAM_DEPLOYMENT_ENVIRONMENT=release-check \
 		MANAGEMENT_ENDPOINT_HEALTH_SHOW_COMPONENTS=always \
 		MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always \
@@ -279,6 +285,8 @@ if [[ "${smoke_only}" == "false" ]]; then
 
 	log "Building the GraalVM native executable"
 	IAM_AUTHORIZATION_ISSUER=https://issuer.release-check.invalid \
+		IAM_TOTP_SECRET_ACTIVE_KEY_ID=v1 \
+		IAM_TOTP_SECRET_KEY_V1=AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI= \
 		./mvnw --batch-mode --no-transfer-progress -DskipTests -Pnative native:compile
 else
 	log "Skipping build stages and reusing the existing native executable"
@@ -304,6 +312,7 @@ security_state_secret="$(openssl rand -base64 32)"
 while [[ "${security_state_secret}" == "${login_secret}" ]]; do
 	security_state_secret="$(openssl rand -base64 32)"
 done
+totp_secret="$(openssl rand -base64 32)"
 authorization_token_secret="$(openssl rand -base64 32)"
 authorization_signing_key_secret="$(openssl rand -base64 32)"
 
@@ -411,6 +420,8 @@ wait_for_health_component loginRateLimit DOWN \
 	|| fail "Login rate-limit health did not report the missing secret"
 wait_for_health_component securityState DOWN \
 	|| fail "Security-state health did not report the missing secret"
+wait_for_health_component totpSecretProtection DOWN \
+	|| fail "TOTP secret-protection health did not report the missing key"
 stop_app
 
 log "Checking restart and migration idempotency"

@@ -7,6 +7,12 @@ spring:
       enabled: true
 
 iam:
+  credential:
+    totp-secret-protection:
+      # Local-only default. Production must provide a dedicated shared Base64 key.
+      active-key-id: ${IAM_TOTP_SECRET_ACTIVE_KEY_ID:v1}
+      keys:
+        v1: ${IAM_TOTP_SECRET_KEY_V1:AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=}
   scim:
     base-url: ${IAM_SCIM_BASE_URL:http://127.0.0.1:8080/scim/v2}
   authorization:

@@ -48,7 +48,7 @@ management:
     health:
       group:
         readiness:
-          include: readinessState,db,redis,loginRateLimit,securityState
+          include: readinessState,db,redis,loginRateLimit,securityState,totpSecretProtection
       probes:
         add-additional-paths: true
         enabled: true
@@ -102,6 +102,10 @@ iam:
     login:
       key-secret: ${IAM_LOGIN_RATE_LIMIT_KEY_SECRET:}
   credential:
+    totp-secret-protection:
+      active-key-id: ${IAM_TOTP_SECRET_ACTIVE_KEY_ID:}
+      keys:
+        v1: ${IAM_TOTP_SECRET_KEY_V1:}
     external:
       ldap:
         enabled: false

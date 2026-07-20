@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 
-	private static final int CURRENT_SCHEMA_VERSION = 22;
+	private static final int CURRENT_SCHEMA_VERSION = 23;
 
 	private static final UUID TENANT_ID = UUID.fromString("019c61d7-47d1-79ca-8052-1b731e742901");
 
@@ -285,7 +285,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 			assertThat(historical.migrate().migrationsExecuted).isEqualTo(20);
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isEqualTo(2);
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 20);
 			assertThat(count(jdbc, schema, "admin_roles")).isEqualTo(5);
 			assertThat(count(jdbc, schema, "admin_permissions")).isEqualTo(23);
 			assertThat(count(jdbc, schema, "admin_role_permissions")).isEqualTo(38);
@@ -333,7 +333,7 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				.update();
 
 			Flyway current = flyway(schema, null);
-			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(current.migrate().migrationsExecuted).isEqualTo(CURRENT_SCHEMA_VERSION - 21);
 			assertThat(jdbc.sql("""
 					SELECT count(*) = 2
 					   AND count(DISTINCT binding_id) = 2
@@ -356,6 +356,46 @@ class FlywayUpgradeIntegrationTests extends ApplicationIntegrationTest {
 				.param("adminUserId", ADMIN_USER_ID)
 				.query(String.class)
 				.single()).isEqualTo("auditor:jit:Incident review,support:permanent:Support rotation");
+			assertThat(current.validateWithResult().validationSuccessful).isTrue();
+			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
+			assertThat(current.migrate().migrationsExecuted).isZero();
+		}
+		finally {
+			jdbc.sql("DROP SCHEMA IF EXISTS " + schema + " CASCADE").update();
+		}
+	}
+
+	@Test
+	void upgradesAdminRbacInstallationsToEncryptedTotpCredentialStorage() {
+		String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		JdbcClient jdbc = JdbcClient.create(this.dataSource);
+		try {
+			Flyway historical = flyway(schema, "22");
+			assertThat(historical.migrate().migrationsExecuted).isEqualTo(22);
+			jdbc.sql("""
+					INSERT INTO %s.users (user_id, tenant_id)
+					VALUES (:userId, '00000000-0000-0000-0000-000000000001')
+					""".formatted(schema)).param("userId", USER_ID).update();
+
+			Flyway current = flyway(schema, null);
+			assertThat(current.migrate().migrationsExecuted).isOne();
+			assertThat(count(jdbc, schema, "user_totp_credentials")).isZero();
+			jdbc.sql("""
+					INSERT INTO %s.user_totp_credentials
+					    (credential_id, tenant_id, user_id, status, secret_encryption_key_id,
+					     secret_initialization_vector, secret_ciphertext, created_at, updated_at,
+					     enrollment_expires_at)
+					VALUES
+					    (:credentialId, '00000000-0000-0000-0000-000000000001', :userId,
+					     'pending', 'v1', decode(repeat('01', 12), 'hex'),
+					     decode(repeat('02', 36), 'hex'), '2026-07-20T00:00:00Z',
+					     '2026-07-20T00:00:00Z', '2026-07-20T00:10:00Z')
+					""".formatted(schema))
+				.param("credentialId", UUID.randomUUID())
+				.param("userId", USER_ID)
+				.update();
+
+			assertThat(count(jdbc, schema, "user_totp_credentials")).isOne();
 			assertThat(current.validateWithResult().validationSuccessful).isTrue();
 			assertThat(migrationCount(jdbc, schema)).isEqualTo(CURRENT_SCHEMA_VERSION);
 			assertThat(current.migrate().migrationsExecuted).isZero();

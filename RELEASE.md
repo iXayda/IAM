@@ -64,6 +64,7 @@ GitHub Actions 在 pull request、`master` push、手动触发和每周定时任
 | SCIM base URL | `IAM_SCIM_BASE_URL`，以 `/scim/v2` 结尾的稳定 HTTPS URL |
 | Token 加密 key | `IAM_AUTHORIZATION_TOKEN_ACTIVE_KEY_ID` 和对应的 32 字节 Base64 key |
 | Signing key 加密 key | `IAM_AUTHORIZATION_SIGNING_KEY_ACTIVE_KEY_ID` 和对应的独立 32 字节 Base64 key |
+| TOTP secret 加密 key | `IAM_TOTP_SECRET_ACTIVE_KEY_ID` 和对应的独立 32 字节 Base64 key |
 | 登录限流 secret | `IAM_LOGIN_RATE_LIMIT_KEY_SECRET`，独立的 32 字节以上 Base64 secret |
 | 安全状态 secret | `IAM_SECURITY_STATE_KEY_SECRET`，独立的 32 字节以上 Base64 secret |
 | 遥测 | 环境对应的 OTLP endpoint、采样率、指标出口和资源标签 |
