@@ -14,7 +14,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 class FlywayMigrationIntegrationTests extends ApplicationIntegrationTest {
 
-	private static final int CURRENT_SCHEMA_VERSION = 26;
+	private static final int CURRENT_SCHEMA_VERSION = 27;
 
 	private static final UUID DEFAULT_TENANT_ID =
 			UUID.fromString("00000000-0000-0000-0000-000000000001");
