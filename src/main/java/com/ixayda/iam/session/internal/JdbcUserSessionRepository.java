@@ -5,10 +5,15 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
+import com.ixayda.iam.session.SessionAuthenticationFactor;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionStatus;
@@ -29,7 +34,7 @@ class JdbcUserSessionRepository {
 	private static final String COLUMNS = "session_id, tenant_id, user_id, authentication_method, status, "
 			+ "issued_tenant_version, issued_user_version, version, authenticated_at, updated_at, expires_at, revoked_at";
 
-	private static final RowMapper<UserSession> ROW_MAPPER = JdbcUserSessionRepository::mapSession;
+	private static final RowMapper<StoredUserSession> ROW_MAPPER = JdbcUserSessionRepository::mapSession;
 
 	private final JdbcClient jdbcClient;
 
@@ -77,6 +82,7 @@ class JdbcUserSessionRepository {
 		if (affected != 1) {
 			throw new IllegalStateException("Creating a user session affected an unexpected number of rows: " + affected);
 		}
+		insertFactors(session);
 		return session;
 	}
 
@@ -88,7 +94,8 @@ class JdbcUserSessionRepository {
 			.param("tenantId", tenantId.value())
 			.param("sessionId", sessionId.value())
 			.query(ROW_MAPPER)
-			.optional();
+			.optional()
+			.map(stored -> stored.toDomain(findFactors(tenantId, sessionId)));
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY,
@@ -100,6 +107,7 @@ class JdbcUserSessionRepository {
 		if (!current.id().equals(changed.id()) || !current.tenantId().equals(changed.tenantId())
 				|| !current.userId().equals(changed.userId())
 				|| current.authenticationMethod() != changed.authenticationMethod()
+				|| !current.authenticationFactors().equals(changed.authenticationFactors())
 				|| current.issuedTenantVersion() != changed.issuedTenantVersion()
 				|| current.issuedUserVersion() != changed.issuedUserVersion()
 				|| !current.authenticatedAt().equals(changed.authenticatedAt())
@@ -155,9 +163,43 @@ class JdbcUserSessionRepository {
 		return changed;
 	}
 
-	private static UserSession mapSession(ResultSet resultSet, int rowNumber) throws SQLException {
+	private void insertFactors(UserSession session) {
+		for (SessionAuthenticationFactor factor : session.authenticationFactors()) {
+			int affected = this.jdbcClient.sql("""
+					INSERT INTO user_session_authentication_factors (tenant_id, session_id, factor, issued_at)
+					VALUES (:tenantId, :sessionId, :factor, :issuedAt)
+					""")
+				.param("tenantId", session.tenantId().value())
+				.param("sessionId", session.id().value())
+				.param("factor", databaseValue(factor.type()))
+				.param("issuedAt", databaseValue(factor.issuedAt()))
+				.update();
+			if (affected != 1) {
+				throw new IllegalStateException(
+						"Creating a session authentication factor affected an unexpected number of rows: " + affected);
+			}
+		}
+	}
+
+	private Set<SessionAuthenticationFactor> findFactors(TenantId tenantId, SessionId sessionId) {
+		List<SessionAuthenticationFactor> factors = this.jdbcClient.sql("""
+				SELECT factor, issued_at
+				FROM user_session_authentication_factors
+				WHERE tenant_id = :tenantId AND session_id = :sessionId
+				ORDER BY factor
+				""")
+			.param("tenantId", tenantId.value())
+			.param("sessionId", sessionId.value())
+			.query((resultSet, rowNumber) -> new SessionAuthenticationFactor(
+					authenticationFactor(resultSet.getString("factor")),
+					resultSet.getObject("issued_at", OffsetDateTime.class).toInstant()))
+			.list();
+		return Set.copyOf(new LinkedHashSet<>(factors));
+	}
+
+	private static StoredUserSession mapSession(ResultSet resultSet, int rowNumber) throws SQLException {
 		OffsetDateTime revokedAt = resultSet.getObject("revoked_at", OffsetDateTime.class);
-		return new UserSession(new SessionId(resultSet.getObject("session_id", UUID.class)),
+		return new StoredUserSession(new SessionId(resultSet.getObject("session_id", UUID.class)),
 				new TenantId(resultSet.getObject("tenant_id", UUID.class)),
 				new UserId(resultSet.getObject("user_id", UUID.class)),
 				authenticationMethod(resultSet.getString("authentication_method")),
@@ -167,6 +209,14 @@ class JdbcUserSessionRepository {
 				resultSet.getObject("updated_at", OffsetDateTime.class).toInstant(),
 				resultSet.getObject("expires_at", OffsetDateTime.class).toInstant(),
 				revokedAt == null ? null : revokedAt.toInstant());
+	}
+
+	private static String databaseValue(SessionAuthenticationFactorType factor) {
+		return switch (factor) {
+			case PASSWORD -> "password";
+			case TOTP -> "totp";
+			case RECOVERY_CODE -> "recovery_code";
+		};
 	}
 
 	private static String databaseValue(SessionAuthenticationMethod method) {
@@ -194,6 +244,16 @@ class JdbcUserSessionRepository {
 		};
 	}
 
+	private static SessionAuthenticationFactorType authenticationFactor(String value) {
+		return switch (value) {
+			case "password" -> SessionAuthenticationFactorType.PASSWORD;
+			case "totp" -> SessionAuthenticationFactorType.TOTP;
+			case "recovery_code" -> SessionAuthenticationFactorType.RECOVERY_CODE;
+			default -> throw new IllegalStateException(
+					"Unsupported session authentication factor in the database: " + value);
+		};
+	}
+
 	private static SessionStatus status(String value) {
 		return switch (value) {
 			case "active" -> SessionStatus.ACTIVE;
@@ -207,6 +267,19 @@ class JdbcUserSessionRepository {
 				|| TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
 			throw new IllegalTransactionStateException("User session write requires an existing read-write transaction");
 		}
+	}
+
+	private record StoredUserSession(SessionId id, TenantId tenantId, UserId userId,
+			SessionAuthenticationMethod authenticationMethod, SessionStatus status, long issuedTenantVersion,
+			long issuedUserVersion, long version, Instant authenticatedAt, Instant updatedAt, Instant expiresAt,
+			Instant revokedAt) {
+
+		private UserSession toDomain(Set<SessionAuthenticationFactor> factors) {
+			return new UserSession(this.id, this.tenantId, this.userId, this.authenticationMethod, factors,
+					this.status, this.issuedTenantVersion, this.issuedUserVersion, this.version, this.authenticatedAt,
+					this.updatedAt, this.expiresAt, this.revokedAt);
+		}
+
 	}
 
 }

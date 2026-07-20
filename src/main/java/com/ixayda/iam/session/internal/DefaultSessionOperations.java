@@ -3,8 +3,11 @@ package com.ixayda.iam.session.internal;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import com.ixayda.iam.session.SessionAbsoluteTtl;
+import com.ixayda.iam.session.SessionAuthenticationFactor;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionOperations;
@@ -46,6 +49,21 @@ class DefaultSessionOperations implements SessionOperations {
 	@Transactional(propagation = Propagation.MANDATORY)
 	public UserSession start(TenantId tenantId, UserId userId,
 			SessionAuthenticationMethod authenticationMethod, SessionAbsoluteTtl absoluteTtl) {
+		return startSession(tenantId, userId, authenticationMethod, null, absoluteTtl);
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public UserSession start(TenantId tenantId, UserId userId,
+			SessionAuthenticationMethod authenticationMethod,
+			Set<SessionAuthenticationFactor> authenticationFactors, SessionAbsoluteTtl absoluteTtl) {
+		Objects.requireNonNull(authenticationFactors, "Session authentication factors must not be null");
+		return startSession(tenantId, userId, authenticationMethod, authenticationFactors, absoluteTtl);
+	}
+
+	private UserSession startSession(TenantId tenantId, UserId userId,
+			SessionAuthenticationMethod authenticationMethod,
+			Set<SessionAuthenticationFactor> authenticationFactors, SessionAbsoluteTtl absoluteTtl) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(userId, "User ID must not be null");
 		Objects.requireNonNull(authenticationMethod, "Session authentication method must not be null");
@@ -58,8 +76,12 @@ class DefaultSessionOperations implements SessionOperations {
 			throw new IllegalStateException("Session lifecycle guards returned a different tenant or user");
 		}
 		Instant authenticatedAt = this.timeSource.now();
+		Set<SessionAuthenticationFactor> factors = authenticationFactors == null
+				? Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, authenticatedAt))
+				: authenticationFactors;
 		UserSession session = UserSession.start(SessionId.random(), tenantId, userId, authenticationMethod,
-				tenant.version(), user.securityVersion(), authenticatedAt, absoluteTtl.expiresAt(authenticatedAt));
+				factors, tenant.version(), user.securityVersion(), authenticatedAt,
+				absoluteTtl.expiresAt(authenticatedAt));
 		return this.repository.insert(session);
 	}
 

@@ -14,8 +14,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import com.ixayda.iam.session.SessionAbsoluteTtl;
+import com.ixayda.iam.session.SessionAuthenticationFactor;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionStatus;
@@ -109,6 +112,25 @@ class DefaultSessionOperationsTests {
 	}
 
 	@Test
+	void preservesExplicitAuthenticationFactorTimes() {
+		Tenant tenant = tenant(TenantStatus.ACTIVE, 4);
+		User user = user(UserStatus.ACTIVE, 9, 7);
+		Set<SessionAuthenticationFactor> factors = Set.of(
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, CREATED_AT),
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.TOTP, NOW.minusSeconds(1)));
+		when(this.tenants.requireActiveForWrite(TENANT_ID)).thenReturn(tenant);
+		when(this.users.requireActiveForWrite(TENANT_ID, USER_ID)).thenReturn(user);
+		when(this.timeSource.now()).thenReturn(NOW);
+		when(this.repository.insert(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+		UserSession session = this.operations.start(TENANT_ID, USER_ID, SessionAuthenticationMethod.PASSWORD,
+				factors, TTL);
+
+		assertThat(session.authenticationFactors()).isEqualTo(factors);
+		verify(this.repository).insert(session);
+	}
+
+	@Test
 	void rejectsStartingOutsideAnExistingReadWriteTransaction() {
 		TransactionSynchronizationManager.setActualTransactionActive(false);
 
@@ -123,6 +145,14 @@ class DefaultSessionOperationsTests {
 				SessionAuthenticationMethod.PASSWORD, TTL))
 			.isInstanceOf(IllegalTransactionStateException.class)
 			.hasMessage("Starting a session requires an existing read-write transaction");
+		verifyNoInteractions(this.tenants, this.users, this.timeSource, this.repository);
+	}
+
+	@Test
+	void rejectsNullExplicitFactorsBeforeAccessingState() {
+		assertThatThrownBy(() -> this.operations.start(TENANT_ID, USER_ID,
+				SessionAuthenticationMethod.PASSWORD, null, TTL))
+			.isInstanceOf(NullPointerException.class);
 		verifyNoInteractions(this.tenants, this.users, this.timeSource, this.repository);
 	}
 

@@ -1,6 +1,7 @@
 package com.ixayda.iam.session;
 
 import java.util.Optional;
+import java.util.Set;
 
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
@@ -12,6 +13,13 @@ public interface SessionOperations {
 	 */
 	UserSession start(TenantId tenantId, UserId userId, SessionAuthenticationMethod authenticationMethod,
 			SessionAbsoluteTtl absoluteTtl);
+
+	/**
+	 * Starts a session with independently timestamped authentication factors inside the
+	 * caller's existing authentication transaction.
+	 */
+	UserSession start(TenantId tenantId, UserId userId, SessionAuthenticationMethod authenticationMethod,
+			Set<SessionAuthenticationFactor> authenticationFactors, SessionAbsoluteTtl absoluteTtl);
 
 	Optional<UserSession> findById(TenantId tenantId, SessionId sessionId);
 

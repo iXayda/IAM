@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -90,6 +92,22 @@ class SessionOperationsIntegrationTests extends ApplicationIntegrationTest {
 			.isEqualTo(EIGHT_HOURS.value());
 		assertThat(this.sessions.findById(TenantId.DEFAULT, started.id())).contains(started);
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, started.id())).contains(started);
+	}
+
+	@Test
+	void storesAndLoadsIndependentAuthenticationFactorTimes() {
+		User user = createUser(TenantId.DEFAULT, "factors");
+		Instant passwordVerifiedAt = Instant.now().minusSeconds(30);
+		Instant totpVerifiedAt = Instant.now().minusSeconds(1);
+		Set<SessionAuthenticationFactor> factors = Set.of(
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, passwordVerifiedAt),
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.TOTP, totpVerifiedAt));
+
+		UserSession started = transactionTemplate().execute(status -> this.sessions.start(TenantId.DEFAULT,
+				user.id(), SessionAuthenticationMethod.PASSWORD, factors, EIGHT_HOURS));
+
+		assertThat(started.authenticationFactors()).isEqualTo(factors);
+		assertThat(this.sessions.findById(TenantId.DEFAULT, started.id())).contains(started);
 	}
 
 	@Test

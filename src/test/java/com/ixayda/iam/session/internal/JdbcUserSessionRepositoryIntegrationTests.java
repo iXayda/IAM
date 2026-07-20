@@ -205,14 +205,17 @@ class JdbcUserSessionRepositoryIntegrationTests extends ApplicationIntegrationTe
 		UserSession current = session(SESSION_ID, TenantId.DEFAULT, USER_ID, 0, 7);
 		Instant revokedAt = AUTHENTICATED_AT.plusSeconds(60);
 		UserSession changedUser = new UserSession(current.id(), current.tenantId(), SECOND_USER_ID,
-				current.authenticationMethod(), SessionStatus.REVOKED, current.issuedTenantVersion(),
+				current.authenticationMethod(), current.authenticationFactors(), SessionStatus.REVOKED,
+				current.issuedTenantVersion(),
 				current.issuedUserVersion(), 1, current.authenticatedAt(), revokedAt, current.expiresAt(), revokedAt);
 		UserSession changedExpiry = new UserSession(current.id(), current.tenantId(), current.userId(),
-				current.authenticationMethod(), SessionStatus.REVOKED, current.issuedTenantVersion(),
+				current.authenticationMethod(), current.authenticationFactors(), SessionStatus.REVOKED,
+				current.issuedTenantVersion(),
 				current.issuedUserVersion(), 1, current.authenticatedAt(), revokedAt,
 				current.expiresAt().plusSeconds(1), revokedAt);
 		UserSession skippedVersion = new UserSession(current.id(), current.tenantId(), current.userId(),
-				current.authenticationMethod(), SessionStatus.REVOKED, current.issuedTenantVersion(),
+				current.authenticationMethod(), current.authenticationFactors(), SessionStatus.REVOKED,
+				current.issuedTenantVersion(),
 				current.issuedUserVersion(), 2, current.authenticatedAt(), revokedAt, current.expiresAt(), revokedAt);
 
 		assertThatThrownBy(() -> update(current, changedUser)).isInstanceOf(IllegalArgumentException.class);

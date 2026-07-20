@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.Set;
 
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
@@ -28,6 +29,8 @@ class UserSessionTests {
 		assertThat(session.tenantId()).isEqualTo(TenantId.DEFAULT);
 		assertThat(session.userId()).isEqualTo(USER_ID);
 		assertThat(session.authenticationMethod()).isEqualTo(SessionAuthenticationMethod.PASSWORD);
+		assertThat(session.authenticationFactors()).containsExactly(
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, AUTHENTICATED_AT));
 		assertThat(session.status()).isEqualTo(SessionStatus.ACTIVE);
 		assertThat(session.issuedTenantVersion()).isEqualTo(2);
 		assertThat(session.issuedUserVersion()).isEqualTo(7);
@@ -63,6 +66,7 @@ class UserSessionTests {
 		assertThat(revoked.id()).isEqualTo(active.id());
 		assertThat(revoked.tenantId()).isEqualTo(active.tenantId());
 		assertThat(revoked.userId()).isEqualTo(active.userId());
+		assertThat(revoked.authenticationFactors()).isEqualTo(active.authenticationFactors());
 		assertThat(revoked.issuedTenantVersion()).isEqualTo(active.issuedTenantVersion());
 		assertThat(revoked.issuedUserVersion()).isEqualTo(active.issuedUserVersion());
 		assertThat(revoked.revoke(revokedAt.plusSeconds(1))).isSameAs(revoked);
@@ -101,6 +105,34 @@ class UserSessionTests {
 			.isInstanceOf(IllegalArgumentException.class);
 	}
 
+	@Test
+	void validatesAuthenticationFactorEvidence() {
+		SessionAuthenticationFactor password =
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, AUTHENTICATED_AT);
+		SessionAuthenticationFactor totp =
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.TOTP, AUTHENTICATED_AT);
+		SessionAuthenticationFactor earlierTotp =
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.TOTP, AUTHENTICATED_AT.minusSeconds(1));
+
+		UserSession session = UserSession.start(SESSION_ID, TenantId.DEFAULT, USER_ID,
+				SessionAuthenticationMethod.PASSWORD, Set.of(password, totp), 2, 7, AUTHENTICATED_AT, EXPIRES_AT);
+
+		assertThat(session.authenticationFactors()).containsExactlyInAnyOrder(password, totp);
+		assertThatThrownBy(() -> UserSession.start(SESSION_ID, TenantId.DEFAULT, USER_ID,
+				SessionAuthenticationMethod.PASSWORD, Set.of(totp), 2, 7, AUTHENTICATED_AT, EXPIRES_AT))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> UserSession.start(SESSION_ID, TenantId.DEFAULT, USER_ID,
+				SessionAuthenticationMethod.PASSWORD, Set.of(password, totp, earlierTotp), 2, 7,
+				AUTHENTICATED_AT, EXPIRES_AT)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> UserSession.start(SESSION_ID, TenantId.DEFAULT, USER_ID,
+				SessionAuthenticationMethod.PASSWORD,
+				Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD,
+						AUTHENTICATED_AT.plusNanos(1))),
+				2, 7, AUTHENTICATED_AT, EXPIRES_AT)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD,
+				Instant.EPOCH.minusNanos(1))).isInstanceOf(IllegalArgumentException.class);
+	}
+
 	private UserSession activeSession() {
 		return UserSession.start(SESSION_ID, TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD, 2, 7,
 				AUTHENTICATED_AT, EXPIRES_AT);
@@ -108,7 +140,8 @@ class UserSessionTests {
 
 	private UserSession session(SessionStatus status, long issuedTenantVersion, long issuedUserVersion, long version,
 			Instant authenticatedAt, Instant updatedAt, Instant expiresAt, Instant revokedAt) {
-		return new UserSession(SESSION_ID, TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD, status,
+		return new UserSession(SESSION_ID, TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
+				Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, authenticatedAt)), status,
 				issuedTenantVersion, issuedUserVersion, version, authenticatedAt, updatedAt, expiresAt, revokedAt);
 	}
 
