@@ -118,10 +118,10 @@ class AuthorizationLocalPasswordAuthenticationProviderTests {
 
 		assertThatThrownBy(() -> this.provider.authenticate(request("alice", "candidate-password")))
 			.isInstanceOf(AuthenticationServiceException.class)
-			.hasMessage("Local password authentication returned an invalid session");
+			.hasMessage("Authentication returned an invalid password session");
 		assertThatThrownBy(() -> this.provider.authenticate(request("alice", "candidate-password")))
 			.isInstanceOf(AuthenticationServiceException.class)
-			.hasMessage("Local password authentication returned an invalid session");
+			.hasMessage("Authentication returned an invalid password session");
 	}
 
 	@Test
