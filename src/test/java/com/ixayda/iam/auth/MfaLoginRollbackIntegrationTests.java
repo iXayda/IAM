@@ -82,7 +82,7 @@ class MfaLoginRollbackIntegrationTests extends ApplicationIntegrationTest {
 			MfaChallenge failedChallenge = issue(source);
 			UserSession session = session();
 			when(this.sessions.start(eq(TenantId.DEFAULT), eq(this.user.id()),
-					eq(SessionAuthenticationMethod.PASSWORD), any()))
+					eq(SessionAuthenticationMethod.PASSWORD), any(), any()))
 				.thenThrow(new IllegalStateException("simulated session write failure"))
 				.thenReturn(session);
 

@@ -22,6 +22,8 @@ import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.ratelimit.LoginAttemptSource;
+import com.ixayda.iam.session.SessionAuthenticationFactor;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.UserSession;
@@ -76,6 +78,34 @@ class AuthorizationLocalPasswordAuthenticationProviderTests {
 				org.mockito.ArgumentMatchers.eq(LoginKey.from("alice")), org.mockito.ArgumentMatchers.eq(SOURCE),
 				attempt.capture());
 		assertThat(attempt.getValue().isDestroyed()).isTrue();
+	}
+
+	@Test
+	void mapsIndependentSessionFactorsToSpringSecurityAuthorities() {
+		Instant passwordVerifiedAt = Instant.parse("2026-01-01T00:00:00Z");
+		Instant totpVerifiedAt = passwordVerifiedAt.plusSeconds(30);
+		Instant authenticatedAt = totpVerifiedAt.plusNanos(1);
+		UserSession session = UserSession.start(
+				SessionId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e61"), TenantId.DEFAULT,
+				UserId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e62"), SessionAuthenticationMethod.PASSWORD,
+				Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, passwordVerifiedAt),
+						new SessionAuthenticationFactor(SessionAuthenticationFactorType.TOTP, totpVerifiedAt)),
+				0, 0, authenticatedAt, authenticatedAt.plus(Duration.ofHours(8)));
+		when(this.logins.login(any(), any(), any(), any())).thenReturn(LocalPasswordLoginResult.success(session));
+
+		Authentication authenticated = this.provider.authenticate(request("alice", "candidate-password"));
+
+		assertThat(authenticated.getAuthorities()).hasSize(2)
+			.anySatisfy(authority -> assertThat(authority).isInstanceOfSatisfying(FactorGrantedAuthority.class,
+					factor -> {
+						assertThat(factor.getAuthority()).isEqualTo(FactorGrantedAuthority.PASSWORD_AUTHORITY);
+						assertThat(factor.getIssuedAt()).isEqualTo(passwordVerifiedAt);
+					}))
+			.anySatisfy(authority -> assertThat(authority).isInstanceOfSatisfying(FactorGrantedAuthority.class,
+					factor -> {
+						assertThat(factor.getAuthority()).isEqualTo(FactorGrantedAuthority.OTT_AUTHORITY);
+						assertThat(factor.getIssuedAt()).isEqualTo(totpVerifiedAt);
+					}));
 	}
 
 	@Test

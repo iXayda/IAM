@@ -13,6 +13,8 @@ import com.ixayda.iam.credential.GeneratedRecoveryCodes;
 import com.ixayda.iam.credential.RecoveryCodeAttempt;
 import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.ratelimit.LoginAttemptSource;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
+import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginIdentifier;
@@ -33,6 +35,9 @@ class MfaLoginOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	@Autowired
 	private RecoveryCodeOperations recoveryCodes;
+
+	@Autowired
+	private SessionOperations sessions;
 
 	@Autowired
 	private UserOperations users;
@@ -79,6 +84,16 @@ class MfaLoginOperationsIntegrationTests extends ApplicationIntegrationTest {
 				assertThat(result.session()).hasValueSatisfying(session -> {
 					assertThat(session.tenantId()).isEqualTo(TenantId.DEFAULT);
 					assertThat(session.userId()).isEqualTo(this.user.id());
+					assertThat(session.authenticationFactors())
+						.extracting(factor -> factor.type())
+						.containsExactlyInAnyOrder(SessionAuthenticationFactorType.PASSWORD,
+								SessionAuthenticationFactorType.RECOVERY_CODE);
+					assertThat(session.authenticationFactors())
+						.filteredOn(factor -> factor.type() == SessionAuthenticationFactorType.PASSWORD)
+						.singleElement()
+						.extracting(factor -> factor.issuedAt())
+						.isEqualTo(challenge.passwordVerifiedAt());
+					assertThat(this.sessions.findById(TenantId.DEFAULT, session.id())).contains(session);
 				});
 			}
 			assertThat(sessionCount()).isOne();

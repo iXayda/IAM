@@ -9,8 +9,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Set;
 
 import com.ixayda.iam.auth.MfaChallenge;
@@ -21,6 +23,8 @@ import com.ixayda.iam.credential.RecoveryCodeAttempt;
 import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.credential.TotpCodeAttempt;
 import com.ixayda.iam.credential.TotpOperations;
+import com.ixayda.iam.session.SessionAuthenticationFactor;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionOperations;
@@ -36,6 +40,8 @@ class TransactionalMfaLoginTests {
 
 	private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
 
+	private static final Instant FACTOR_VERIFIED_AT = NOW.plusSeconds(1);
+
 	private final TotpOperations totp = mock(TotpOperations.class);
 
 	private final RecoveryCodeOperations recoveryCodes = mock(RecoveryCodeOperations.class);
@@ -46,23 +52,25 @@ class TransactionalMfaLoginTests {
 			new LocalPasswordLoginProperties(Duration.ofHours(8));
 
 	private final TransactionalMfaLogin login =
-			new TransactionalMfaLogin(this.totp, this.recoveryCodes, this.sessions, this.properties);
+			new TransactionalMfaLogin(this.totp, this.recoveryCodes, this.sessions, this.properties,
+					new AuthenticationTimeSource(Clock.fixed(FACTOR_VERIFIED_AT, ZoneOffset.UTC)));
 
 	@Test
 	void startsASessionOnlyAfterTotpVerification() {
 		MfaChallenge challenge = challenge(Set.of(MfaFactor.TOTP));
 		UserSession session = session();
 		try (TotpCodeAttempt code = new TotpCodeAttempt("123456".toCharArray())) {
+			Set<SessionAuthenticationFactor> factors = factors(SessionAuthenticationFactorType.TOTP);
 			when(this.totp.verify(TenantId.DEFAULT, USER_ID, code)).thenReturn(true);
 			when(this.sessions.start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
-					this.properties.absoluteTtl())).thenReturn(session);
+					factors, this.properties.absoluteTtl())).thenReturn(session);
 
 			assertThat(this.login.complete(challenge, code).session()).contains(session);
 
 			InOrder order = inOrder(this.totp, this.sessions);
 			order.verify(this.totp).verify(TenantId.DEFAULT, USER_ID, code);
 			order.verify(this.sessions).start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
-					this.properties.absoluteTtl());
+					factors, this.properties.absoluteTtl());
 			verifyNoInteractions(this.recoveryCodes);
 		}
 	}
@@ -72,16 +80,17 @@ class TransactionalMfaLoginTests {
 		MfaChallenge challenge = challenge(Set.of(MfaFactor.RECOVERY_CODE));
 		UserSession session = session();
 		try (RecoveryCodeAttempt code = recoveryCode()) {
+			Set<SessionAuthenticationFactor> factors = factors(SessionAuthenticationFactorType.RECOVERY_CODE);
 			when(this.recoveryCodes.verifyAndConsume(TenantId.DEFAULT, USER_ID, code)).thenReturn(true);
 			when(this.sessions.start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
-					this.properties.absoluteTtl())).thenReturn(session);
+					factors, this.properties.absoluteTtl())).thenReturn(session);
 
 			assertThat(this.login.complete(challenge, code).session()).contains(session);
 
 			InOrder order = inOrder(this.recoveryCodes, this.sessions);
 			order.verify(this.recoveryCodes).verifyAndConsume(TenantId.DEFAULT, USER_ID, code);
 			order.verify(this.sessions).start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
-					this.properties.absoluteTtl());
+					factors, this.properties.absoluteTtl());
 			verifyNoInteractions(this.totp);
 		}
 	}
@@ -140,6 +149,11 @@ class TransactionalMfaLoginTests {
 	private UserSession session() {
 		return UserSession.start(SessionId.from("019bc1e7-14d1-7d38-bd23-0877f2cd0e64"), TenantId.DEFAULT,
 				USER_ID, SessionAuthenticationMethod.PASSWORD, 0, 0, NOW, NOW.plusSeconds(3600));
+	}
+
+	private Set<SessionAuthenticationFactor> factors(SessionAuthenticationFactorType completedFactor) {
+		return Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, NOW),
+				new SessionAuthenticationFactor(completedFactor, FACTOR_VERIFIED_AT));
 	}
 
 }
