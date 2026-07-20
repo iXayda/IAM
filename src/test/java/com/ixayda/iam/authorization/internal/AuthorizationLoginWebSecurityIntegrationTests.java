@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -39,6 +40,7 @@ import java.util.regex.Pattern;
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.auth.MfaChallenge;
 import com.ixayda.iam.authorization.AdminAccessTokenClaims;
+import com.ixayda.iam.authorization.AdminMfaPolicy;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.client.ClientAuthenticationMethod;
@@ -127,6 +129,9 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 
 	@Autowired
 	private RecoveryCodeOperations recoveryCodes;
+
+	@Autowired
+	private AdminMfaPolicy adminMfaPolicy;
 
 	@Autowired
 	private SessionOperations sessions;
@@ -926,7 +931,7 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 	void preservesTenantAndSessionBoundAdminClaimsAcrossRefresh() throws Exception {
 		try (ConfidentialClientFixture client = createAdminClient(TenantId.DEFAULT, "admin-token")) {
 			UserFixture user = createUser(TenantId.DEFAULT, "admin-token");
-			AuthorizationCodeFixture authorizationCode = authorize(user, client.client(),
+			AuthorizationCodeFixture authorizationCode = authorizeWithRecoveryCode(user, client.client(),
 					"openid profile " + AdminAccessTokenClaims.SCOPE, "profile",
 					AdminAccessTokenClaims.SCOPE);
 			JsonNode initial = exchangeAuthorizationCode(client, authorizationCode);
@@ -961,6 +966,49 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			assertThat(reducedAccessToken.hasClaim(AdminAccessTokenClaims.SESSION_ID)).isFalse();
 			assertThatThrownBy(() -> this.adminJwtDecoder.decode(reducedAccessTokenValue))
 				.isInstanceOf(JwtException.class);
+		}
+	}
+
+	@Test
+	void rejectsAdminAccessTokensWithoutASecondFactor() throws Exception {
+		try (ConfidentialClientFixture client = createAdminClient(TenantId.DEFAULT, "admin-token-no-mfa")) {
+			UserFixture user = createUser(TenantId.DEFAULT, "admin-token-no-mfa");
+			AuthorizationCodeFixture authorizationCode = authorize(user, client.client(),
+					"openid " + AdminAccessTokenClaims.SCOPE, "openid", AdminAccessTokenClaims.SCOPE);
+
+			MvcResult result = this.mockMvc.perform(authorizationCodeTokenRequest(client, authorizationCode))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+
+			assertOAuthError(result, "invalid_grant");
+		}
+	}
+
+	@Test
+	void rejectsAdminRefreshTokensAfterTheSecondFactorExpires() throws Exception {
+		try (ConfidentialClientFixture client = createAdminClient(TenantId.DEFAULT, "admin-refresh-expired-mfa")) {
+			UserFixture user = createUser(TenantId.DEFAULT, "admin-refresh-expired-mfa");
+			AuthorizationCodeFixture authorizationCode = authorizeWithRecoveryCode(user, client.client(),
+					"openid " + AdminAccessTokenClaims.SCOPE, "openid", AdminAccessTokenClaims.SCOPE);
+			JsonNode initial = exchangeAuthorizationCode(client, authorizationCode);
+			int updated = this.jdbcClient.sql("""
+					UPDATE oauth_authorization_principal_authorities
+					SET issued_at = :issuedAt
+					WHERE client_id = :clientId AND authority = :authority
+					""")
+				.param("issuedAt", OffsetDateTime.ofInstant(
+						Instant.now().minus(this.adminMfaPolicy.validDuration()).minusSeconds(1), ZoneOffset.UTC))
+				.param("clientId", client.client().id().value())
+				.param("authority", FactorGrantedAuthority.OTT_AUTHORITY)
+				.update();
+			assertThat(updated).isOne();
+
+			MvcResult result = this.mockMvc
+				.perform(refreshRequest(client, initial.get("refresh_token").stringValue(), null))
+				.andExpect(status().isBadRequest())
+				.andReturn();
+
+			assertOAuthError(result, "invalid_grant");
 		}
 	}
 
@@ -1100,8 +1148,47 @@ class AuthorizationLoginWebSecurityIntegrationTests extends ApplicationIntegrati
 			.andExpect(authenticated())
 			.andReturn();
 		MockHttpSession authenticatedSession = (MockHttpSession) login.getRequest().getSession(false);
+		return completeAuthorization(client, approvedScopes, verifier, state, authenticatedSession,
+				login.getResponse().getHeader("Location"));
+	}
+
+	private AuthorizationCodeFixture authorizeWithRecoveryCode(UserFixture user, OAuthClient client, String scopes,
+			String... approvedScopes) throws Exception {
+		char[][] codes;
+		try (GeneratedRecoveryCodes generated = this.recoveryCodes.replace(user.user().tenantId(), user.user().id())) {
+			codes = generated.copy();
+		}
+		try {
+			String verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+			String state = "mfa-admin-state-" + suffix();
+			MockHttpSession loginSession = beginAuthorization(client, scopes, state, pkceChallenge(verifier),
+					"mfa-admin-nonce-" + suffix());
+			MvcResult password = this.mockMvc
+				.perform(post("/login").session(loginSession).with(csrf()).param("username", user.username())
+					.param("password", PASSWORD))
+				.andExpect(status().isFound())
+				.andExpect(redirectedUrl(AuthorizationMfaLoginPageController.PATH))
+				.andExpect(unauthenticated())
+				.andReturn();
+			MockHttpSession mfaSession = (MockHttpSession) password.getRequest().getSession(false);
+			MvcResult mfa = this.mockMvc
+				.perform(post(AuthorizationMfaLoginPageController.PATH).session(mfaSession).with(csrf())
+					.param("factor", "recovery_code").param("code", new String(codes[0])))
+				.andExpect(status().isFound())
+				.andExpect(authenticated())
+				.andReturn();
+			return completeAuthorization(client, approvedScopes, verifier, state,
+					(MockHttpSession) mfa.getRequest().getSession(false), mfa.getResponse().getHeader("Location"));
+		}
+		finally {
+			Arrays.stream(codes).forEach((code) -> Arrays.fill(code, '\0'));
+		}
+	}
+
+	private AuthorizationCodeFixture completeAuthorization(OAuthClient client, String[] approvedScopes,
+			String verifier, String state, MockHttpSession authenticatedSession, String continuation) throws Exception {
 		MvcResult consentRedirect = this.mockMvc
-			.perform(get(URI.create(login.getResponse().getHeader("Location"))).session(authenticatedSession)
+			.perform(get(URI.create(continuation)).session(authenticatedSession)
 				.accept(MediaType.TEXT_HTML))
 			.andExpect(status().isFound())
 			.andReturn();

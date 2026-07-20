@@ -1,25 +1,42 @@
 package com.ixayda.iam.authorization.internal;
 
 import java.net.URI;
+import java.time.Clock;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
 import com.ixayda.iam.authorization.AdminAccessTokenClaims;
+import com.ixayda.iam.authorization.AdminMfaPolicy;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.client.OAuthClientSettings;
+import org.springframework.security.authorization.AllRequiredFactorsAuthorizationManager;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 
 final class AdminTokenJwtCustomizer implements OAuth2TokenCustomizer<JwtEncodingContext> {
 
+	private static final OAuth2Error MFA_REQUIRED = new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT,
+			"Recent multi-factor authentication is required for iam.admin.", null);
+
 	private final String audience;
 
-	AdminTokenJwtCustomizer(URI audience) {
+	private final AllRequiredFactorsAuthorizationManager<JwtEncodingContext> mfa;
+
+	AdminTokenJwtCustomizer(URI audience, AdminMfaPolicy policy) {
+		this(audience, policy, Clock.systemUTC());
+	}
+
+	AdminTokenJwtCustomizer(URI audience, AdminMfaPolicy policy, Clock clock) {
 		this.audience = Objects.requireNonNull(audience, "Admin token audience must not be null").toASCIIString();
+		this.mfa = Objects.requireNonNull(policy, "Admin MFA policy must not be null").authorizationManager();
+		this.mfa.setClock(Objects.requireNonNull(clock, "Admin MFA clock must not be null"));
 	}
 
 	@Override
@@ -31,6 +48,9 @@ final class AdminTokenJwtCustomizer implements OAuth2TokenCustomizer<JwtEncoding
 		}
 		if (!(context.getPrincipal() instanceof AuthorizationUserAuthentication authentication)) {
 			throw new IllegalStateException("Admin access token principal is invalid");
+		}
+		if (!this.mfa.authorize(() -> authentication, context).isGranted()) {
+			throw new OAuth2AuthenticationException(MFA_REQUIRED);
 		}
 		AuthorizationPrincipal principal = authentication.getPrincipal();
 		Object tenantSetting = context.getRegisteredClient()

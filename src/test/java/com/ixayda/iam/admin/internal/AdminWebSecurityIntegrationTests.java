@@ -5,15 +5,19 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.admin.AdminRoleCode;
 import com.ixayda.iam.admin.AdminRoleOperations;
 import com.ixayda.iam.authorization.AdminAccessTokenClaims;
+import com.ixayda.iam.authorization.AdminMfaPolicy;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
 import com.ixayda.iam.session.SessionAbsoluteTtl;
+import com.ixayda.iam.session.SessionAuthenticationFactor;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.session.UserSession;
@@ -32,6 +36,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.core.authority.FactorGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -69,6 +74,9 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 
 	@Autowired
 	private AdminRoleOperations roles;
+
+	@Autowired
+	private AdminMfaPolicy mfaPolicy;
 
 	@Autowired
 	private SessionOperations sessions;
@@ -126,10 +134,14 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 		AuthorizationUserAuthentication authenticated = this.authenticationConverter.convert(token);
 
 		assertThat(authenticated.getPrincipal()).isEqualTo(principal(session));
-		assertThat(authenticated.getAuthorities()).extracting("authority").containsExactly("user.read");
+		assertThat(authenticated.getAuthorities()).extracting("authority")
+			.containsExactlyInAnyOrder("user.read", FactorGrantedAuthority.PASSWORD_AUTHORITY,
+					FactorGrantedAuthority.OTT_AUTHORITY);
 
 		this.roles.revoke(tenant.id(), superAdmin.id(), support.id(), supportRole);
-		assertThat(this.authenticationConverter.convert(token).getAuthorities()).isEmpty();
+		assertThat(this.authenticationConverter.convert(token).getAuthorities()).extracting("authority")
+			.doesNotContain("user.read")
+			.contains(FactorGrantedAuthority.PASSWORD_AUTHORITY, FactorGrantedAuthority.OTT_AUTHORITY);
 
 		this.sessions.revoke(tenant.id(), session.id());
 		assertThatThrownBy(() -> this.authenticationConverter.convert(token))
@@ -204,6 +216,28 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(status().isForbidden());
 	}
 
+	@Test
+	void requiresARecentLiveSecondFactorForAdminRequests() throws Exception {
+		Tenant tenant = createTenant("mfa");
+		User admin = createUser(tenant.id(), "admin");
+		this.roles.bootstrapSuperAdmin(tenant.id(), admin.id());
+		Instant authenticatedAt = Instant.now();
+		String passwordOnly = encodedToken(startPasswordOnlySession(tenant.id(), admin, authenticatedAt));
+		String expiredMfa = encodedToken(startSession(tenant.id(), admin, authenticatedAt,
+				authenticatedAt.minus(this.mfaPolicy.validDuration())));
+		String freshMfa = encodedToken(startSession(tenant.id(), admin, authenticatedAt, authenticatedAt));
+
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(passwordOnly)))
+			.andExpect(status().isForbidden());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(expiredMfa)))
+			.andExpect(status().isForbidden());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(freshMfa)))
+			.andExpect(status().isOk());
+	}
+
 	private Tenant createTenant(String purpose) {
 		String suffix = UUID.randomUUID().toString().substring(0, 8);
 		Tenant tenant = this.tenants.create(new CreateTenantRequest("admin-web-" + purpose + "-" + suffix,
@@ -219,8 +253,23 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	private UserSession startSession(TenantId tenantId, User user) {
+		Instant authenticatedAt = Instant.now();
+		return startSession(tenantId, user, authenticatedAt, authenticatedAt);
+	}
+
+	private UserSession startSession(TenantId tenantId, User user, Instant authenticatedAt, Instant secondFactorAt) {
 		return new TransactionTemplate(this.transactionManager).execute(status -> this.sessions.start(tenantId,
-				user.id(), SessionAuthenticationMethod.PASSWORD, SESSION_TTL));
+				user.id(), SessionAuthenticationMethod.PASSWORD,
+				Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, authenticatedAt),
+						new SessionAuthenticationFactor(SessionAuthenticationFactorType.TOTP, secondFactorAt)),
+				SESSION_TTL));
+	}
+
+	private UserSession startPasswordOnlySession(TenantId tenantId, User user, Instant authenticatedAt) {
+		return new TransactionTemplate(this.transactionManager).execute(status -> this.sessions.start(tenantId,
+				user.id(), SessionAuthenticationMethod.PASSWORD,
+				Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, authenticatedAt)),
+				SESSION_TTL));
 	}
 
 	private String encodedToken(UserSession session) {

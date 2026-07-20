@@ -3,6 +3,7 @@ package com.ixayda.iam.authorization.internal;
 import java.time.Clock;
 import java.util.ArrayList;
 
+import com.ixayda.iam.authorization.AdminMfaPolicy;
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
@@ -31,7 +32,7 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Toke
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({ AuthorizationPersistenceProperties.class,
 		AuthorizationServerProperties.class, AuthorizationSigningKeyProtectionProperties.class,
-		AuthorizationTokenProtectionProperties.class })
+		AuthorizationTokenProtectionProperties.class, AdminMfaPolicy.class })
 class AuthorizationPersistenceConfiguration {
 
 	@Bean
@@ -120,9 +121,11 @@ class AuthorizationPersistenceConfiguration {
 	}
 
 	@Bean
-	OAuth2TokenCustomizer<JwtEncodingContext> authorizationJwtCustomizer(AuthorizationServerProperties properties) {
+	OAuth2TokenCustomizer<JwtEncodingContext> authorizationJwtCustomizer(AuthorizationServerProperties properties,
+			AdminMfaPolicy adminMfaPolicy) {
 		ServiceTokenJwtCustomizer serviceTokens = new ServiceTokenJwtCustomizer(properties.serviceTokenAudience());
-		AdminTokenJwtCustomizer adminTokens = new AdminTokenJwtCustomizer(properties.adminTokenAudience());
+		AdminTokenJwtCustomizer adminTokens =
+				new AdminTokenJwtCustomizer(properties.adminTokenAudience(), adminMfaPolicy);
 		return (context) -> {
 			serviceTokens.customize(context);
 			adminTokens.customize(context);

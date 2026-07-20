@@ -2,14 +2,18 @@ package com.ixayda.iam.admin.internal;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 import com.ixayda.iam.admin.AdminRoleOperations;
 import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionOperations;
@@ -17,6 +21,8 @@ import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
 import org.springframework.core.convert.converter.Converter;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.FactorGrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
@@ -42,15 +48,33 @@ final class AdminJwtAuthenticationConverter implements Converter<Jwt, Authorizat
 				|| !session.authenticatedAt().truncatedTo(ChronoUnit.SECONDS).equals(identity.authenticatedAt())) {
 			throw invalidToken();
 		}
-		List<SimpleGrantedAuthority> authorities = this.roles
+		List<GrantedAuthority> authorities = new ArrayList<>(this.roles
 			.findEffectivePermissions(identity.tenantId(), identity.userId())
 			.stream()
 			.map(permission -> new SimpleGrantedAuthority(permission.value()))
 			.sorted((left, right) -> left.getAuthority().compareTo(right.getAuthority()))
-			.toList();
+			.toList());
+		authorities.addAll(factorAuthorities(session));
 		AuthorizationPrincipal principal = new AuthorizationPrincipal(identity.tenantId(), identity.userId(),
 				identity.sessionId(), identity.authenticationMethod(), session.authenticatedAt());
 		return AuthorizationUserAuthentication.authenticated(principal, authorities);
+	}
+
+	private static List<FactorGrantedAuthority> factorAuthorities(UserSession session) {
+		Map<String, Instant> factorTimes = new LinkedHashMap<>();
+		session.authenticationFactors().forEach((factor) -> factorTimes.merge(authority(factor.type()),
+				factor.issuedAt(), (first, second) -> first.isAfter(second) ? first : second));
+		return factorTimes.entrySet()
+			.stream()
+			.map((entry) -> FactorGrantedAuthority.withAuthority(entry.getKey()).issuedAt(entry.getValue()).build())
+			.toList();
+	}
+
+	private static String authority(SessionAuthenticationFactorType factor) {
+		return switch (factor) {
+			case PASSWORD -> FactorGrantedAuthority.PASSWORD_AUTHORITY;
+			case TOTP, RECOVERY_CODE -> FactorGrantedAuthority.OTT_AUTHORITY;
+		};
 	}
 
 	private static TokenIdentity identity(Jwt jwt) {

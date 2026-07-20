@@ -2,6 +2,7 @@ package com.ixayda.iam.admin.internal;
 
 import com.ixayda.iam.admin.AdminPermissionCode;
 import com.ixayda.iam.admin.AdminRoleOperations;
+import com.ixayda.iam.authorization.AdminMfaPolicy;
 import com.ixayda.iam.session.SessionOperations;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -10,6 +11,9 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.authorization.AuthorizationManager;
+import org.springframework.security.authorization.AuthorizationManagers;
+import org.springframework.security.authorization.AuthorityAuthorizationManager;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -19,6 +23,7 @@ import org.springframework.security.oauth2.server.resource.BearerTokenErrors;
 import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 
 @Configuration(proxyBeanMethods = false)
 class AdminWebSecurityConfiguration {
@@ -37,11 +42,14 @@ class AdminWebSecurityConfiguration {
 	@Order(Ordered.HIGHEST_PRECEDENCE + 3)
 	SecurityFilterChain adminSecurityFilterChain(HttpSecurity http,
 			@Qualifier("adminJwtDecoder") JwtDecoder adminJwtDecoder,
-			AdminJwtAuthenticationConverter authenticationConverter) throws Exception {
+			AdminJwtAuthenticationConverter authenticationConverter, AdminMfaPolicy mfaPolicy) throws Exception {
+		AuthorizationManager<RequestAuthorizationContext> mfa = mfaPolicy.authorizationManager();
+		AuthorizationManager<RequestAuthorizationContext> readRoles = AuthorizationManagers.allOf(
+				AuthorityAuthorizationManager.hasAuthority(AdminPermissionCode.READ_ROLES.value()), mfa);
 		http.securityMatcher(BASE_PATH + "/**");
 		http.authorizeHttpRequests((authorize) -> authorize
 			.requestMatchers(HttpMethod.GET, ROLES_PATH)
-			.hasAuthority(AdminPermissionCode.READ_ROLES.value())
+			.access(readRoles)
 			.anyRequest()
 			.denyAll());
 		http.csrf(AbstractHttpConfigurer::disable);
