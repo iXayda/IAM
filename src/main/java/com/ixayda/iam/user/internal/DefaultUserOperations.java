@@ -180,6 +180,20 @@ class DefaultUserOperations implements UserOperations {
 
 	@Override
 	@Transactional(propagation = Propagation.MANDATORY)
+	public User requireNotDeletedForUpdate(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		this.tenants.requireActiveForWrite(tenantId);
+		User user = this.repository.findByIdForUpdate(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		if (user.isDeleted()) {
+			throw new UserNotFoundException(tenantId, userId);
+		}
+		return user;
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
 	public User recordMembershipChangeForWrite(TenantId tenantId, UserId userId) {
 		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
 		Objects.requireNonNull(userId, "User ID must not be null");
@@ -191,6 +205,21 @@ class DefaultUserOperations implements UserOperations {
 		}
 		User changed = current.membershipsChanged(transitionTime(current));
 		return this.repository.updateMemberships(current, changed);
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY)
+	public User recordCredentialChangeForWrite(TenantId tenantId, UserId userId) {
+		Objects.requireNonNull(tenantId, "Tenant ID must not be null");
+		Objects.requireNonNull(userId, "User ID must not be null");
+		this.tenants.requireActiveForWrite(tenantId);
+		User current = this.repository.findByIdForUpdate(tenantId, userId)
+			.orElseThrow(() -> new UserNotFoundException(tenantId, userId));
+		if (current.isDeleted()) {
+			throw new UserNotFoundException(tenantId, userId);
+		}
+		User changed = current.credentialsChanged(transitionTime(current));
+		return this.repository.updateCredentials(current, changed);
 	}
 
 	@Override

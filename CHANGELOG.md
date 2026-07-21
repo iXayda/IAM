@@ -104,6 +104,7 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Invalidate existing user sessions and Admin tokens after active TOTP or recovery-code configuration changes.
 - Audit administrator role changes, user lifecycle transitions, token issuance or revocation, session revocations,
   and TOTP or recovery-code lifecycle events with actor context.
 - Record password, MFA, throttling, and authentication dependency outcomes without credential material.

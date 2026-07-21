@@ -23,6 +23,8 @@ import com.ixayda.iam.authorization.AdminAccessTokenClaims;
 import com.ixayda.iam.authorization.AdminMfaPolicy;
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
+import com.ixayda.iam.credential.GeneratedRecoveryCodes;
+import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.session.SessionAbsoluteTtl;
 import com.ixayda.iam.session.SessionAuthenticationFactor;
 import com.ixayda.iam.session.SessionAuthenticationFactorType;
@@ -94,6 +96,9 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 	private SessionOperations sessions;
 
 	@Autowired
+	private RecoveryCodeOperations recoveryCodes;
+
+	@Autowired
 	private TenantOperations tenants;
 
 	@Autowired
@@ -118,6 +123,9 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 				.param("tenantId", tenantId.value())
 				.update();
 			this.jdbcClient.sql("DELETE FROM user_sessions WHERE tenant_id = :tenantId")
+				.param("tenantId", tenantId.value())
+				.update();
+			this.jdbcClient.sql("DELETE FROM user_recovery_codes WHERE tenant_id = :tenantId")
 				.param("tenantId", tenantId.value())
 				.update();
 			this.jdbcClient.sql("DELETE FROM user_login_identifiers WHERE tenant_id = :tenantId")
@@ -248,6 +256,28 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
 			.header(HttpHeaders.AUTHORIZATION, bearer(freshMfa)))
 			.andExpect(status().isOk());
+	}
+
+	@Test
+	void rejectsAdminTokensAfterMfaConfigurationChanges() throws Exception {
+		Tenant tenant = createTenant("mfa-session-invalidation");
+		User admin = createUser(tenant.id(), "mfa-session-admin");
+		this.roles.bootstrapSuperAdmin(tenant.id(), admin.id());
+		UserSession session = startSession(tenant.id(), admin);
+		String token = encodedToken(session);
+
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token)))
+			.andExpect(status().isOk());
+
+		try (GeneratedRecoveryCodes ignored = this.recoveryCodes.replace(tenant.id(), admin.id())) {
+			assertThat(ignored.size()).isEqualTo(GeneratedRecoveryCodes.CODE_COUNT);
+		}
+
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.ROLES_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token)))
+			.andExpect(status().isUnauthorized())
+			.andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, containsString("error=\"invalid_token\"")));
 	}
 
 	@Test

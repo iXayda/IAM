@@ -442,6 +442,10 @@ TOTP 使用 RFC 6238 SHA-1、6 位 code、30 秒 period 和 160-bit secret。Enr
 `iam.credential.totp.allowed-clock-skew-steps` 调整，clock-skew 上限为两个 step。每个 time step 只能由
 数据库条件更新原子消费一次，成功验证必须与后续 session 或 token 写入处于同一个读写事务。
 
+TOTP 激活、active TOTP 撤销和恢复码整组替换会在同一事务中推进 User security revision，使此前签发的
+普通 session 与 Admin token 立即失效。pending TOTP enrollment 的创建或撤销、TOTP 正常验证和恢复码
+单次消费不会推进 revision，避免把日常二次认证误判为凭据配置变更。
+
 恢复码每次整组生成 10 个，每个包含 100-bit CSPRNG 熵并按 `XXXXX-XXXXX-XXXXX-XXXXX` 展示。数据库只
 保存首组 selector 和 Spring Security 自适应哈希；重新生成会原子替换旧组。每个 code 只能由条件更新
 消费一次，成功验证必须与后续 session 或 token 写入处于同一个读写事务。

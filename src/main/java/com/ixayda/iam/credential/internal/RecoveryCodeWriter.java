@@ -29,6 +29,7 @@ class RecoveryCodeWriter {
 	void replace(TenantId tenantId, UserId userId, List<StoredRecoveryCode> codes) {
 		this.users.requireActiveForUpdate(tenantId, userId);
 		this.repository.replaceAll(tenantId, userId, codes);
+		this.users.recordCredentialChangeForWrite(tenantId, userId);
 		this.events.publishEvent(new CredentialSecurityEvent(tenantId, userId,
 				CredentialSecurityEvent.Type.RECOVERY_CODES_REPLACED, null, codes.getFirst().createdAt()));
 	}

@@ -115,6 +115,7 @@ class DefaultTotpOperations implements TotpOperations {
 		});
 		this.repository.activate(pending,
 				pending.credential().activate(matchedTimeStep.orElseThrow(), transitionAt));
+		this.users.recordCredentialChangeForWrite(tenantId, userId);
 		publish(tenantId, userId, CredentialSecurityEvent.Type.TOTP_ACTIVATED, credentialId, transitionAt);
 		return true;
 	}
@@ -152,6 +153,7 @@ class DefaultTotpOperations implements TotpOperations {
 	public boolean revoke(TenantId tenantId, UserId userId, TotpCredentialId credentialId) {
 		requireKey(tenantId, userId);
 		Objects.requireNonNull(credentialId, "TOTP credential ID must not be null");
+		this.users.requireNotDeletedForUpdate(tenantId, userId);
 		Optional<StoredTotpCredential> stored =
 				this.repository.findByIdForUpdate(tenantId, userId, credentialId);
 		if (stored.isEmpty() || stored.orElseThrow().credential().status() == TotpCredentialStatus.REVOKED) {
@@ -160,6 +162,9 @@ class DefaultTotpOperations implements TotpOperations {
 		StoredTotpCredential credential = stored.orElseThrow();
 		Instant revokedAt = this.timeSource.now();
 		this.repository.revoke(credential, credential.credential().revoke(revokedAt));
+		if (credential.credential().status() == TotpCredentialStatus.ACTIVE) {
+			this.users.recordCredentialChangeForWrite(tenantId, userId);
+		}
 		publish(tenantId, userId, CredentialSecurityEvent.Type.TOTP_REVOKED, credentialId, revokedAt);
 		return true;
 	}

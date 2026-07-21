@@ -177,6 +177,25 @@ class UserTests {
 	}
 
 	@Test
+	void advancesDirectoryAndSecurityRevisionsWhenCredentialsChange() {
+		User original = user(UserStatus.LOCKED);
+		Instant changedAt = UPDATED_AT.plusSeconds(60);
+
+		User changed = original.credentialsChanged(changedAt);
+
+		assertThat(changed.version()).isOne();
+		assertThat(changed.securityVersion()).isOne();
+		assertThat(changed.updatedAt()).isEqualTo(changedAt);
+		assertThat(changed.status()).isEqualTo(original.status());
+		assertThat(changed.identifiers()).isEqualTo(original.identifiers());
+		assertThat(changed.profile()).isEqualTo(original.profile());
+		assertThatThrownBy(() -> original.credentialsChanged(UPDATED_AT.minusSeconds(1)))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> user(UserStatus.DELETED).credentialsChanged(changedAt))
+			.isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
 	void defensivelyCopiesIdentifiers() {
 		List<LoginIdentifier> source = new ArrayList<>();
 		source.add(USERNAME);

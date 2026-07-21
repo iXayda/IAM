@@ -1,5 +1,6 @@
 package com.ixayda.iam.credential.internal;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -12,6 +13,10 @@ import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.credential.GeneratedRecoveryCodes;
 import com.ixayda.iam.credential.RecoveryCodeAttempt;
 import com.ixayda.iam.credential.RecoveryCodeOperations;
+import com.ixayda.iam.session.SessionAbsoluteTtl;
+import com.ixayda.iam.session.SessionAuthenticationMethod;
+import com.ixayda.iam.session.SessionOperations;
+import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
 import org.junit.jupiter.api.AfterEach;
@@ -40,6 +45,9 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 	private JdbcClient jdbcClient;
 
 	@Autowired
+	private SessionOperations sessions;
+
+	@Autowired
 	private PlatformTransactionManager transactionManager;
 
 	@BeforeEach
@@ -60,6 +68,9 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 
 	@AfterEach
 	void deleteFixtures() {
+		this.jdbcClient.sql("DELETE FROM user_sessions WHERE user_id = :userId")
+			.param("userId", USER_ID.value())
+			.update();
 		this.jdbcClient.sql("DELETE FROM user_recovery_codes WHERE user_id = :userId")
 			.param("userId", USER_ID.value())
 			.update();
@@ -179,6 +190,23 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 		assertThat(auditEventCount("credential.recovery_code.consumed")).isEqualTo(consumedBefore + 1);
 	}
 
+	@Test
+	void invalidatesExistingSessionsOnReplacementButNotConsumption() {
+		UserSession beforeReplacement = startSession();
+		char[][] codes = replaceAndCopy();
+		try {
+			assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforeReplacement.id())).isEmpty();
+			UserSession beforeConsumption = startSession();
+			try (RecoveryCodeAttempt attempt = new RecoveryCodeAttempt(codes[0])) {
+				assertThat(verify(attempt)).isTrue();
+			}
+			assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforeConsumption.id())).contains(beforeConsumption);
+		}
+		finally {
+			clear(codes);
+		}
+	}
+
 	private char[][] replaceAndCopy() {
 		try (GeneratedRecoveryCodes generated = this.operations.replace(TenantId.DEFAULT, USER_ID)) {
 			return generated.copy();
@@ -188,6 +216,11 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 	private boolean verify(RecoveryCodeAttempt attempt) {
 		return transactionTemplate().execute(
 				status -> this.operations.verifyAndConsume(TenantId.DEFAULT, USER_ID, attempt));
+	}
+
+	private UserSession startSession() {
+		return transactionTemplate().execute(status -> this.sessions.start(TenantId.DEFAULT, USER_ID,
+				SessionAuthenticationMethod.PASSWORD, new SessionAbsoluteTtl(Duration.ofHours(1))));
 	}
 
 	private String storedValue(char[] code) {

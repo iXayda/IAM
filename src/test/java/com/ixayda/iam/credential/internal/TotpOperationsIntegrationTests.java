@@ -1,5 +1,6 @@
 package com.ixayda.iam.credential.internal;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -12,6 +13,10 @@ import com.ixayda.iam.credential.TotpCredentialId;
 import com.ixayda.iam.credential.TotpCredentialStatus;
 import com.ixayda.iam.credential.TotpEnrollment;
 import com.ixayda.iam.credential.TotpOperations;
+import com.ixayda.iam.session.SessionAbsoluteTtl;
+import com.ixayda.iam.session.SessionAuthenticationMethod;
+import com.ixayda.iam.session.SessionOperations;
+import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
 import org.junit.jupiter.api.AfterEach;
@@ -46,6 +51,9 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 	private JdbcClient jdbcClient;
 
 	@Autowired
+	private SessionOperations sessions;
+
+	@Autowired
 	private PlatformTransactionManager transactionManager;
 
 	@BeforeEach
@@ -66,6 +74,9 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	@AfterEach
 	void deleteFixtures() {
+		this.jdbcClient.sql("DELETE FROM user_sessions WHERE user_id = :userId")
+			.param("userId", USER_ID.value())
+			.update();
 		this.jdbcClient.sql("DELETE FROM user_totp_credentials WHERE user_id = :userId")
 			.param("userId", USER_ID.value())
 			.update();
@@ -163,6 +174,32 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 	}
 
 	@Test
+	void invalidatesExistingSessionsOnlyWhenActiveTotpConfigurationChanges() {
+		UserSession beforeActivation = startSession();
+		assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforeActivation.id())).contains(beforeActivation);
+
+		try (TotpEnrollment enrollment = this.operations.beginEnrollment(TenantId.DEFAULT, USER_ID)) {
+			assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforeActivation.id())).contains(beforeActivation);
+			activate(enrollment);
+		}
+		assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforeActivation.id())).isEmpty();
+
+		UserSession beforePendingRevoke = startSession();
+		try (TotpEnrollment pending = this.operations.beginEnrollment(TenantId.DEFAULT, USER_ID)) {
+			assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforePendingRevoke.id()))
+				.contains(beforePendingRevoke);
+			assertThat(this.operations.revoke(TenantId.DEFAULT, USER_ID, pending.credentialId())).isTrue();
+		}
+		assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforePendingRevoke.id())).contains(beforePendingRevoke);
+
+		TotpCredentialId active = this.repository.findActiveByUser(TenantId.DEFAULT, USER_ID)
+			.map(stored -> stored.credential().id())
+			.orElseThrow();
+		assertThat(this.operations.revoke(TenantId.DEFAULT, USER_ID, active)).isTrue();
+		assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforePendingRevoke.id())).isEmpty();
+	}
+
+	@Test
 	void enforcesEnrollmentAndVerificationTransactionBoundaries() {
 		assertThatThrownBy(() -> transactionTemplate()
 			.execute(status -> this.operations.beginEnrollment(TenantId.DEFAULT, USER_ID)))
@@ -191,6 +228,11 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	private boolean verify(TotpCodeAttempt code) {
 		return transactionTemplate().execute(status -> this.operations.verify(TenantId.DEFAULT, USER_ID, code));
+	}
+
+	private UserSession startSession() {
+		return transactionTemplate().execute(status -> this.sessions.start(TenantId.DEFAULT, USER_ID,
+				SessionAuthenticationMethod.PASSWORD, new SessionAbsoluteTtl(Duration.ofHours(1))));
 	}
 
 	private TotpCodeAttempt attempt(byte[] secret, long timeStep) {

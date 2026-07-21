@@ -53,9 +53,21 @@ public interface UserOperations {
 	User requireNotDeletedForWrite(TenantId tenantId, UserId userId);
 
 	/**
+	 * Requires a non-deleted user and holds an exclusive row lock for a credential
+	 * change that may also advance the user's security revision.
+	 */
+	User requireNotDeletedForUpdate(TenantId tenantId, UserId userId);
+
+	/**
 	 * Locks a non-deleted user and advances its directory revision because a
 	 * read-only membership projection changed in the caller's transaction.
 	 */
 	User recordMembershipChangeForWrite(TenantId tenantId, UserId userId);
+
+	/**
+	 * Locks a non-deleted user and advances its security revision because credential
+	 * configuration changed in the caller's transaction.
+	 */
+	User recordCredentialChangeForWrite(TenantId tenantId, UserId userId);
 
 }

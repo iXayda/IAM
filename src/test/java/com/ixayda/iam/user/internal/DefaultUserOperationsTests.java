@@ -143,6 +143,19 @@ class DefaultUserOperationsTests {
 		order.verify(this.repository).findByIdForShare(TenantId.DEFAULT, USER_ID);
 	}
 
+	@ParameterizedTest
+	@EnumSource(value = UserStatus.class, names = { "ACTIVE", "DISABLED", "LOCKED" })
+	void allowsNonDeletedUsersForExclusiveCredentialWrites(UserStatus status) {
+		User user = user(status, 0, CREATED_AT);
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(user));
+
+		assertThat(this.operations.requireNotDeletedForUpdate(TenantId.DEFAULT, USER_ID)).isEqualTo(user);
+		InOrder order = inOrder(this.tenants, this.repository);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForUpdate(TenantId.DEFAULT, USER_ID);
+	}
+
 	@Test
 	void hidesDeletedAndMissingUsersFromDirectoryRelationshipWrites() {
 		User deleted = user(UserStatus.DELETED, 1, CREATED_AT.plusSeconds(1));
@@ -173,6 +186,24 @@ class DefaultUserOperationsTests {
 		order.verify(this.repository).findByIdForUpdate(TenantId.DEFAULT, USER_ID);
 		order.verify(this.timeSource).now();
 		order.verify(this.repository).updateMemberships(current, changed);
+	}
+
+	@Test
+	void advancesTheSecurityRevisionForCredentialChanges() {
+		User current = user(UserStatus.ACTIVE, 0, CREATED_AT);
+		User changed = current.credentialsChanged(CREATED_AT.plusSeconds(1));
+		when(this.tenants.requireActiveForWrite(TenantId.DEFAULT)).thenReturn(activeTenant());
+		when(this.repository.findByIdForUpdate(TenantId.DEFAULT, USER_ID)).thenReturn(Optional.of(current));
+		when(this.timeSource.now()).thenReturn(CREATED_AT.plusSeconds(1));
+		when(this.repository.updateCredentials(current, changed)).thenReturn(changed);
+
+		assertThat(this.operations.recordCredentialChangeForWrite(TenantId.DEFAULT, USER_ID)).isEqualTo(changed);
+		assertThat(changed.securityVersion()).isEqualTo(current.securityVersion() + 1);
+		InOrder order = inOrder(this.tenants, this.repository, this.timeSource);
+		order.verify(this.tenants).requireActiveForWrite(TenantId.DEFAULT);
+		order.verify(this.repository).findByIdForUpdate(TenantId.DEFAULT, USER_ID);
+		order.verify(this.timeSource).now();
+		order.verify(this.repository).updateCredentials(current, changed);
 	}
 
 	@ParameterizedTest
