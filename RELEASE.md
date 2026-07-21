@@ -12,12 +12,13 @@
 - Redis 登录限流和一次性安全状态；
 - OAuth 2.0 Authorization Code、PKCE、OpenID Connect、Refresh Token 和 Client Credentials；
 - 匿名 SCIM 2.0 discovery、受 scope 保护的资源命名空间、租户隔离的 User 与 Group 生命周期；
+- 近期 MFA 保护的 Admin 角色目录，以及审计事件查询和 NDJSON 归档导出；
 - 健康探针、Prometheus 指标、OpenTelemetry 和告警规则。
 
 OAuth 2.0/OIDC、SCIM discovery 以及 Users 和 Groups 生命周期已提供 HTTP 入口并纳入发布门禁。
-Admin RBAC、完整 MFA 和审计 HTTP 入口尚未提供，
-因此当前试点不得宣称这些外部工作流已经可用。新增 HTTP adapter 后必须补充协议一致性、安全性和
-端到端验收。
+Admin 角色目录与审计查询、导出已提供 HTTP 入口，并由 JVM 集成测试覆盖实时 session、权限和 MFA
+校验；Native 端到端门禁将在账号侧 MFA 凭据管理入口完成后补齐。Admin 角色 grant/revoke 和账号侧
+TOTP、恢复码管理尚未提供 HTTP 入口，因此当前试点不得宣称这些写入工作流已经完整可用。
 
 `compose.yaml` 和 `local` profile 只用于开发与发布验证，不是生产部署清单。
 
@@ -145,7 +146,8 @@ Redis 丢失后应按空库恢复：现有 challenge 全部失效，限流预算
 - LDAP 仅在启用时完成安全传输、allowlist 和故障验收；
 - Prometheus 抓取、告警接收和恢复通知已实际验证；
 - management 端点和探针不存在公网暴露；
-- 已明确记录尚未提供的 Admin RBAC、完整 MFA 和审计 HTTP 能力。
+- 已明确记录尚未提供的 Admin 角色写入和账号侧 MFA 凭据管理能力，以及尚未进入 Native 端到端
+  门禁的 Admin 与审计流程。
 
 告警路由、生产部署清单、真实备份自动化和目标环境协议验收仍由目标环境负责，不能以本地 Compose
 或当前 release gate 代替。
