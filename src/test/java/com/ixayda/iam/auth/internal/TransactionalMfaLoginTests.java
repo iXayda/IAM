@@ -23,6 +23,7 @@ import com.ixayda.iam.credential.RecoveryCodeAttempt;
 import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.credential.TotpCodeAttempt;
 import com.ixayda.iam.credential.TotpOperations;
+import com.ixayda.iam.ratelimit.LoginAttemptSource;
 import com.ixayda.iam.session.SessionAuthenticationFactor;
 import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
@@ -42,18 +43,22 @@ class TransactionalMfaLoginTests {
 
 	private static final Instant FACTOR_VERIFIED_AT = NOW.plusSeconds(1);
 
+	private static final LoginAttemptSource SOURCE = LoginAttemptSource.trusted("203.0.113.8");
+
 	private final TotpOperations totp = mock(TotpOperations.class);
 
 	private final RecoveryCodeOperations recoveryCodes = mock(RecoveryCodeOperations.class);
 
 	private final SessionOperations sessions = mock(SessionOperations.class);
 
+	private final AuthenticationAuditRecorder audit = mock(AuthenticationAuditRecorder.class);
+
 	private final LocalPasswordLoginProperties properties =
 			new LocalPasswordLoginProperties(Duration.ofHours(8));
 
 	private final TransactionalMfaLogin login =
 			new TransactionalMfaLogin(this.totp, this.recoveryCodes, this.sessions, this.properties,
-					new AuthenticationTimeSource(Clock.fixed(FACTOR_VERIFIED_AT, ZoneOffset.UTC)));
+					new AuthenticationTimeSource(Clock.fixed(FACTOR_VERIFIED_AT, ZoneOffset.UTC)), this.audit);
 
 	@Test
 	void startsASessionOnlyAfterTotpVerification() {
@@ -65,13 +70,14 @@ class TransactionalMfaLoginTests {
 			when(this.sessions.start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
 					factors, this.properties.absoluteTtl())).thenReturn(session);
 
-			assertThat(this.login.complete(challenge, code).session()).contains(session);
+			assertThat(this.login.complete(challenge, SOURCE, code).session()).contains(session);
 
 			InOrder order = inOrder(this.totp, this.sessions);
 			order.verify(this.totp).verify(TenantId.DEFAULT, USER_ID, code);
 			order.verify(this.sessions).start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
 					factors, this.properties.absoluteTtl());
 			verifyNoInteractions(this.recoveryCodes);
+			verify(this.audit).loginSucceeded(session, SOURCE, SessionAuthenticationFactorType.TOTP);
 		}
 	}
 
@@ -85,13 +91,14 @@ class TransactionalMfaLoginTests {
 			when(this.sessions.start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
 					factors, this.properties.absoluteTtl())).thenReturn(session);
 
-			assertThat(this.login.complete(challenge, code).session()).contains(session);
+			assertThat(this.login.complete(challenge, SOURCE, code).session()).contains(session);
 
 			InOrder order = inOrder(this.recoveryCodes, this.sessions);
 			order.verify(this.recoveryCodes).verifyAndConsume(TenantId.DEFAULT, USER_ID, code);
 			order.verify(this.sessions).start(TenantId.DEFAULT, USER_ID, SessionAuthenticationMethod.PASSWORD,
 					factors, this.properties.absoluteTtl());
 			verifyNoInteractions(this.totp);
+			verify(this.audit).loginSucceeded(session, SOURCE, SessionAuthenticationFactorType.RECOVERY_CODE);
 		}
 	}
 
@@ -103,9 +110,11 @@ class TransactionalMfaLoginTests {
 			when(this.totp.verify(TenantId.DEFAULT, USER_ID, totpCode)).thenReturn(false);
 			when(this.recoveryCodes.verifyAndConsume(TenantId.DEFAULT, USER_ID, recoveryCode)).thenReturn(false);
 
-			assertThat(this.login.complete(challenge, totpCode)).isSameAs(MfaLoginResult.rejected());
-			assertThat(this.login.complete(challenge, recoveryCode)).isSameAs(MfaLoginResult.rejected());
+			assertThat(this.login.complete(challenge, SOURCE, totpCode)).isSameAs(MfaLoginResult.rejected());
+			assertThat(this.login.complete(challenge, SOURCE, recoveryCode)).isSameAs(MfaLoginResult.rejected());
 			verifyNoInteractions(this.sessions);
+			verify(this.audit).mfaFailed(challenge, SOURCE, MfaFactor.TOTP, "invalid_code");
+			verify(this.audit).mfaFailed(challenge, SOURCE, MfaFactor.RECOVERY_CODE, "invalid_code");
 		}
 	}
 
@@ -115,11 +124,13 @@ class TransactionalMfaLoginTests {
 		MfaChallenge recoveryOnly = challenge(Set.of(MfaFactor.RECOVERY_CODE));
 		try (TotpCodeAttempt totpCode = new TotpCodeAttempt("123456".toCharArray());
 				RecoveryCodeAttempt recoveryCode = recoveryCode()) {
-			assertThat(this.login.complete(recoveryOnly, totpCode)).isSameAs(MfaLoginResult.rejected());
-			assertThat(this.login.complete(totpOnly, recoveryCode)).isSameAs(MfaLoginResult.rejected());
+			assertThat(this.login.complete(recoveryOnly, SOURCE, totpCode)).isSameAs(MfaLoginResult.rejected());
+			assertThat(this.login.complete(totpOnly, SOURCE, recoveryCode)).isSameAs(MfaLoginResult.rejected());
 			verify(this.totp, never()).verify(TenantId.DEFAULT, USER_ID, totpCode);
 			verify(this.recoveryCodes, never()).verifyAndConsume(TenantId.DEFAULT, USER_ID, recoveryCode);
 			verifyNoInteractions(this.sessions);
+			verify(this.audit).mfaFailed(recoveryOnly, SOURCE, MfaFactor.TOTP, "invalid_code");
+			verify(this.audit).mfaFailed(totpOnly, SOURCE, MfaFactor.RECOVERY_CODE, "invalid_code");
 		}
 	}
 
@@ -127,13 +138,15 @@ class TransactionalMfaLoginTests {
 	void rejectsNullInputsBeforeTouchingAuthenticationState() {
 		MfaChallenge challenge = challenge(Set.of(MfaFactor.TOTP));
 		try (TotpCodeAttempt totpCode = new TotpCodeAttempt("123456".toCharArray())) {
-			assertThatThrownBy(() -> this.login.complete(null, totpCode))
+			assertThatThrownBy(() -> this.login.complete(null, SOURCE, totpCode))
 				.isInstanceOf(NullPointerException.class);
-			assertThatThrownBy(() -> this.login.complete(challenge, (TotpCodeAttempt) null))
+			assertThatThrownBy(() -> this.login.complete(challenge, null, totpCode))
 				.isInstanceOf(NullPointerException.class);
-			assertThatThrownBy(() -> this.login.complete(challenge, (RecoveryCodeAttempt) null))
+			assertThatThrownBy(() -> this.login.complete(challenge, SOURCE, (TotpCodeAttempt) null))
 				.isInstanceOf(NullPointerException.class);
-			verifyNoInteractions(this.totp, this.recoveryCodes, this.sessions);
+			assertThatThrownBy(() -> this.login.complete(challenge, SOURCE, (RecoveryCodeAttempt) null))
+				.isInstanceOf(NullPointerException.class);
+			verifyNoInteractions(this.totp, this.recoveryCodes, this.sessions, this.audit);
 		}
 	}
 

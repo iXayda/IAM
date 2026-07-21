@@ -124,14 +124,23 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 			assertThat(this.challenges.consume(challenge, source)).isEqualTo(MfaChallengeConsumeStatus.CONSUMED);
 		});
 		assertThat(sessionCount(TenantId.DEFAULT, user.id())).isZero();
+		assertThat(auditEvents(source)).singleElement().satisfies(event -> {
+			assertThat(event.type()).isEqualTo("authentication.mfa.required");
+			assertThat(event.outcome()).isEqualTo("challenged");
+			assertThat(event.userId()).isEqualTo(user.id().value());
+			assertThat(event.factor()).isEqualTo("password");
+			assertThat(event.attributes()).contains("recovery_code").doesNotContain("correct-password");
+		});
 	}
 
 	@Test
 	void authenticatesAndPersistsAFixedLifetimeSessionAtomically() {
 		User user = createUser(TenantId.DEFAULT, "success");
 		setPassword(user, "correct-password");
+		LoginAttemptSource source = trustedSource("success");
 
-		LocalPasswordLoginResult result = login(TenantId.DEFAULT, loginKey(user), "correct-password");
+		LocalPasswordLoginResult result =
+				login(TenantId.DEFAULT, loginKey(user), source, "correct-password");
 
 		assertThat(result.authenticated()).isTrue();
 		UserSession session = result.session().orElseThrow();
@@ -141,6 +150,13 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 		assertThat(this.sessions.findById(TenantId.DEFAULT, session.id())).contains(session);
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, session.id())).contains(session);
 		assertThat(sessionCount(TenantId.DEFAULT, user.id())).isOne();
+		assertThat(auditEvents(source)).singleElement().satisfies(event -> {
+			assertThat(event.type()).isEqualTo("authentication.login.succeeded");
+			assertThat(event.outcome()).isEqualTo("succeeded");
+			assertThat(event.userId()).isEqualTo(user.id().value());
+			assertThat(event.sessionId()).isEqualTo(session.id().value());
+			assertThat(event.factor()).isEqualTo("password");
+		});
 	}
 
 	@Test
@@ -197,6 +213,9 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 		assertThat(third.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
 		assertThat(third.retryAfter()).hasValueSatisfying(retryAfter -> assertThat(retryAfter).isPositive());
 		assertThat(sessionCount(TenantId.DEFAULT, user.id())).isZero();
+		assertThat(auditEvents(source)).extracting(AuditRow::type).containsExactlyInAnyOrder(
+				"authentication.password.failed", "authentication.password.failed",
+				"authentication.login.throttled");
 	}
 
 	@Test
@@ -284,6 +303,25 @@ class LocalPasswordLoginOperationsIntegrationTests extends ApplicationIntegratio
 			.param("userId", userId.value())
 			.query(Integer.class)
 			.single();
+	}
+
+	private List<AuditRow> auditEvents(LoginAttemptSource source) {
+		return this.jdbcClient.sql("""
+				SELECT event_type, outcome, user_id, session_id, authentication_factor, attributes::text AS attributes
+				FROM audit_events
+				WHERE source = :source
+				ORDER BY recorded_at, event_id
+				""")
+			.param("source", source.value())
+			.query((resultSet, rowNumber) -> new AuditRow(resultSet.getString("event_type"),
+					resultSet.getString("outcome"), resultSet.getObject("user_id", UUID.class),
+					resultSet.getObject("session_id", UUID.class), resultSet.getString("authentication_factor"),
+					resultSet.getString("attributes")))
+			.list();
+	}
+
+	private record AuditRow(String type, String outcome, UUID userId, UUID sessionId, String factor,
+			String attributes) {
 	}
 
 	private record UserReference(TenantId tenantId, UserId userId) {

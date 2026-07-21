@@ -15,6 +15,7 @@ import com.ixayda.iam.ApplicationIntegrationTest;
 import com.ixayda.iam.credential.NewPassword;
 import com.ixayda.iam.credential.PasswordAttempt;
 import com.ixayda.iam.credential.PasswordOperations;
+import com.ixayda.iam.ratelimit.LoginAttemptSource;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.CreateUserRequest;
 import com.ixayda.iam.user.LoginIdentifier;
@@ -30,6 +31,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends ApplicationIntegrationTest {
+
+	private static final LoginAttemptSource SOURCE = LoginAttemptSource.trusted("concurrency:test");
 
 	@Autowired
 	private TransactionalLocalPasswordLogin login;
@@ -168,7 +171,7 @@ class TransactionalLocalPasswordLoginConcurrencyIntegrationTests extends Applica
 
 	private PasswordLoginTransactionResult loginInCurrentTransaction(String value) {
 		try (PasswordAttempt attempt = new PasswordAttempt(value.toCharArray())) {
-			return this.login.authenticate(TenantId.DEFAULT, loginKey(), attempt);
+			return this.login.authenticate(TenantId.DEFAULT, loginKey(), SOURCE, attempt);
 		}
 	}
 

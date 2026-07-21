@@ -56,15 +56,17 @@ class DefaultLocalPasswordLoginOperationsTests {
 
 	private final MfaChallengeOperations challenges = mock(MfaChallengeOperations.class);
 
+	private final AuthenticationAuditRecorder audit = mock(AuthenticationAuditRecorder.class);
+
 	private final DefaultLocalPasswordLoginOperations operations =
-			new DefaultLocalPasswordLoginOperations(this.limiter, this.transactionalLogin, this.challenges);
+			new DefaultLocalPasswordLoginOperations(this.limiter, this.transactionalLogin, this.challenges, this.audit);
 
 	@Test
 	void recordsSuccessOnlyAfterAuthenticationReturns() {
 		UserSession session = session();
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
-			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
 				.thenReturn(PasswordLoginTransactionResult.authenticated(session));
 
 			LocalPasswordLoginResult result =
@@ -73,7 +75,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 			assertThat(result.session()).contains(session);
 			InOrder order = inOrder(this.limiter, this.transactionalLogin);
 			order.verify(this.limiter).acquire(ATTEMPT_KEY);
-			order.verify(this.transactionalLogin).authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt);
+			order.verify(this.transactionalLogin).authenticate(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt);
 			order.verify(this.limiter).recordSuccess(ATTEMPT_KEY, LEASE);
 		}
 	}
@@ -82,7 +84,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 	void preservesTheAttemptAfterRejectedAuthentication() {
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
-			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
 				.thenReturn(PasswordLoginTransactionResult.rejected());
 
 			LocalPasswordLoginResult result =
@@ -107,6 +109,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 			verifyNoInteractions(this.transactionalLogin);
 			verifyNoInteractions(this.challenges);
 			verify(this.limiter, never()).recordSuccess(any(), any());
+			verify(this.audit).loginThrottled(TenantId.DEFAULT, SOURCE, retryAfter);
 		}
 	}
 
@@ -122,6 +125,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 			verifyNoInteractions(this.transactionalLogin);
 			verifyNoInteractions(this.challenges);
 			verify(this.limiter, never()).recordSuccess(any(), any());
+			verify(this.audit).loginUnavailable(TenantId.DEFAULT, SOURCE, "rate_limit");
 		}
 	}
 
@@ -129,7 +133,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 	void doesNotRecordSuccessWhenAuthenticationFailsUnexpectedly() {
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
-			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
 				.thenThrow(new IllegalStateException("authentication transaction failed"));
 
 			assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
@@ -144,7 +148,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 		UserSession session = session();
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
-			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt))
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
 				.thenReturn(PasswordLoginTransactionResult.authenticated(session));
 			doThrow(new IllegalStateException("unexpected reset failure"))
 				.when(this.limiter)
@@ -165,7 +169,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 				challenge.userId(), challenge.passwordVerifiedAt(), challenge.factors());
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
-			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt)).thenReturn(verified);
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt)).thenReturn(verified);
 			when(this.challenges.issue(TenantId.DEFAULT, challenge.userId(), SOURCE,
 					challenge.passwordVerifiedAt(), challenge.factors()))
 				.thenReturn(MfaChallengeIssue.issued(challenge));
@@ -186,13 +190,14 @@ class DefaultLocalPasswordLoginOperationsTests {
 				challenge.userId(), challenge.passwordVerifiedAt(), challenge.factors());
 		try (PasswordAttempt attempt = attempt()) {
 			when(this.limiter.acquire(ATTEMPT_KEY)).thenReturn(LoginAttemptDecision.allowed(LEASE));
-			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, attempt)).thenReturn(verified);
+			when(this.transactionalLogin.authenticate(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt)).thenReturn(verified);
 			when(this.challenges.issue(any(), any(), any(), any(), any()))
 				.thenReturn(MfaChallengeIssue.unavailable());
 
 			assertThat(this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, attempt))
 				.isSameAs(LocalPasswordLoginResult.unavailable());
 			verify(this.limiter, never()).recordSuccess(ATTEMPT_KEY, LEASE);
+			verify(this.audit).loginUnavailable(TenantId.DEFAULT, SOURCE, "mfa_challenge");
 		}
 	}
 
@@ -207,7 +212,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 				.isInstanceOf(NullPointerException.class);
 			assertThatThrownBy(() -> this.operations.login(TenantId.DEFAULT, LOGIN_KEY, SOURCE, null))
 				.isInstanceOf(NullPointerException.class);
-			verifyNoInteractions(this.limiter, this.transactionalLogin, this.challenges);
+			verifyNoInteractions(this.limiter, this.transactionalLogin, this.challenges, this.audit);
 		}
 	}
 
@@ -223,7 +228,7 @@ class DefaultLocalPasswordLoginOperationsTests {
 			finally {
 				TransactionSynchronizationManager.setActualTransactionActive(false);
 			}
-			verifyNoInteractions(this.limiter, this.transactionalLogin, this.challenges);
+			verifyNoInteractions(this.limiter, this.transactionalLogin, this.challenges, this.audit);
 		}
 	}
 

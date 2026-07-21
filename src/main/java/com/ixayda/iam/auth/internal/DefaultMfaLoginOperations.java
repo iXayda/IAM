@@ -23,23 +23,27 @@ class DefaultMfaLoginOperations implements MfaLoginOperations {
 
 	private final TransactionalMfaLogin transactionalLogin;
 
-	DefaultMfaLoginOperations(MfaChallengeOperations challenges, TransactionalMfaLogin transactionalLogin) {
+	private final AuthenticationAuditRecorder audit;
+
+	DefaultMfaLoginOperations(MfaChallengeOperations challenges, TransactionalMfaLogin transactionalLogin,
+			AuthenticationAuditRecorder audit) {
 		this.challenges = challenges;
 		this.transactionalLogin = transactionalLogin;
+		this.audit = audit;
 	}
 
 	@Override
 	public MfaLoginResult complete(MfaChallenge challenge, LoginAttemptSource source, TotpCodeAttempt code) {
 		Objects.requireNonNull(code, "TOTP code attempt must not be null");
 		return complete(challenge, source, MfaFactor.TOTP,
-				() -> this.transactionalLogin.complete(challenge, code));
+				() -> this.transactionalLogin.complete(challenge, source, code));
 	}
 
 	@Override
 	public MfaLoginResult complete(MfaChallenge challenge, LoginAttemptSource source, RecoveryCodeAttempt code) {
 		Objects.requireNonNull(code, "Recovery code attempt must not be null");
 		return complete(challenge, source, MfaFactor.RECOVERY_CODE,
-				() -> this.transactionalLogin.complete(challenge, code));
+				() -> this.transactionalLogin.complete(challenge, source, code));
 	}
 
 	private MfaLoginResult complete(MfaChallenge challenge, LoginAttemptSource source, MfaFactor factor,
@@ -49,9 +53,11 @@ class DefaultMfaLoginOperations implements MfaLoginOperations {
 		requireNoTransaction();
 		MfaChallengeConsumeStatus status = this.challenges.consume(challenge, source);
 		if (status == MfaChallengeConsumeStatus.UNAVAILABLE) {
+			this.audit.mfaUnavailable(challenge, source, factor, "challenge_state");
 			return MfaLoginResult.unavailable();
 		}
 		if (status == MfaChallengeConsumeStatus.REJECTED || !challenge.supports(factor)) {
+			this.audit.mfaFailed(challenge, source, factor, "invalid_challenge");
 			return MfaLoginResult.rejected();
 		}
 		return completion.get();

@@ -95,10 +95,18 @@ class LocalPasswordLoginRollbackIntegrationTests extends ApplicationIntegrationT
 		StoredCredential stored = storedCredential();
 		assertThat(stored.encodedPassword()).isEqualTo(legacyHash);
 		assertThat(stored.version()).isZero();
+		assertThat(auditEventCount(source)).isZero();
 		try (PasswordAttempt retry = new PasswordAttempt(rawPassword.toCharArray())) {
 			LocalPasswordLoginResult result = this.logins.login(TenantId.DEFAULT, loginKey(), source, retry);
 			assertThat(result.status()).isEqualTo(LocalPasswordLoginStatus.THROTTLED);
 		}
+	}
+
+	private int auditEventCount(LoginAttemptSource source) {
+		return this.jdbcClient.sql("SELECT count(*) FROM audit_events WHERE source = :source")
+			.param("source", source.value())
+			.query(Integer.class)
+			.single();
 	}
 
 	private User createUser() {

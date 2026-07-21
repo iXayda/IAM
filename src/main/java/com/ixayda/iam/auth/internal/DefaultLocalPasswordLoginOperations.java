@@ -1,5 +1,6 @@
 package com.ixayda.iam.auth.internal;
 
+import java.time.Duration;
 import java.util.Objects;
 
 import com.ixayda.iam.auth.LocalPasswordLoginOperations;
@@ -31,11 +32,15 @@ class DefaultLocalPasswordLoginOperations implements LocalPasswordLoginOperation
 
 	private final MfaChallengeOperations challenges;
 
+	private final AuthenticationAuditRecorder audit;
+
 	DefaultLocalPasswordLoginOperations(LoginAttemptLimiter limiter,
-			TransactionalLocalPasswordLogin transactionalLogin, MfaChallengeOperations challenges) {
+			TransactionalLocalPasswordLogin transactionalLogin, MfaChallengeOperations challenges,
+			AuthenticationAuditRecorder audit) {
 		this.limiter = limiter;
 		this.transactionalLogin = transactionalLogin;
 		this.challenges = challenges;
+		this.audit = audit;
 	}
 
 	@Override
@@ -51,8 +56,8 @@ class DefaultLocalPasswordLoginOperations implements LocalPasswordLoginOperation
 		LoginAttemptDecision decision = this.limiter.acquire(attemptKey);
 		return switch (decision.status()) {
 			case ALLOWED -> authenticate(attemptKey, decision, password);
-			case THROTTLED -> LocalPasswordLoginResult.throttled(decision.retryAfter().orElseThrow());
-			case UNAVAILABLE -> LocalPasswordLoginResult.unavailable();
+			case THROTTLED -> throttled(attemptKey, decision);
+			case UNAVAILABLE -> unavailable(attemptKey);
 		};
 	}
 
@@ -60,7 +65,7 @@ class DefaultLocalPasswordLoginOperations implements LocalPasswordLoginOperation
 			PasswordAttempt password) {
 		LoginAttemptLease lease = decision.lease().orElseThrow();
 		PasswordLoginTransactionResult transaction = this.transactionalLogin.authenticate(attemptKey.tenantId(),
-				attemptKey.loginKey(), password);
+				attemptKey.loginKey(), attemptKey.source(), password);
 		LocalPasswordLoginResult result = result(attemptKey, transaction);
 		if (result.authenticated() || result.mfaRequired()) {
 			recordSuccess(attemptKey, lease);
@@ -77,8 +82,22 @@ class DefaultLocalPasswordLoginOperations implements LocalPasswordLoginOperation
 		}
 		MfaChallengeIssue issue = this.challenges.issue(attemptKey.tenantId(), transaction.userId().orElseThrow(),
 				attemptKey.source(), transaction.passwordVerifiedAt().orElseThrow(), transaction.factors());
+		if (!issue.issued()) {
+			this.audit.loginUnavailable(attemptKey.tenantId(), attemptKey.source(), "mfa_challenge");
+		}
 		return issue.issued() ? LocalPasswordLoginResult.mfaRequired(issue.challenge().orElseThrow())
 				: LocalPasswordLoginResult.unavailable();
+	}
+
+	private LocalPasswordLoginResult throttled(LoginAttemptKey attemptKey, LoginAttemptDecision decision) {
+		Duration retryAfter = decision.retryAfter().orElseThrow();
+		this.audit.loginThrottled(attemptKey.tenantId(), attemptKey.source(), retryAfter);
+		return LocalPasswordLoginResult.throttled(retryAfter);
+	}
+
+	private LocalPasswordLoginResult unavailable(LoginAttemptKey attemptKey) {
+		this.audit.loginUnavailable(attemptKey.tenantId(), attemptKey.source(), "rate_limit");
+		return LocalPasswordLoginResult.unavailable();
 	}
 
 	private void recordSuccess(LoginAttemptKey attemptKey, LoginAttemptLease lease) {

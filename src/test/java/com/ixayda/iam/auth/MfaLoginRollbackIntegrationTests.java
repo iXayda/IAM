@@ -17,6 +17,8 @@ import com.ixayda.iam.credential.GeneratedRecoveryCodes;
 import com.ixayda.iam.credential.RecoveryCodeAttempt;
 import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.ratelimit.LoginAttemptSource;
+import com.ixayda.iam.session.SessionAuthenticationFactor;
+import com.ixayda.iam.session.SessionAuthenticationFactorType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionOperations;
@@ -94,12 +96,14 @@ class MfaLoginRollbackIntegrationTests extends ApplicationIntegrationTest {
 			assertThat(this.challenges.consume(failedChallenge, source))
 				.isEqualTo(MfaChallengeConsumeStatus.REJECTED);
 			assertThat(availableRecoveryCodeCount()).isEqualTo(GeneratedRecoveryCodes.CODE_COUNT);
+			assertThat(auditEventCount(source)).isZero();
 
 			MfaChallenge retryChallenge = issue(source);
 			try (RecoveryCodeAttempt retry = new RecoveryCodeAttempt(codes[0])) {
 				assertThat(this.logins.complete(retryChallenge, source, retry).session()).contains(session);
 			}
 			assertThat(availableRecoveryCodeCount()).isEqualTo(GeneratedRecoveryCodes.CODE_COUNT - 1);
+			assertThat(auditEventCount(source)).isOne();
 		}
 		finally {
 			clear(codes);
@@ -126,7 +130,17 @@ class MfaLoginRollbackIntegrationTests extends ApplicationIntegrationTest {
 	private UserSession session() {
 		Instant now = Instant.now();
 		return UserSession.start(SessionId.random(), TenantId.DEFAULT, this.user.id(),
-				SessionAuthenticationMethod.PASSWORD, 0, 0, now, now.plusSeconds(3600));
+				SessionAuthenticationMethod.PASSWORD,
+				Set.of(new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, now.minusSeconds(1)),
+						new SessionAuthenticationFactor(SessionAuthenticationFactorType.RECOVERY_CODE, now)),
+				0, 0, now, now.plusSeconds(3600));
+	}
+
+	private int auditEventCount(LoginAttemptSource source) {
+		return this.jdbcClient.sql("SELECT count(*) FROM audit_events WHERE source = :source")
+			.param("source", source.value())
+			.query(Integer.class)
+			.single();
 	}
 
 	private int availableRecoveryCodeCount() {

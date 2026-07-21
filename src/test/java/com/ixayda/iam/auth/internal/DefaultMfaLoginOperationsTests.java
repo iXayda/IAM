@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -34,21 +35,23 @@ class DefaultMfaLoginOperationsTests {
 
 	private final TransactionalMfaLogin transactionalLogin = mock(TransactionalMfaLogin.class);
 
+	private final AuthenticationAuditRecorder audit = mock(AuthenticationAuditRecorder.class);
+
 	private final DefaultMfaLoginOperations operations =
-			new DefaultMfaLoginOperations(this.challenges, this.transactionalLogin);
+			new DefaultMfaLoginOperations(this.challenges, this.transactionalLogin, this.audit);
 
 	@Test
 	void consumesTheChallengeBeforeCompletingTotp() {
 		MfaChallenge challenge = challenge(Set.of(MfaFactor.TOTP));
 		try (TotpCodeAttempt code = new TotpCodeAttempt("123456".toCharArray())) {
 			when(this.challenges.consume(challenge, SOURCE)).thenReturn(MfaChallengeConsumeStatus.CONSUMED);
-			when(this.transactionalLogin.complete(challenge, code)).thenReturn(MfaLoginResult.rejected());
+			when(this.transactionalLogin.complete(challenge, SOURCE, code)).thenReturn(MfaLoginResult.rejected());
 
 			assertThat(this.operations.complete(challenge, SOURCE, code)).isSameAs(MfaLoginResult.rejected());
 
 			InOrder order = inOrder(this.challenges, this.transactionalLogin);
 			order.verify(this.challenges).consume(challenge, SOURCE);
-			order.verify(this.transactionalLogin).complete(challenge, code);
+			order.verify(this.transactionalLogin).complete(challenge, SOURCE, code);
 		}
 	}
 
@@ -57,13 +60,13 @@ class DefaultMfaLoginOperationsTests {
 		MfaChallenge challenge = challenge(Set.of(MfaFactor.RECOVERY_CODE));
 		try (RecoveryCodeAttempt code = recoveryCode()) {
 			when(this.challenges.consume(challenge, SOURCE)).thenReturn(MfaChallengeConsumeStatus.CONSUMED);
-			when(this.transactionalLogin.complete(challenge, code)).thenReturn(MfaLoginResult.rejected());
+			when(this.transactionalLogin.complete(challenge, SOURCE, code)).thenReturn(MfaLoginResult.rejected());
 
 			assertThat(this.operations.complete(challenge, SOURCE, code)).isSameAs(MfaLoginResult.rejected());
 
 			InOrder order = inOrder(this.challenges, this.transactionalLogin);
 			order.verify(this.challenges).consume(challenge, SOURCE);
-			order.verify(this.transactionalLogin).complete(challenge, code);
+			order.verify(this.transactionalLogin).complete(challenge, SOURCE, code);
 		}
 	}
 
@@ -75,6 +78,7 @@ class DefaultMfaLoginOperationsTests {
 
 			assertThat(this.operations.complete(challenge, SOURCE, code)).isSameAs(MfaLoginResult.rejected());
 			verifyNoInteractions(this.transactionalLogin);
+			verify(this.audit).mfaFailed(challenge, SOURCE, MfaFactor.TOTP, "invalid_challenge");
 		}
 	}
 
@@ -89,6 +93,8 @@ class DefaultMfaLoginOperationsTests {
 			assertThat(this.operations.complete(challenge, SOURCE, rejected)).isSameAs(MfaLoginResult.rejected());
 			assertThat(this.operations.complete(challenge, SOURCE, unavailable)).isSameAs(MfaLoginResult.unavailable());
 			verifyNoInteractions(this.transactionalLogin);
+			verify(this.audit).mfaFailed(challenge, SOURCE, MfaFactor.TOTP, "invalid_challenge");
+			verify(this.audit).mfaUnavailable(challenge, SOURCE, MfaFactor.TOTP, "challenge_state");
 		}
 	}
 
@@ -105,7 +111,7 @@ class DefaultMfaLoginOperationsTests {
 				.isInstanceOf(NullPointerException.class);
 			assertThatThrownBy(() -> this.operations.complete(challenge, SOURCE, (RecoveryCodeAttempt) null))
 				.isInstanceOf(NullPointerException.class);
-			verifyNoInteractions(this.challenges, this.transactionalLogin);
+			verifyNoInteractions(this.challenges, this.transactionalLogin, this.audit);
 		}
 	}
 
@@ -121,7 +127,7 @@ class DefaultMfaLoginOperationsTests {
 			finally {
 				TransactionSynchronizationManager.setActualTransactionActive(false);
 			}
-			verifyNoInteractions(this.challenges, this.transactionalLogin);
+			verifyNoInteractions(this.challenges, this.transactionalLogin, this.audit);
 		}
 	}
 

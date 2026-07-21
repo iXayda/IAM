@@ -104,6 +104,10 @@ class MfaLoginOperationsIntegrationTests extends ApplicationIntegrationTest {
 			}
 			assertThat(sessionCount()).isOne();
 			assertThat(availableRecoveryCodeCount()).isEqualTo(GeneratedRecoveryCodes.CODE_COUNT - 1);
+			assertThat(auditEvents(source)).extracting(AuditRow::type).containsExactly(
+					"authentication.login.succeeded", "authentication.mfa.failed");
+			assertThat(auditEvents(source)).allSatisfy(event -> assertThat(event.factor())
+				.isEqualTo("recovery_code"));
 		}
 		finally {
 			clear(codes);
@@ -127,6 +131,12 @@ class MfaLoginOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 			assertThat(sessionCount()).isZero();
 			assertThat(availableRecoveryCodeCount()).isEqualTo(GeneratedRecoveryCodes.CODE_COUNT);
+			assertThat(auditEvents(source)).hasSize(2).allSatisfy(event -> {
+				assertThat(event.type()).isEqualTo("authentication.mfa.failed");
+				assertThat(event.outcome()).isEqualTo("failed");
+				assertThat(event.factor()).isEqualTo("recovery_code");
+				assertThat(event.attributes()).containsAnyOf("invalid_code", "invalid_challenge");
+			});
 		}
 		finally {
 			clear(codes);
@@ -178,10 +188,27 @@ class MfaLoginOperationsIntegrationTests extends ApplicationIntegrationTest {
 			.single();
 	}
 
+	private List<AuditRow> auditEvents(LoginAttemptSource source) {
+		return this.jdbcClient.sql("""
+				SELECT event_type, outcome, authentication_factor, attributes::text AS attributes
+				FROM audit_events
+				WHERE source = :source
+				ORDER BY recorded_at, event_id
+				""")
+			.param("source", source.value())
+			.query((resultSet, rowNumber) -> new AuditRow(resultSet.getString("event_type"),
+					resultSet.getString("outcome"), resultSet.getString("authentication_factor"),
+					resultSet.getString("attributes")))
+			.list();
+	}
+
 	private static void clear(char[][] values) {
 		for (char[] value : values) {
 			Arrays.fill(value, '\0');
 		}
+	}
+
+	private record AuditRow(String type, String outcome, String factor, String attributes) {
 	}
 
 }
