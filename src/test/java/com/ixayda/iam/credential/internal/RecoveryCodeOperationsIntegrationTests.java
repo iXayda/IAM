@@ -75,6 +75,8 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 
 	@Test
 	void replacesHashesConsumesOnceAndRejectsOldSets() {
+		int replacedBefore = auditEventCount("credential.recovery_codes.replaced");
+		int consumedBefore = auditEventCount("credential.recovery_code.consumed");
 		assertThat(this.operations.hasAvailableCode(TenantId.DEFAULT, USER_ID)).isFalse();
 		char[][] first = replaceAndCopy();
 		try {
@@ -107,6 +109,8 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 		finally {
 			clear(first);
 		}
+		assertThat(auditEventCount("credential.recovery_codes.replaced")).isEqualTo(replacedBefore + 2);
+		assertThat(auditEventCount("credential.recovery_code.consumed")).isEqualTo(consumedBefore + 2);
 	}
 
 	@Test
@@ -154,6 +158,7 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 
 	@Test
 	void restoresConsumptionWhenTheCallingTransactionRollsBack() {
+		int consumedBefore = auditEventCount("credential.recovery_code.consumed");
 		char[][] codes = replaceAndCopy();
 		try {
 			try (RecoveryCodeAttempt attempt = new RecoveryCodeAttempt(codes[0])) {
@@ -171,6 +176,7 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 		finally {
 			clear(codes);
 		}
+		assertThat(auditEventCount("credential.recovery_code.consumed")).isEqualTo(consumedBefore + 1);
 	}
 
 	private char[][] replaceAndCopy() {
@@ -190,6 +196,18 @@ class RecoveryCodeOperationsIntegrationTests extends ApplicationIntegrationTest 
 				.map(StoredRecoveryCode::encodedCode)
 				.orElseThrow();
 		}
+	}
+
+	private int auditEventCount(String type) {
+		return this.jdbcClient.sql("""
+				SELECT count(*) FROM audit_events
+				WHERE tenant_id = :tenantId AND user_id = :userId AND event_type = :type
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("userId", USER_ID.value())
+			.param("type", type)
+			.query(Integer.class)
+			.single();
 	}
 
 	private TransactionTemplate transactionTemplate() {

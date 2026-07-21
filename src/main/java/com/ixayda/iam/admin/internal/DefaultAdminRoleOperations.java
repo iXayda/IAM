@@ -35,12 +35,15 @@ class DefaultAdminRoleOperations implements AdminRoleOperations {
 
 	private final AdminRoleTimeSource timeSource;
 
+	private final AdminRoleAuditRecorder audit;
+
 	DefaultAdminRoleOperations(JdbcAdminRoleRepository repository, TenantOperations tenants, UserOperations users,
-			AdminRoleTimeSource timeSource) {
+			AdminRoleTimeSource timeSource, AdminRoleAuditRecorder audit) {
 		this.repository = repository;
 		this.tenants = tenants;
 		this.users = users;
 		this.timeSource = timeSource;
+		this.audit = audit;
 	}
 
 	@Override
@@ -85,7 +88,10 @@ class DefaultAdminRoleOperations implements AdminRoleOperations {
 			throw new AdminRoleBootstrapUnavailableException(tenantId);
 		}
 		requireActiveRole(AdminRoleCode.SUPER_ADMIN);
-		return this.repository.insert(AdminRoleBinding.bootstrap(tenantId, userId, this.timeSource.now()));
+		AdminRoleBinding binding = this.repository.insert(
+				AdminRoleBinding.bootstrap(tenantId, userId, this.timeSource.now()));
+		this.audit.granted(binding);
+		return binding;
 	}
 
 	@Override
@@ -114,7 +120,9 @@ class DefaultAdminRoleOperations implements AdminRoleOperations {
 		requireGrantPermission(tenantId, revokedByUserId, roleCode, now);
 		AdminRoleBinding current = this.repository.findActiveBinding(tenantId, userId, roleCode)
 			.orElseThrow(() -> new AdminRoleBindingNotFoundException(tenantId, userId, roleCode));
-		return this.repository.revoke(current, current.revoke(revokedByUserId, now));
+		AdminRoleBinding revoked = this.repository.revoke(current, current.revoke(revokedByUserId, now));
+		this.audit.revoked(revoked);
+		return revoked;
 	}
 
 	private AdminRoleBinding grant(TenantId tenantId, UserId grantedByUserId, UserId userId,
@@ -129,13 +137,16 @@ class DefaultAdminRoleOperations implements AdminRoleOperations {
 			if (current.isEffectiveAt(now)) {
 				throw new AdminRoleAlreadyBoundException(tenantId, userId, roleCode);
 			}
-			this.repository.revoke(current, current.revoke(grantedByUserId, now));
+			AdminRoleBinding revoked = this.repository.revoke(current, current.revoke(grantedByUserId, now));
+			this.audit.revoked(revoked);
 		});
 		AdminRoleBinding binding = expiresAt == null
 				? AdminRoleBinding.permanent(tenantId, userId, roleCode, grantedByUserId, reason, now)
 				: AdminRoleBinding.justInTime(tenantId, userId, roleCode, grantedByUserId, reason, expiresAt,
 						now);
-		return this.repository.insert(binding);
+		AdminRoleBinding granted = this.repository.insert(binding);
+		this.audit.granted(granted);
+		return granted;
 	}
 
 	private void lockActorAndTarget(TenantId tenantId, UserId actorUserId, UserId userId,

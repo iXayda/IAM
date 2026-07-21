@@ -213,6 +213,7 @@ class SessionOperationsIntegrationTests extends ApplicationIntegrationTest {
 		assertThat(repeated).isEqualTo(revoked);
 		assertThat(this.sessions.findById(TenantId.DEFAULT, started.id())).contains(revoked);
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, started.id())).isEmpty();
+		assertThat(auditEventCount(started.id())).isOne();
 	}
 
 	@Test
@@ -227,6 +228,17 @@ class SessionOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 		assertThat(this.sessions.findById(TenantId.DEFAULT, started.id())).contains(started);
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, started.id())).contains(started);
+		assertThat(auditEventCount(started.id())).isZero();
+	}
+
+	private int auditEventCount(SessionId sessionId) {
+		return this.jdbcClient.sql("""
+				SELECT count(*) FROM audit_events
+				WHERE session_id = :sessionId AND event_type = 'session.revoked'
+				""")
+			.param("sessionId", sessionId.value())
+			.query(Integer.class)
+			.single();
 	}
 
 	private UserSession start(TenantId tenantId, UserId userId, SessionAbsoluteTtl ttl) {

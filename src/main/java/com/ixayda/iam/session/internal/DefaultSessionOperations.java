@@ -13,6 +13,7 @@ import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionOperations;
 import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.session.UserSessionNotFoundException;
+import com.ixayda.iam.session.UserSessionRevokedEvent;
 import com.ixayda.iam.tenant.Tenant;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantOperations;
@@ -20,6 +21,7 @@ import com.ixayda.iam.user.User;
 import com.ixayda.iam.user.UserId;
 import com.ixayda.iam.user.UserOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,12 +39,15 @@ class DefaultSessionOperations implements SessionOperations {
 
 	private final SessionTimeSource timeSource;
 
+	private final ApplicationEventPublisher events;
+
 	DefaultSessionOperations(JdbcUserSessionRepository repository, TenantOperations tenants, UserOperations users,
-			SessionTimeSource timeSource) {
+			SessionTimeSource timeSource, ApplicationEventPublisher events) {
 		this.repository = repository;
 		this.tenants = tenants;
 		this.users = users;
 		this.timeSource = timeSource;
+		this.events = events;
 	}
 
 	@Override
@@ -131,7 +136,10 @@ class DefaultSessionOperations implements SessionOperations {
 		}
 		UserSession changed = current.revoke(this.timeSource.now());
 		try {
-			return this.repository.update(current, changed);
+			UserSession revoked = this.repository.update(current, changed);
+			this.events.publishEvent(new UserSessionRevokedEvent(revoked.tenantId(), revoked.userId(), revoked.id(),
+					revoked.revokedAt()));
+			return revoked;
 		}
 		catch (UserSessionConcurrentUpdateException ex) {
 			UserSession latest = requireSession(tenantId, sessionId);

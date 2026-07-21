@@ -24,6 +24,7 @@ import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.session.SessionStatus;
 import com.ixayda.iam.session.UserSession;
 import com.ixayda.iam.session.UserSessionNotFoundException;
+import com.ixayda.iam.session.UserSessionRevokedEvent;
 import com.ixayda.iam.tenant.Tenant;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.tenant.TenantOperations;
@@ -39,6 +40,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -65,8 +67,10 @@ class DefaultSessionOperationsTests {
 
 	private final SessionTimeSource timeSource = mock(SessionTimeSource.class);
 
+	private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+
 	private final DefaultSessionOperations operations =
-			new DefaultSessionOperations(this.repository, this.tenants, this.users, this.timeSource);
+			new DefaultSessionOperations(this.repository, this.tenants, this.users, this.timeSource, this.events);
 
 	@BeforeEach
 	void startTransactionContext() {
@@ -236,6 +240,7 @@ class DefaultSessionOperationsTests {
 		assertThat(revoked.isRevoked()).isTrue();
 		assertThat(revoked.revokedAt()).isEqualTo(NOW);
 		verify(this.repository).update(current, revoked);
+		verify(this.events).publishEvent(new UserSessionRevokedEvent(TENANT_ID, USER_ID, SESSION_ID, NOW));
 
 		when(this.repository.findById(TENANT_ID, SESSION_ID)).thenReturn(Optional.of(revoked));
 		assertThat(this.operations.revoke(TENANT_ID, SESSION_ID)).isSameAs(revoked);

@@ -79,6 +79,16 @@ class UserOperationsLifecycleIntegrationTests extends ApplicationIntegrationTest
 		assertThat(this.users.delete(tenant.id(), created.id())).isEqualTo(deleted);
 		assertThatThrownBy(() -> this.users.activate(tenant.id(), created.id()))
 			.isInstanceOf(InvalidUserStatusTransitionException.class);
+		assertThat(this.jdbcClient.sql("""
+				SELECT event_type FROM audit_events
+				WHERE tenant_id = :tenantId AND user_id = :userId AND event_type LIKE 'user.lifecycle.%'
+				ORDER BY occurred_at, event_id
+				""")
+			.param("tenantId", tenant.id().value())
+			.param("userId", created.id().value())
+			.query(String.class)
+			.list()).containsExactly("user.lifecycle.created", "user.lifecycle.disabled",
+					"user.lifecycle.activated", "user.lifecycle.locked", "user.lifecycle.deleted");
 	}
 
 	@Test

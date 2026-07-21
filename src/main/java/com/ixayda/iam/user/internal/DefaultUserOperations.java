@@ -24,6 +24,8 @@ import com.ixayda.iam.user.UserOperations;
 import com.ixayda.iam.user.UserPage;
 import com.ixayda.iam.user.UserProfile;
 import com.ixayda.iam.user.UserStatus;
+import com.ixayda.iam.user.UserSecurityEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,12 +42,15 @@ class DefaultUserOperations implements UserOperations {
 
 	private final List<UserDeletionParticipant> deletionParticipants;
 
+	private final ApplicationEventPublisher events;
+
 	DefaultUserOperations(JdbcUserRepository repository, TenantOperations tenants, UserTimeSource timeSource,
-			List<UserDeletionParticipant> deletionParticipants) {
+			List<UserDeletionParticipant> deletionParticipants, ApplicationEventPublisher events) {
 		this.repository = repository;
 		this.tenants = tenants;
 		this.timeSource = timeSource;
 		this.deletionParticipants = List.copyOf(deletionParticipants);
+		this.events = events;
 	}
 
 	@Override
@@ -57,7 +62,9 @@ class DefaultUserOperations implements UserOperations {
 		Instant now = this.timeSource.now();
 		User user = new User(UserId.random(), tenantId, request.identifiers(), request.profile(), UserStatus.ACTIVE, 0, 0,
 				now, now, null);
-		return this.repository.insert(user);
+		User created = this.repository.insert(user);
+		publish(created, UserSecurityEvent.Type.CREATED);
+		return created;
 	}
 
 	@Override
@@ -115,7 +122,14 @@ class DefaultUserOperations implements UserOperations {
 			throw new UserConcurrentUpdateException(tenantId, userId, expectedVersion);
 		}
 		User changed = current.replace(request, transitionTime(current));
-		return changed == current ? current : this.repository.replace(current, changed);
+		if (changed == current) {
+			return current;
+		}
+		User replaced = this.repository.replace(current, changed);
+		if (current.status() != replaced.status()) {
+			publish(replaced, eventType(replaced.status()));
+		}
+		return replaced;
 	}
 
 	@Override
@@ -208,7 +222,9 @@ class DefaultUserOperations implements UserOperations {
 			return current;
 		}
 		this.deletionParticipants.forEach(participant -> participant.beforeDelete(current));
-		return this.repository.updateStatus(current, changed);
+		User deleted = this.repository.updateStatus(current, changed);
+		publish(deleted, UserSecurityEvent.Type.DELETED);
+		return deleted;
 	}
 
 	private User changeStatus(TenantId tenantId, UserId userId, BiFunction<User, Instant, User> transition) {
@@ -220,7 +236,9 @@ class DefaultUserOperations implements UserOperations {
 
 	private User updateStatus(User current, User changed) {
 		try {
-			return this.repository.updateStatus(current, changed);
+			User updated = this.repository.updateStatus(current, changed);
+			publish(updated, eventType(updated.status()));
+			return updated;
 		}
 		catch (UserConcurrentUpdateException ex) {
 			User latest = requireUser(current.tenantId(), current.id());
@@ -229,6 +247,19 @@ class DefaultUserOperations implements UserOperations {
 			}
 			throw ex;
 		}
+	}
+
+	private void publish(User user, UserSecurityEvent.Type type) {
+		this.events.publishEvent(new UserSecurityEvent(user.tenantId(), user.id(), type, user.updatedAt()));
+	}
+
+	private static UserSecurityEvent.Type eventType(UserStatus status) {
+		return switch (status) {
+			case ACTIVE -> UserSecurityEvent.Type.ACTIVATED;
+			case DISABLED -> UserSecurityEvent.Type.DISABLED;
+			case LOCKED -> UserSecurityEvent.Type.LOCKED;
+			case DELETED -> UserSecurityEvent.Type.DELETED;
+		};
 	}
 
 	private Instant transitionTime(User current) {

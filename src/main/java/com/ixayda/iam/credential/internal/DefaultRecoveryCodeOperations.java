@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.ixayda.iam.credential.GeneratedRecoveryCodes;
+import com.ixayda.iam.credential.CredentialSecurityEvent;
 import com.ixayda.iam.credential.RecoveryCode;
 import com.ixayda.iam.credential.RecoveryCodeAttempt;
 import com.ixayda.iam.credential.RecoveryCodeOperations;
@@ -20,6 +21,7 @@ import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserNotFoundException;
 import com.ixayda.iam.user.UserOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,15 +44,18 @@ class DefaultRecoveryCodeOperations implements RecoveryCodeOperations {
 
 	private final UserOperations users;
 
+	private final ApplicationEventPublisher events;
+
 	DefaultRecoveryCodeOperations(RecoveryCodeGenerator generator, RecoveryCodeHashing hashing,
 			RecoveryCodeWriter writer, JdbcRecoveryCodeRepository repository, RecoveryCodeTimeSource timeSource,
-			UserOperations users) {
+			UserOperations users, ApplicationEventPublisher events) {
 		this.generator = generator;
 		this.hashing = hashing;
 		this.writer = writer;
 		this.repository = repository;
 		this.timeSource = timeSource;
 		this.users = users;
+		this.events = events;
 	}
 
 	@Override
@@ -99,7 +104,13 @@ class DefaultRecoveryCodeOperations implements RecoveryCodeOperations {
 		catch (TenantDisabledException | TenantNotFoundException | UserNotActiveException | UserNotFoundException ex) {
 			return false;
 		}
-		return this.repository.consume(observed, this.timeSource.now()).isPresent();
+		Instant consumedAt = this.timeSource.now();
+		boolean consumed = this.repository.consume(observed, consumedAt).isPresent();
+		if (consumed) {
+			this.events.publishEvent(new CredentialSecurityEvent(tenantId, userId,
+					CredentialSecurityEvent.Type.RECOVERY_CODE_CONSUMED, null, consumedAt));
+		}
+		return consumed;
 	}
 
 	private List<RecoveryCode> generateUniqueCodes() {

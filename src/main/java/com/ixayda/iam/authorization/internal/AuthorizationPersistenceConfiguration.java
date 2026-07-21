@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 
 import com.ixayda.iam.authorization.AdminMfaPolicy;
+import com.ixayda.iam.audit.AuditEventOperations;
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
@@ -144,8 +145,9 @@ class AuthorizationPersistenceConfiguration {
 
 	@Bean
 	JdbcOAuth2AuthorizationService oauth2AuthorizationService(JdbcClient jdbcClient, AuthorizationSnapshotMapper mapper,
-			AuthorizationTokenCipher tokenCipher, AuthorizationPersistenceProperties properties) {
-		return new JdbcOAuth2AuthorizationService(jdbcClient, mapper, tokenCipher, properties);
+			AuthorizationTokenCipher tokenCipher, AuthorizationPersistenceProperties properties,
+			AuditEventOperations auditEvents) {
+		return new JdbcOAuth2AuthorizationService(jdbcClient, mapper, tokenCipher, properties, auditEvents);
 	}
 
 	@Bean

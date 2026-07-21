@@ -37,6 +37,26 @@ class AuditEventSchemaIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void enforcesEventShapesWithoutIdentityForeignKeys() {
+		UUID actorUserId = UUID.randomUUID();
+		UUID eventId = this.jdbcClient.sql("""
+				INSERT INTO audit_events (
+				    event_id, tenant_id, event_type, outcome, actor_user_id, source, attributes, occurred_at
+				)
+				VALUES (:eventId, :tenantId, 'administration.role.granted', 'succeeded', :actorUserId,
+				        'administration', '{}'::jsonb, :occurredAt)
+				RETURNING event_id
+				""")
+			.param("eventId", UUID.randomUUID())
+			.param("tenantId", UUID.randomUUID())
+			.param("actorUserId", actorUserId)
+			.param("occurredAt", OffsetDateTime.now(ZoneOffset.UTC))
+			.query(UUID.class)
+			.single();
+		assertThat(this.jdbcClient.sql("SELECT actor_user_id FROM audit_events WHERE event_id = :eventId")
+			.param("eventId", eventId)
+			.query(UUID.class)
+			.single()).isEqualTo(actorUserId);
+
 		assertThatThrownBy(() -> this.jdbcClient.sql("""
 				INSERT INTO audit_events (
 				    event_id, tenant_id, event_type, outcome, source, attributes, occurred_at

@@ -28,7 +28,7 @@ import org.springframework.stereotype.Repository;
 class JdbcAuditEventRepository {
 
 	private static final String COLUMNS = """
-			event_id, tenant_id, event_type, outcome, user_id, session_id,
+			event_id, tenant_id, event_type, outcome, actor_user_id, user_id, session_id,
 			authentication_factor, source, attributes::text AS attributes, occurred_at, recorded_at
 			""";
 
@@ -44,11 +44,11 @@ class JdbcAuditEventRepository {
 	AuditEvent append(AppendAuditEvent event) {
 		InsertedEvent inserted = this.jdbcClient.sql("""
 				INSERT INTO audit_events (
-				    tenant_id, event_type, outcome, user_id, session_id,
+				    tenant_id, event_type, outcome, actor_user_id, user_id, session_id,
 				    authentication_factor, source, attributes, occurred_at
 				)
 				VALUES (
-				    :tenantId, :eventType, :outcome, :userId, :sessionId,
+				    :tenantId, :eventType, :outcome, :actorUserId, :userId, :sessionId,
 				    :authenticationFactor, :source, CAST(:attributes AS jsonb), :occurredAt
 				)
 				RETURNING event_id, recorded_at
@@ -56,6 +56,7 @@ class JdbcAuditEventRepository {
 			.param("tenantId", event.tenantId().value())
 			.param("eventType", event.type().value())
 			.param("outcome", databaseValue(event.outcome()))
+			.param("actorUserId", event.actorUserId() == null ? null : event.actorUserId().value())
 			.param("userId", event.userId() == null ? null : event.userId().value())
 			.param("sessionId", event.sessionId() == null ? null : event.sessionId().value())
 			.param("authenticationFactor", databaseValue(event.authenticationFactor()))
@@ -66,9 +67,9 @@ class JdbcAuditEventRepository {
 					new AuditEventId(resultSet.getObject("event_id", java.util.UUID.class)),
 					resultSet.getObject("recorded_at", OffsetDateTime.class).toInstant()))
 			.single();
-		return new AuditEvent(inserted.id(), event.tenantId(), event.type(), event.outcome(), event.userId(),
-				event.sessionId(), event.authenticationFactor(), event.source(), event.occurredAt(), inserted.recordedAt(),
-				event.attributes());
+		return new AuditEvent(inserted.id(), event.tenantId(), event.type(), event.outcome(), event.actorUserId(),
+				event.userId(), event.sessionId(), event.authenticationFactor(), event.source(), event.occurredAt(),
+				inserted.recordedAt(), event.attributes());
 	}
 
 	AuditEventPage find(TenantId tenantId, AuditEventQuery query) {
@@ -138,7 +139,8 @@ class JdbcAuditEventRepository {
 					new TenantId(resultSet.getObject("tenant_id", java.util.UUID.class)),
 					AuditEventType.from(resultSet.getString("event_type")),
 					AuditEventOutcome.valueOf(resultSet.getString("outcome").toUpperCase(Locale.ROOT)),
-					userId(resultSet), sessionId(resultSet), factor(resultSet.getString("authentication_factor")),
+					userId(resultSet, "actor_user_id"), userId(resultSet, "user_id"), sessionId(resultSet),
+					factor(resultSet.getString("authentication_factor")),
 					resultSet.getString("source"),
 					resultSet.getObject("occurred_at", OffsetDateTime.class).toInstant(),
 					resultSet.getObject("recorded_at", OffsetDateTime.class).toInstant(),
@@ -149,8 +151,8 @@ class JdbcAuditEventRepository {
 		}
 	}
 
-	private static UserId userId(ResultSet resultSet) throws SQLException {
-		java.util.UUID value = resultSet.getObject("user_id", java.util.UUID.class);
+	private static UserId userId(ResultSet resultSet, String column) throws SQLException {
+		java.util.UUID value = resultSet.getObject(column, java.util.UUID.class);
 		return value == null ? null : new UserId(value);
 	}
 

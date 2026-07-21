@@ -11,9 +11,9 @@ import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
 
-public record AppendAuditEvent(TenantId tenantId, AuditEventType type, AuditEventOutcome outcome, UserId userId,
-		SessionId sessionId, AuditAuthenticationFactor authenticationFactor, String source, Instant occurredAt,
-		Map<String, String> attributes) {
+public record AppendAuditEvent(TenantId tenantId, AuditEventType type, AuditEventOutcome outcome, UserId actorUserId,
+		UserId userId, SessionId sessionId, AuditAuthenticationFactor authenticationFactor, String source,
+		Instant occurredAt, Map<String, String> attributes) {
 
 	private static final Pattern ATTRIBUTE_NAME = Pattern.compile("[a-z][a-z0-9_]{0,63}");
 
@@ -28,6 +28,12 @@ public record AppendAuditEvent(TenantId tenantId, AuditEventType type, AuditEven
 		}
 		occurredAt = occurredAt.truncatedTo(ChronoUnit.MICROS);
 		attributes = attributes(attributes);
+	}
+
+	public AppendAuditEvent(TenantId tenantId, AuditEventType type, AuditEventOutcome outcome, UserId userId,
+			SessionId sessionId, AuditAuthenticationFactor authenticationFactor, String source, Instant occurredAt,
+			Map<String, String> attributes) {
+		this(tenantId, type, outcome, null, userId, sessionId, authenticationFactor, source, occurredAt, attributes);
 	}
 
 	private static Map<String, String> attributes(Map<String, String> attributes) {
@@ -58,8 +64,9 @@ public record AppendAuditEvent(TenantId tenantId, AuditEventType type, AuditEven
 	@Override
 	public String toString() {
 		return "AppendAuditEvent[tenantId=" + this.tenantId + ", type=" + this.type + ", outcome=" + this.outcome
-				+ ", userId=redacted, sessionId=redacted, authenticationFactor=" + this.authenticationFactor
-				+ ", source=redacted, occurredAt=" + this.occurredAt + ", attributes=redacted]";
+				+ ", actorUserId=redacted, userId=redacted, sessionId=redacted, authenticationFactor="
+				+ this.authenticationFactor + ", source=redacted, occurredAt=" + this.occurredAt
+				+ ", attributes=redacted]";
 	}
 
 }

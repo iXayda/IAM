@@ -399,6 +399,17 @@ class JdbcOAuth2AuthorizationServiceIntegrationTests extends ApplicationIntegrat
 		this.authorizations.remove(invalidated);
 		assertThat(this.authorizations.findById(authorizationId.toString())).isNull();
 		assertThat(this.authorizations.findByToken("service-access-token", OAuth2TokenType.ACCESS_TOKEN)).isNull();
+		assertThat(this.jdbcClient.sql("""
+				SELECT event_type || '|' || (user_id IS NULL) || '|' || (session_id IS NULL) || '|'
+				       || (attributes ->> 'token_type')
+				FROM audit_events
+				WHERE attributes ->> 'authorization_id' = :authorizationId
+				ORDER BY occurred_at, event_id
+				""")
+			.param("authorizationId", authorizationId.toString())
+			.query(String.class)
+			.list()).containsExactly("authorization.token.issued|true|true|access_token",
+					"authorization.token.revoked|true|true|access_token");
 	}
 
 	@Test

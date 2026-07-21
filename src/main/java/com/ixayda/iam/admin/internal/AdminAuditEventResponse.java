@@ -7,8 +7,8 @@ import java.util.Objects;
 
 import com.ixayda.iam.audit.AuditEvent;
 
-record AdminAuditEventResponse(String id, String type, String outcome, String userId, String sessionId,
-		String authenticationFactor, String source, Instant occurredAt, Instant recordedAt,
+record AdminAuditEventResponse(String id, String type, String outcome, String actorUserId, String userId,
+		String sessionId, String authenticationFactor, String source, Instant occurredAt, Instant recordedAt,
 		Map<String, String> attributes) {
 
 	AdminAuditEventResponse {
@@ -26,6 +26,7 @@ record AdminAuditEventResponse(String id, String type, String outcome, String us
 		Objects.requireNonNull(event, "Audit event must not be null");
 		return new AdminAuditEventResponse(event.id().toString(), event.type().value(),
 				event.outcome().name().toLowerCase(Locale.ROOT),
+				event.actorUserId() == null ? null : event.actorUserId().toString(),
 				event.userId() == null ? null : event.userId().toString(),
 				event.sessionId() == null ? null : event.sessionId().toString(),
 				event.authenticationFactor() == null ? null

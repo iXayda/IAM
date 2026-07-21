@@ -20,6 +20,10 @@ import java.util.UUID;
 
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
 import com.ixayda.iam.authorization.AuthorizationUserAuthentication;
+import com.ixayda.iam.audit.AppendAuditEvent;
+import com.ixayda.iam.audit.AuditEventOperations;
+import com.ixayda.iam.audit.AuditEventOutcome;
+import com.ixayda.iam.audit.AuditEventType;
 import com.ixayda.iam.session.SessionAuthenticationMethod;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.tenant.TenantId;
@@ -66,18 +70,23 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 
 	private final Clock clock;
 
+	private final AuditEventOperations auditEvents;
+
 	JdbcOAuth2AuthorizationService(JdbcClient jdbcClient, AuthorizationSnapshotMapper mapper,
-			AuthorizationTokenCipher tokenCipher, AuthorizationPersistenceProperties properties) {
-		this(jdbcClient, mapper, tokenCipher, properties, Clock.systemUTC());
+			AuthorizationTokenCipher tokenCipher, AuthorizationPersistenceProperties properties,
+			AuditEventOperations auditEvents) {
+		this(jdbcClient, mapper, tokenCipher, properties, Clock.systemUTC(), auditEvents);
 	}
 
 	JdbcOAuth2AuthorizationService(JdbcClient jdbcClient, AuthorizationSnapshotMapper mapper,
-			AuthorizationTokenCipher tokenCipher, AuthorizationPersistenceProperties properties, Clock clock) {
+			AuthorizationTokenCipher tokenCipher, AuthorizationPersistenceProperties properties, Clock clock,
+			AuditEventOperations auditEvents) {
 		this.jdbcClient = Objects.requireNonNull(jdbcClient, "JDBC client must not be null");
 		this.mapper = Objects.requireNonNull(mapper, "Authorization snapshot mapper must not be null");
 		this.tokenCipher = Objects.requireNonNull(tokenCipher, "Authorization token cipher must not be null");
 		this.properties = Objects.requireNonNull(properties, "Authorization persistence properties must not be null");
 		this.clock = Objects.requireNonNull(clock, "Authorization clock must not be null");
+		this.auditEvents = Objects.requireNonNull(auditEvents, "Audit event operations must not be null");
 	}
 
 	@Override
@@ -110,6 +119,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		if (current.version() != expectedVersion || !hasSameImmutableState(current, snapshot)) {
 			return false;
 		}
+		Map<AuthorizationTokenKind, StoredToken> storedTokens = loadTokens(current);
 		int affected = this.jdbcClient.sql("""
 				DELETE FROM oauth_authorizations
 				WHERE authorization_id = :authorizationId AND version = :version
@@ -117,7 +127,13 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 			.param("authorizationId", snapshot.authorizationId())
 			.param("version", expectedVersion)
 			.update();
-		return affected == 1;
+		if (affected == 1) {
+			storedTokens.values().stream()
+				.filter(token -> token.kind() != AuthorizationTokenKind.STATE && !token.invalidated())
+				.forEach(token -> recordToken(snapshot, token.kind(), token.tokenId(), false, this.clock.instant()));
+			return true;
+		}
+		return false;
 	}
 
 	@Override
@@ -475,15 +491,15 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				if (stored.getKey() != AuthorizationTokenKind.STATE) {
 					throw new IllegalArgumentException("Persisted protocol tokens cannot be removed from an authorization");
 				}
-				deleteToken(stored.getValue());
+				deleteToken(snapshot, stored.getValue(), now);
 				continue;
 			}
 			if (refreshing && isRenewable(stored.getKey()) && !hasSamePayload(stored.getValue(), desired)) {
-				deleteToken(stored.getValue());
+				deleteToken(snapshot, stored.getValue(), now);
 				insertToken(snapshot, stored.getKey(), desired, now);
 				continue;
 			}
-			updateToken(stored.getValue(), desired, now);
+			updateToken(snapshot, stored.getValue(), desired, now);
 		}
 		for (Map.Entry<AuthorizationTokenKind, DesiredToken> desired : desiredTokens.entrySet()) {
 			if (!storedTokens.containsKey(desired.getKey())) {
@@ -545,9 +561,13 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 					.update();
 			}
 		}
+		if (kind != AuthorizationTokenKind.STATE) {
+			recordToken(authorization, kind, tokenId, true, token.issuedAt());
+		}
 	}
 
-	private void updateToken(StoredToken stored, DesiredToken desired, Instant now) {
+	private void updateToken(AuthorizationSnapshot authorization, StoredToken stored, DesiredToken desired,
+			Instant now) {
 		if (!hasSamePayload(stored, desired)) {
 			throw new IllegalArgumentException("Persisted authorization token payload is immutable");
 		}
@@ -569,6 +589,9 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 			if (affected != 1) {
 				throw concurrentUpdate();
 			}
+			if (stored.kind() != AuthorizationTokenKind.STATE) {
+				recordToken(authorization, stored.kind(), stored.tokenId(), false, now);
+			}
 		}
 	}
 
@@ -584,7 +607,7 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 				|| kind == AuthorizationTokenKind.ID_TOKEN;
 	}
 
-	private void deleteToken(StoredToken token) {
+	private void deleteToken(AuthorizationSnapshot authorization, StoredToken token, Instant now) {
 		int affected = this.jdbcClient
 			.sql("DELETE FROM oauth_authorization_tokens WHERE token_id = :tokenId AND version = :version")
 			.param("tokenId", token.tokenId())
@@ -593,6 +616,22 @@ class JdbcOAuth2AuthorizationService implements OAuth2AuthorizationService {
 		if (affected != 1) {
 			throw concurrentUpdate();
 		}
+		if (token.kind() != AuthorizationTokenKind.STATE && !token.invalidated()) {
+			recordToken(authorization, token.kind(), token.tokenId(), false, now);
+		}
+	}
+
+	private void recordToken(AuthorizationSnapshot authorization, AuthorizationTokenKind kind, UUID tokenId,
+			boolean issued, Instant occurredAt) {
+		AuthorizationPrincipal principal = authorization.principal();
+		UserId userId = principal == null ? null : principal.userId();
+		SessionId sessionId = principal == null ? null : principal.sessionId();
+		AuditEventType type = AuditEventType.from(issued ? "authorization.token.issued" : "authorization.token.revoked");
+		this.auditEvents.append(new AppendAuditEvent(new TenantId(authorization.tenantId()), type,
+				AuditEventOutcome.SUCCEEDED, userId, sessionId, null, "authorization", occurredAt,
+				Map.of("authorization_id", authorization.authorizationId().toString(), "client_id",
+						authorization.clientId().toString(), "grant_type", authorization.grantType().databaseValue(),
+						"token_id", tokenId.toString(), "token_type", kind.databaseValue())));
 	}
 
 	private StoredAuthorization lock(UUID authorizationId) {

@@ -100,6 +100,8 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Audit administrator role changes, user lifecycle transitions, token issuance or revocation, session revocations,
+  and TOTP or recovery-code lifecycle events with actor context.
 - Record password, MFA, throttling, and authentication dependency outcomes without credential material.
 - Require a recent live second factor when issuing `iam.admin` tokens and authorizing Admin API requests.
 - Render authorization consent through a state-validated, context-escaped page with CSRF-protected, concurrency-safe denial.

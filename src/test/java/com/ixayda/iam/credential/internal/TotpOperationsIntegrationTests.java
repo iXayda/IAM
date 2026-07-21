@@ -81,6 +81,8 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	@Test
 	void enrollsActivatesConsumesAndRevokesTotpCredentials() {
+		int activatedBefore = auditEventCount("credential.totp.activated");
+		int revokedBefore = auditEventCount("credential.totp.revoked");
 		assertThat(this.operations.hasActiveCredential(TenantId.DEFAULT, USER_ID)).isFalse();
 		try (TotpEnrollment enrollment = this.operations.beginEnrollment(TenantId.DEFAULT, USER_ID)) {
 			byte[] secret = enrollment.copySecret();
@@ -118,6 +120,8 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 				Arrays.fill(secret, (byte) 0);
 			}
 		}
+		assertThat(auditEventCount("credential.totp.activated")).isEqualTo(activatedBefore + 1);
+		assertThat(auditEventCount("credential.totp.revoked")).isEqualTo(revokedBefore + 1);
 	}
 
 	@Test
@@ -209,6 +213,18 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 
 	private long currentTimeStep() {
 		return this.codeGenerator.timeStepAt(this.timeSource.now());
+	}
+
+	private int auditEventCount(String type) {
+		return this.jdbcClient.sql("""
+				SELECT count(*) FROM audit_events
+				WHERE tenant_id = :tenantId AND user_id = :userId AND event_type = :type
+				""")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("userId", USER_ID.value())
+			.param("type", type)
+			.query(Integer.class)
+			.single();
 	}
 
 	private void assertRevokedWithoutSecret(TotpCredentialId credentialId) {

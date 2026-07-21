@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 
 import com.ixayda.iam.credential.TotpCodeAttempt;
+import com.ixayda.iam.credential.CredentialSecurityEvent;
 import com.ixayda.iam.credential.TotpCredential;
 import com.ixayda.iam.credential.TotpCredentialId;
 import com.ixayda.iam.credential.TotpCredentialStatus;
@@ -20,6 +21,7 @@ import com.ixayda.iam.user.UserNotActiveException;
 import com.ixayda.iam.user.UserNotFoundException;
 import com.ixayda.iam.user.UserOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,9 +46,12 @@ class DefaultTotpOperations implements TotpOperations {
 
 	private final UserOperations users;
 
+	private final ApplicationEventPublisher events;
+
 	DefaultTotpOperations(TotpEnrollmentWriter enrollmentWriter, JdbcTotpCredentialRepository repository,
 			TotpSecretCipher cipher, TotpCodeGenerator codeGenerator, TotpSecretGenerator secretGenerator,
-			TotpSettingsProperties settings, TotpTimeSource timeSource, UserOperations users) {
+			TotpSettingsProperties settings, TotpTimeSource timeSource, UserOperations users,
+			ApplicationEventPublisher events) {
 		this.enrollmentWriter = enrollmentWriter;
 		this.repository = repository;
 		this.cipher = cipher;
@@ -55,6 +60,7 @@ class DefaultTotpOperations implements TotpOperations {
 		this.settings = settings;
 		this.timeSource = timeSource;
 		this.users = users;
+		this.events = events;
 	}
 
 	@Override
@@ -103,10 +109,13 @@ class DefaultTotpOperations implements TotpOperations {
 
 		Instant transitionAt = evaluatedAt.isBefore(pending.credential().updatedAt())
 				? pending.credential().updatedAt() : evaluatedAt;
-		this.repository.findActiveByUserForUpdate(tenantId, userId)
-			.ifPresent(active -> this.repository.revoke(active, active.credential().revoke(transitionAt)));
+		this.repository.findActiveByUserForUpdate(tenantId, userId).ifPresent(active -> {
+			this.repository.revoke(active, active.credential().revoke(transitionAt));
+			publish(tenantId, userId, CredentialSecurityEvent.Type.TOTP_REVOKED, active.credential().id(), transitionAt);
+		});
 		this.repository.activate(pending,
 				pending.credential().activate(matchedTimeStep.orElseThrow(), transitionAt));
+		publish(tenantId, userId, CredentialSecurityEvent.Type.TOTP_ACTIVATED, credentialId, transitionAt);
 		return true;
 	}
 
@@ -149,8 +158,15 @@ class DefaultTotpOperations implements TotpOperations {
 			return false;
 		}
 		StoredTotpCredential credential = stored.orElseThrow();
-		this.repository.revoke(credential, credential.credential().revoke(this.timeSource.now()));
+		Instant revokedAt = this.timeSource.now();
+		this.repository.revoke(credential, credential.credential().revoke(revokedAt));
+		publish(tenantId, userId, CredentialSecurityEvent.Type.TOTP_REVOKED, credentialId, revokedAt);
 		return true;
+	}
+
+	private void publish(TenantId tenantId, UserId userId, CredentialSecurityEvent.Type type,
+			TotpCredentialId credentialId, Instant occurredAt) {
+		this.events.publishEvent(new CredentialSecurityEvent(tenantId, userId, type, credentialId, occurredAt));
 	}
 
 	private OptionalLong match(StoredTotpCredential stored, TotpCodeAttempt code, Instant now) {

@@ -34,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InOrder;
+import org.springframework.context.ApplicationEventPublisher;
 
 class DefaultUserOperationsTests {
 
@@ -52,8 +53,11 @@ class DefaultUserOperationsTests {
 
 	private final UserDeletionParticipant deletionParticipant = mock(UserDeletionParticipant.class);
 
+	private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+
 	private final DefaultUserOperations operations =
-			new DefaultUserOperations(this.repository, this.tenants, this.timeSource, List.of(this.deletionParticipant));
+			new DefaultUserOperations(this.repository, this.tenants, this.timeSource, List.of(this.deletionParticipant),
+					this.events);
 
 	@Test
 	void createsAUserAfterAcquiringTheTenantWriteGuard() {

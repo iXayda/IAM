@@ -211,6 +211,47 @@ class AdminRoleOperationsIntegrationTests extends ApplicationIntegrationTest {
 			status.setRollbackOnly();
 		});
 		assertThat(this.roles.findActiveBinding(tenant.id(), target.id(), AdminRoleCode.from("auditor"))).isEmpty();
+		assertThat(auditEventCount(tenant.id(), target.id(), "administration.role.granted", "auditor")).isZero();
+	}
+
+	@Test
+	void auditsRoleGrantsAndRevocationsWithActorAndTarget() {
+		Tenant tenant = createTenant("audit");
+		User superAdmin = createUser(tenant.id(), "super-admin");
+		User target = createUser(tenant.id(), "target");
+		this.roles.bootstrapSuperAdmin(tenant.id(), superAdmin.id());
+		AdminRoleCode role = AdminRoleCode.from("auditor");
+
+		this.roles.grantPermanent(tenant.id(), superAdmin.id(), target.id(), role, "Compliance review");
+		this.roles.revoke(tenant.id(), superAdmin.id(), target.id(), role);
+
+		assertThat(this.jdbcClient.sql("""
+				SELECT event_type || '|' || actor_user_id || '|' || user_id || '|' || (attributes ->> 'role')
+				FROM audit_events
+				WHERE tenant_id = :tenantId AND user_id = :userId
+				ORDER BY occurred_at, event_id
+				""")
+			.param("tenantId", tenant.id().value())
+			.param("userId", target.id().value())
+			.query(String.class)
+			.list()).containsExactly(
+					"administration.role.granted|" + superAdmin.id() + "|" + target.id() + "|auditor",
+					"administration.role.revoked|" + superAdmin.id() + "|" + target.id() + "|auditor");
+	}
+
+	private int auditEventCount(TenantId tenantId, UserId userId, String type, String role) {
+		return this.jdbcClient.sql("""
+				SELECT count(*)
+				FROM audit_events
+				WHERE tenant_id = :tenantId AND user_id = :userId AND event_type = :type
+				  AND attributes ->> 'role' = :role
+				""")
+			.param("tenantId", tenantId.value())
+			.param("userId", userId.value())
+			.param("type", type)
+			.param("role", role)
+			.query(Integer.class)
+			.single();
 	}
 
 	private Tenant createTenant(String purpose) {

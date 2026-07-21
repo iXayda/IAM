@@ -10,12 +10,12 @@ import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
 
 public record AuditEvent(AuditEventId id, TenantId tenantId, AuditEventType type, AuditEventOutcome outcome,
-		UserId userId, SessionId sessionId, AuditAuthenticationFactor authenticationFactor, String source,
-		Instant occurredAt, Instant recordedAt, Map<String, String> attributes) {
+		UserId actorUserId, UserId userId, SessionId sessionId, AuditAuthenticationFactor authenticationFactor,
+		String source, Instant occurredAt, Instant recordedAt, Map<String, String> attributes) {
 
 	public AuditEvent {
 		Objects.requireNonNull(id, "Audit event ID must not be null");
-		AppendAuditEvent validated = new AppendAuditEvent(tenantId, type, outcome, userId, sessionId,
+		AppendAuditEvent validated = new AppendAuditEvent(tenantId, type, outcome, actorUserId, userId, sessionId,
 				authenticationFactor, source, occurredAt, attributes);
 		tenantId = validated.tenantId();
 		type = validated.type();
@@ -30,12 +30,19 @@ public record AuditEvent(AuditEventId id, TenantId tenantId, AuditEventType type
 		recordedAt = recordedAt.truncatedTo(ChronoUnit.MICROS);
 	}
 
+	public AuditEvent(AuditEventId id, TenantId tenantId, AuditEventType type, AuditEventOutcome outcome,
+			UserId userId, SessionId sessionId, AuditAuthenticationFactor authenticationFactor, String source,
+			Instant occurredAt, Instant recordedAt, Map<String, String> attributes) {
+		this(id, tenantId, type, outcome, null, userId, sessionId, authenticationFactor, source, occurredAt,
+				recordedAt, attributes);
+	}
+
 	@Override
 	public String toString() {
 		return "AuditEvent[id=" + this.id + ", tenantId=" + this.tenantId + ", type=" + this.type + ", outcome="
-				+ this.outcome + ", userId=redacted, sessionId=redacted, authenticationFactor="
-				+ this.authenticationFactor + ", source=redacted, occurredAt=" + this.occurredAt + ", recordedAt="
-				+ this.recordedAt + ", attributes=redacted]";
+				+ this.outcome + ", actorUserId=redacted, userId=redacted, sessionId=redacted, authenticationFactor="
+				+ this.authenticationFactor + ", source=redacted, occurredAt=" + this.occurredAt
+				+ ", recordedAt=" + this.recordedAt + ", attributes=redacted]";
 	}
 
 }
