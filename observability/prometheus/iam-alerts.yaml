@@ -126,3 +126,23 @@ groups:
         annotations:
           summary: IAM login throttling has surged
           description: More than twenty percent of login rate-limit decisions have been throttled for five minutes.
+
+  - name: iam.audit
+    rules:
+      - alert: IamAuditRetentionOverdue
+        expr: |
+          max by (environment) (
+            iam_audit_oldest_event_age_seconds{application="iam-core-service"}
+          )
+          >
+          max by (environment) (
+            iam_audit_hot_retention_seconds{application="iam-core-service"}
+          )
+        for: 15m
+        labels:
+          component: audit-retention
+          service: iam-core-service
+          severity: warning
+        annotations:
+          summary: IAM audit retention is overdue
+          description: The oldest PostgreSQL audit event has exceeded the 90-day hot-retention target.

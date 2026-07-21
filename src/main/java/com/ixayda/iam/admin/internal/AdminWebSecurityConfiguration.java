@@ -34,6 +34,8 @@ class AdminWebSecurityConfiguration {
 
 	static final String AUDIT_EVENTS_PATH = BASE_PATH + "/audit-events";
 
+	static final String AUDIT_EVENT_EXPORT_PATH = AUDIT_EVENTS_PATH + "/export";
+
 	@Bean
 	AdminJwtAuthenticationConverter adminJwtAuthenticationConverter(SessionOperations sessions,
 			AdminRoleOperations roles) {
@@ -50,10 +52,14 @@ class AdminWebSecurityConfiguration {
 				AuthorityAuthorizationManager.hasAuthority(AdminPermissionCode.READ_ROLES.value()), mfa);
 		AuthorizationManager<RequestAuthorizationContext> readAudit = AuthorizationManagers.allOf(
 				AuthorityAuthorizationManager.hasAuthority(AdminPermissionCode.READ_AUDIT.value()), mfa);
+		AuthorizationManager<RequestAuthorizationContext> exportAudit = AuthorizationManagers.allOf(
+				AuthorityAuthorizationManager.hasAuthority(AdminPermissionCode.EXPORT_AUDIT.value()), mfa);
 		http.securityMatcher(BASE_PATH + "/**");
 		http.authorizeHttpRequests((authorize) -> authorize
 			.requestMatchers(HttpMethod.GET, ROLES_PATH)
 			.access(readRoles)
+			.requestMatchers(HttpMethod.GET, AUDIT_EVENT_EXPORT_PATH)
+			.access(exportAudit)
 			.requestMatchers(HttpMethod.GET, AUDIT_EVENTS_PATH)
 			.access(readAudit)
 			.anyRequest()

@@ -382,6 +382,12 @@ curl --fail --silent --show-error --max-time 5 \
 grep -q 'http_server_requests_seconds_bucket' "${metrics_file}" || fail "HTTP latency buckets are missing"
 grep -q 'application="iam-core-service"' "${metrics_file}" || fail "Application metric tag is missing"
 grep -q 'environment="release-check"' "${metrics_file}" || fail "Environment metric tag is missing"
+grep -q 'iam_audit_oldest_event_age_seconds' "${metrics_file}" || fail "Audit retention metric is missing"
+grep -q 'iam_audit_hot_retention_seconds' "${metrics_file}" || fail "Audit retention target is missing"
+grep -Eq 'iam_audit_export_total\{[^}]*outcome="success"' "${metrics_file}" \
+	|| fail "Successful audit export counter is missing"
+grep -Eq 'iam_audit_export_total\{[^}]*outcome="failure"' "${metrics_file}" \
+	|| fail "Failed audit export counter is missing"
 
 log "Checking native Authorization Code, PKCE, OpenID Connect, Refresh Token, and Client Credentials flows"
 postgres_container="$(compose ps --quiet postgres)"

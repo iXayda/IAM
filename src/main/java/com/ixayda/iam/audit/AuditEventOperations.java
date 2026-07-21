@@ -8,4 +8,6 @@ public interface AuditEventOperations {
 
 	AuditEventPage find(TenantId tenantId, AuditEventQuery query);
 
+	AuditEventExportPage export(TenantId tenantId, AuditEventExportQuery query);
+
 }

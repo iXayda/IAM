@@ -4,6 +4,8 @@ import java.util.Objects;
 
 import com.ixayda.iam.audit.AppendAuditEvent;
 import com.ixayda.iam.audit.AuditEvent;
+import com.ixayda.iam.audit.AuditEventExportPage;
+import com.ixayda.iam.audit.AuditEventExportQuery;
 import com.ixayda.iam.audit.AuditEventOperations;
 import com.ixayda.iam.audit.AuditEventPage;
 import com.ixayda.iam.audit.AuditEventQuery;
@@ -32,6 +34,14 @@ class DefaultAuditEventOperations implements AuditEventOperations {
 		Objects.requireNonNull(tenantId, "Audit event query tenant ID must not be null");
 		Objects.requireNonNull(query, "Audit event query must not be null");
 		return this.repository.find(tenantId, query);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public AuditEventExportPage export(TenantId tenantId, AuditEventExportQuery query) {
+		Objects.requireNonNull(tenantId, "Audit export tenant ID must not be null");
+		Objects.requireNonNull(query, "Audit export query must not be null");
+		return this.repository.export(tenantId, query);
 	}
 
 }

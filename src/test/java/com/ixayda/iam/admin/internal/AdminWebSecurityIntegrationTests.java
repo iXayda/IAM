@@ -2,7 +2,9 @@ package com.ixayda.iam.admin.internal;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,6 +64,7 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @AutoConfigureMockMvc
@@ -259,7 +262,7 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 				"Audit review");
 		this.roles.grantPermanent(tenant.id(), superAdmin.id(), limited.id(), AdminRoleCode.from("support"),
 				"No audit access");
-		Instant occurredAt = Instant.now().minusSeconds(2);
+		Instant occurredAt = Instant.now().plusSeconds(1);
 		AuditEvent older = appendAuditEvent(tenant.id(), occurredAt, "older");
 		AuditEvent newer = appendAuditEvent(tenant.id(), occurredAt.plusSeconds(1), "newer");
 		appendAuditEvent(anotherTenant.id(), occurredAt.plusSeconds(2), "foreign");
@@ -287,10 +290,75 @@ class AdminWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.events", hasSize(1)))
 			.andExpect(jsonPath("$.events[0].id").value(older.id().toString()))
-			.andExpect(jsonPath("$.nextCursor").doesNotExist());
+			.andExpect(jsonPath("$.nextCursor").value(older.id().toString()));
 		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENTS_PATH)
 			.header(HttpHeaders.AUTHORIZATION, bearer(auditorToken))
 			.queryParam("limit", "201"))
+			.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void requiresExportPermissionAndReturnsRecordedEventsAsNdjson() throws Exception {
+		Tenant tenant = createTenant("audit-export");
+		User superAdmin = createUser(tenant.id(), "export-super-admin");
+		User auditor = createUser(tenant.id(), "export-auditor");
+		this.roles.bootstrapSuperAdmin(tenant.id(), superAdmin.id());
+		this.roles.grantPermanent(tenant.id(), superAdmin.id(), auditor.id(), AdminRoleCode.from("auditor"),
+				"Read-only audit review");
+		AuditEvent firstInserted = appendAuditEvent(tenant.id(), Instant.parse("2026-07-21T02:00:00Z"), "first");
+		AuditEvent secondInserted = appendAuditEvent(tenant.id(), Instant.parse("2026-07-21T01:00:00Z"), "second");
+		List<AuditEvent> expected = List.of(firstInserted, secondInserted)
+			.stream()
+			.sorted(Comparator.comparing(AuditEvent::recordedAt).thenComparing(event -> event.id().value()))
+			.toList();
+		Instant from = expected.getFirst().recordedAt();
+		Instant to = expected.getLast().recordedAt().plus(1, ChronoUnit.MICROS);
+		String superAdminToken = encodedToken(startSession(tenant.id(), superAdmin));
+		String auditorToken = encodedToken(startSession(tenant.id(), auditor));
+		String passwordOnlyToken = encodedToken(startPasswordOnlySession(tenant.id(), superAdmin, Instant.now()));
+
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENT_EXPORT_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(auditorToken))
+			.queryParam("from", from.toString())
+			.queryParam("to", to.toString()))
+			.andExpect(status().isForbidden());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENT_EXPORT_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(passwordOnlyToken))
+			.queryParam("from", from.toString())
+			.queryParam("to", to.toString()))
+			.andExpect(status().isForbidden());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENT_EXPORT_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(superAdminToken))
+			.queryParam("from", from.toString())
+			.queryParam("to", to.toString())
+			.queryParam("limit", "1"))
+			.andExpect(status().isOk())
+			.andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+			.andExpect(header().string(AdminAuditEventController.NEXT_CURSOR_HEADER,
+					expected.getFirst().id().toString()))
+			.andExpect(content().contentType(AdminAuditEventController.NDJSON_MEDIA_TYPE))
+			.andExpect(content().string(org.hamcrest.Matchers.endsWith("\n")))
+			.andExpect(jsonPath("$.id").value(expected.getFirst().id().toString()))
+			.andExpect(jsonPath("$.source").value(expected.getFirst().source()));
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENT_EXPORT_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(superAdminToken))
+			.queryParam("from", from.toString())
+			.queryParam("to", to.toString())
+			.queryParam("limit", "1")
+			.queryParam("after", expected.getFirst().id().toString()))
+			.andExpect(status().isOk())
+			.andExpect(header().doesNotExist(AdminAuditEventController.NEXT_CURSOR_HEADER))
+			.andExpect(jsonPath("$.id").value(expected.getLast().id().toString()));
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENT_EXPORT_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(superAdminToken))
+			.queryParam("from", from.toString())
+			.queryParam("to", from.toString()))
+			.andExpect(status().isBadRequest());
+		this.mockMvc.perform(get(AdminWebSecurityConfiguration.AUDIT_EVENT_EXPORT_PATH)
+			.header(HttpHeaders.AUTHORIZATION, bearer(superAdminToken))
+			.queryParam("from", from.toString())
+			.queryParam("to", to.toString())
+			.queryParam("after", UUID.randomUUID().toString()))
 			.andExpect(status().isBadRequest());
 	}
 

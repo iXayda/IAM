@@ -14,6 +14,8 @@ public record AdminPermissionCode(String value) {
 
 	public static final AdminPermissionCode READ_AUDIT = new AdminPermissionCode("audit.read");
 
+	public static final AdminPermissionCode EXPORT_AUDIT = new AdminPermissionCode("audit.export");
+
 	public AdminPermissionCode {
 		Objects.requireNonNull(value, "Admin permission code must not be null");
 		if (value.length() > 100 || !FORMAT.matcher(value).matches()) {

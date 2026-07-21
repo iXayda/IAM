@@ -1,5 +1,6 @@
 package com.ixayda.iam.audit;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -50,6 +51,15 @@ class AuditEventDomainTests {
 		assertThatThrownBy(() -> new AuditEventQuery(0, null)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new AuditEventQuery(AuditEventQuery.MAXIMUM_LIMIT + 1, null))
 			.isInstanceOf(IllegalArgumentException.class);
+		AuditEventExportQuery export = new AuditEventExportQuery(NOW, NOW.plus(Duration.ofDays(31)), 1, cursor);
+		assertThat(export.after()).isEqualTo(cursor);
+		assertThat(new AuditEventExportPage(java.util.List.of(), null).next()).isEmpty();
+		assertThatThrownBy(() -> new AuditEventExportQuery(NOW, NOW, 1, null))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new AuditEventExportQuery(NOW, NOW.plus(Duration.ofDays(31)).plusNanos(1), 1, null))
+			.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new AuditEventExportQuery(NOW, NOW.plusSeconds(1),
+				AuditEventExportQuery.MAXIMUM_LIMIT + 1, null)).isInstanceOf(IllegalArgumentException.class);
 	}
 
 	private static AppendAuditEvent event(String source, Instant occurredAt, Map<String, String> attributes) {

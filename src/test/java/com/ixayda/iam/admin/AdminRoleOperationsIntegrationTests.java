@@ -229,6 +229,7 @@ class AdminRoleOperationsIntegrationTests extends ApplicationIntegrationTest {
 				SELECT event_type || '|' || actor_user_id || '|' || user_id || '|' || (attributes ->> 'role')
 				FROM audit_events
 				WHERE tenant_id = :tenantId AND user_id = :userId
+				  AND event_type IN ('administration.role.granted', 'administration.role.revoked')
 				ORDER BY occurred_at, event_id
 				""")
 			.param("tenantId", tenant.id().value())

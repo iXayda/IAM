@@ -334,6 +334,25 @@ docker run --rm \
   test rules iam-alerts.test.yaml
 ```
 
+### 审计归档与保留
+
+审计热数据默认保留目标为 90 天，可通过 `IAM_AUDIT_HOT_RETENTION` 调整；应用每 5 分钟缓存一次最早
+`recorded_at`，并发布 `iam_audit_oldest_event_age_seconds` 与当前配置对应的
+`iam_audit_hot_retention_seconds`。最老事件年龄超过配置目标会触发
+`IamAuditRetentionOverdue`。观测周期可通过 `IAM_AUDIT_RETENTION_OBSERVATION_INTERVAL` 调整，所有 duration
+必须显式携带单位。
+
+外部归档系统使用 `GET /iam/admin/audit-events/export` 按半开时间窗口 `[from,to)` 拉取 NDJSON。
+请求需要实时 `audit.export` 权限和有效 Admin MFA；当前内置角色中只有 `super_admin` 拥有该权限。
+单次窗口最长 31 天，每页最多 1000 条，并按 `recordedAt,id` 升序返回。存在下一页时响应包含
+`X-Audit-Next-Cursor`，客户端必须保持原时间窗口并持久化游标后再继续；无效、跨租户或窗口外游标返回
+`400`。响应包含审计上下文，不得记录 body，生产链路必须使用 TLS。
+
+应用不提供审计删除 API，也不会自动删除记录。只有在整个时间窗口已经完成外部归档并持久化确认后，
+数据库运维人员才能通过受控变更执行清理；不得逐页删除，否则后续游标无法回查。`audit_events` 的
+append-only trigger 默认阻止删除，清理流程必须由具备明确授权的数据库所有者临时管理该保护，并在同一
+受审计变更窗口内恢复和验证。
+
 ### LDAP 外部凭据
 
 LDAP provider 默认关闭。启用时必须配置独立的 provider ID、允许使用该目录的 tenant、

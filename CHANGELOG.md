@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 - Append-only tenant audit events with UUIDv7 identifiers, bounded JSON attributes, and stable cursor paging.
 - MFA-protected Admin audit event queries with live `audit.read` permission checks and tenant-bound cursors.
+- MFA-protected NDJSON audit export with bounded recorded-time windows, tenant-safe cursors, and live
+  `audit.export` permission checks.
+- Audit hot-retention configuration, cached oldest-event metrics, and a tested 90-day Prometheus alert.
 - Session- and authorization-bound authentication factor evidence with independent issuance timestamps.
 - OAuth authorization login continuation through CSRF-protected TOTP or recovery-code verification.
 - Source-bound MFA login challenges with atomic TOTP or recovery-code completion before session creation.
@@ -88,6 +91,7 @@ All notable changes to this project will be documented in this file.
 - Validated tenant domain model and lifecycle contract.
 
 ### Fixed
+- Reject invalid audit export cursors instead of returning an ambiguous successful empty page.
 - Session authentication factor timestamps now use PostgreSQL-compatible precision before persistence.
 - Preserved the requested login identifier when applying filtered SCIM User adds instead of substituting the filter literal.
 - OAuth consent approval and denial now update consent and pending authorization state atomically.

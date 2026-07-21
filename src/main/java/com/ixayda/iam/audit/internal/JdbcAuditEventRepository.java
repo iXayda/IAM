@@ -12,11 +12,14 @@ import java.util.Optional;
 import com.ixayda.iam.audit.AppendAuditEvent;
 import com.ixayda.iam.audit.AuditAuthenticationFactor;
 import com.ixayda.iam.audit.AuditEvent;
+import com.ixayda.iam.audit.AuditEventExportPage;
+import com.ixayda.iam.audit.AuditEventExportQuery;
 import com.ixayda.iam.audit.AuditEventId;
 import com.ixayda.iam.audit.AuditEventOutcome;
 import com.ixayda.iam.audit.AuditEventPage;
 import com.ixayda.iam.audit.AuditEventQuery;
 import com.ixayda.iam.audit.AuditEventType;
+import com.ixayda.iam.audit.InvalidAuditEventExportCursorException;
 import com.ixayda.iam.session.SessionId;
 import com.ixayda.iam.tenant.TenantId;
 import com.ixayda.iam.user.UserId;
@@ -90,6 +93,30 @@ class JdbcAuditEventRepository {
 		return new AuditEventPage(page, page.getLast().id());
 	}
 
+	AuditEventExportPage export(TenantId tenantId, AuditEventExportQuery query) {
+		AuditCursor cursor = null;
+		if (query.after() != null) {
+			Optional<AuditCursor> found = findExportCursor(tenantId, query);
+			if (found.isEmpty()) {
+				throw new InvalidAuditEventExportCursorException();
+			}
+			cursor = found.orElseThrow();
+		}
+		List<AuditEvent> events = exportPage(tenantId, query, cursor, query.limit() + 1);
+		if (events.size() <= query.limit()) {
+			return new AuditEventExportPage(events, null);
+		}
+		List<AuditEvent> page = List.copyOf(events.subList(0, query.limit()));
+		return new AuditEventExportPage(page, page.getLast().id());
+	}
+
+	Optional<Instant> oldestRecordedAt() {
+		return this.jdbcClient.sql("SELECT recorded_at FROM audit_events ORDER BY recorded_at LIMIT 1")
+			.query(OffsetDateTime.class)
+			.optional()
+			.map(OffsetDateTime::toInstant);
+	}
+
 	private Optional<AuditCursor> findCursor(TenantId tenantId, AuditEventId eventId) {
 		return this.jdbcClient.sql("""
 				SELECT occurred_at, event_id
@@ -102,6 +129,45 @@ class JdbcAuditEventRepository {
 					resultSet.getObject("occurred_at", OffsetDateTime.class).toInstant(),
 					new AuditEventId(resultSet.getObject("event_id", java.util.UUID.class))))
 			.optional();
+	}
+
+	private Optional<AuditCursor> findExportCursor(TenantId tenantId, AuditEventExportQuery query) {
+		return this.jdbcClient.sql("""
+				SELECT recorded_at, event_id
+				FROM audit_events
+				WHERE tenant_id = :tenantId AND event_id = :eventId
+				  AND recorded_at >= :fromRecordedAt AND recorded_at < :toRecordedAt
+				""")
+			.param("tenantId", tenantId.value())
+			.param("eventId", query.after().value())
+			.param("fromRecordedAt", databaseValue(query.fromRecordedAt()))
+			.param("toRecordedAt", databaseValue(query.toRecordedAt()))
+			.query((resultSet, rowNumber) -> new AuditCursor(
+					resultSet.getObject("recorded_at", OffsetDateTime.class).toInstant(),
+					new AuditEventId(resultSet.getObject("event_id", java.util.UUID.class))))
+			.optional();
+	}
+
+	private List<AuditEvent> exportPage(TenantId tenantId, AuditEventExportQuery query, AuditCursor cursor,
+			int limit) {
+		String cursorClause = cursor == null ? "" : " AND (recorded_at, event_id) > (:cursorTime, :cursorId)";
+		JdbcClient.StatementSpec statement = this.jdbcClient.sql("SELECT " + COLUMNS + """
+				FROM audit_events
+				WHERE tenant_id = :tenantId
+				  AND recorded_at >= :fromRecordedAt AND recorded_at < :toRecordedAt
+				""" + cursorClause + """
+				ORDER BY recorded_at, event_id
+				LIMIT :limit
+				""")
+			.param("tenantId", tenantId.value())
+			.param("fromRecordedAt", databaseValue(query.fromRecordedAt()))
+			.param("toRecordedAt", databaseValue(query.toRecordedAt()))
+			.param("limit", limit);
+		if (cursor != null) {
+			statement = statement.param("cursorTime", databaseValue(cursor.timestamp()))
+				.param("cursorId", cursor.eventId().value());
+		}
+		return statement.query(this::map).list();
 	}
 
 	private List<AuditEvent> firstPage(TenantId tenantId, int limit) {
@@ -126,7 +192,7 @@ class JdbcAuditEventRepository {
 				LIMIT :limit
 				""")
 			.param("tenantId", tenantId.value())
-			.param("occurredAt", databaseValue(cursor.occurredAt()))
+			.param("occurredAt", databaseValue(cursor.timestamp()))
 			.param("eventId", cursor.eventId().value())
 			.param("limit", limit)
 			.query(this::map)
@@ -173,7 +239,7 @@ class JdbcAuditEventRepository {
 		return OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
 	}
 
-	private record AuditCursor(Instant occurredAt, AuditEventId eventId) {
+	private record AuditCursor(Instant timestamp, AuditEventId eventId) {
 	}
 
 	private record InsertedEvent(AuditEventId id, Instant recordedAt) {

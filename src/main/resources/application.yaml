@@ -76,6 +76,10 @@ management:
       probability: 0.1
 
 iam:
+  audit:
+    retention:
+      hot-retention: ${IAM_AUDIT_HOT_RETENTION:90d}
+      observation-interval: ${IAM_AUDIT_RETENTION_OBSERVATION_INTERVAL:5m}
   admin:
     mfa:
       valid-duration: ${IAM_ADMIN_MFA_VALID_DURATION:15m}
