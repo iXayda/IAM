@@ -192,10 +192,8 @@ class TotpOperationsIntegrationTests extends ApplicationIntegrationTest {
 		}
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforePendingRevoke.id())).contains(beforePendingRevoke);
 
-		TotpCredentialId active = this.repository.findActiveByUser(TenantId.DEFAULT, USER_ID)
-			.map(stored -> stored.credential().id())
-			.orElseThrow();
-		assertThat(this.operations.revoke(TenantId.DEFAULT, USER_ID, active)).isTrue();
+		assertThat(this.operations.revokeActive(TenantId.DEFAULT, USER_ID)).isTrue();
+		assertThat(this.operations.revokeActive(TenantId.DEFAULT, USER_ID)).isFalse();
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, beforePendingRevoke.id())).isEmpty();
 	}
 

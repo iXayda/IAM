@@ -297,6 +297,16 @@ IAM 管理与自服务接口：
 /iam/audit/**
 ```
 
+账号侧 MFA 自服务使用浏览器登录 session，并在每次请求时实时校验对应 IAM session。
+`GET /iam/account/csrf` 返回 JSON 写请求需要使用的 CSRF header 和 token；`GET /iam/account/mfa` 返回当前
+TOTP 状态。TOTP enrollment 通过 `POST /iam/account/mfa/totp/enrollments` 创建，响应中的 Base32 secret
+和 `otpauth://` provisioning URI 只返回一次且禁止缓存；客户端使用第一个 code 调用
+`POST /iam/account/mfa/totp/enrollments/{credentialId}/activation` 激活。`DELETE /iam/account/mfa/totp`
+撤销当前 active TOTP。所有写操作要求近期密码认证，默认有效时间为 5 分钟，可通过
+`IAM_ACCOUNT_MFA_PRIMARY_AUTHENTICATION_VALID_DURATION` 调整；TOTP issuer 默认是 `IAM`，可通过
+`IAM_ACCOUNT_MFA_TOTP_ISSUER` 调整。激活或撤销 active TOTP 会立即失效 IAM session 和浏览器 session，
+调用方必须重新登录。
+
 ## 运行
 
 使用本地 profile 启动应用，Spring Boot 会读取根目录的 Compose 配置：

@@ -38,4 +38,10 @@ public interface TotpOperations {
 	 */
 	boolean revoke(TenantId tenantId, UserId userId, TotpCredentialId credentialId);
 
+	/**
+	 * Revokes the user's current active credential, if present, and removes its
+	 * encrypted secret material.
+	 */
+	boolean revokeActive(TenantId tenantId, UserId userId);
+
 }

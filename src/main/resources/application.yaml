@@ -76,6 +76,10 @@ management:
       probability: 0.1
 
 iam:
+  account:
+    mfa:
+      primary-authentication-valid-duration: ${IAM_ACCOUNT_MFA_PRIMARY_AUTHENTICATION_VALID_DURATION:5m}
+      totp-issuer: ${IAM_ACCOUNT_MFA_TOTP_ISSUER:IAM}
   audit:
     retention:
       hot-retention: ${IAM_AUDIT_HOT_RETENTION:90d}

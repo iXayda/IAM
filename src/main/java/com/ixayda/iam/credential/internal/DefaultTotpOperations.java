@@ -169,6 +169,23 @@ class DefaultTotpOperations implements TotpOperations {
 		return true;
 	}
 
+	@Override
+	@Transactional
+	public boolean revokeActive(TenantId tenantId, UserId userId) {
+		requireKey(tenantId, userId);
+		this.users.requireNotDeletedForUpdate(tenantId, userId);
+		Optional<StoredTotpCredential> stored = this.repository.findActiveByUserForUpdate(tenantId, userId);
+		if (stored.isEmpty()) {
+			return false;
+		}
+		StoredTotpCredential credential = stored.orElseThrow();
+		Instant revokedAt = this.timeSource.now();
+		this.repository.revoke(credential, credential.credential().revoke(revokedAt));
+		this.users.recordCredentialChangeForWrite(tenantId, userId);
+		publish(tenantId, userId, CredentialSecurityEvent.Type.TOTP_REVOKED, credential.credential().id(), revokedAt);
+		return true;
+	}
+
 	private void publish(TenantId tenantId, UserId userId, CredentialSecurityEvent.Type type,
 			TotpCredentialId credentialId, Instant occurredAt) {
 		this.events.publishEvent(new CredentialSecurityEvent(tenantId, userId, type, credentialId, occurredAt));

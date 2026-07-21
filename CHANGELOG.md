@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- CSRF-protected account TOTP enrollment, activation, status, and revocation endpoints guarded by a live session
+  and recent password authentication.
 - Append-only tenant audit events with UUIDv7 identifiers, bounded JSON attributes, and stable cursor paging.
 - MFA-protected Admin audit event queries with live `audit.read` permission checks and tenant-bound cursors.
 - MFA-protected NDJSON audit export with bounded recorded-time windows, tenant-safe cursors, and live
