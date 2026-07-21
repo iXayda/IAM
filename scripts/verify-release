@@ -401,6 +401,16 @@ IAM_VERIFY_BASE_URL="http://127.0.0.1:${app_port}" \
 	IAM_DB_USERNAME="${db_username}" \
 	"${ROOT_DIR}/scripts/verify-authorization-code-flow"
 
+log "Checking native account MFA and Admin authorization flows"
+IAM_VERIFY_BASE_URL="http://127.0.0.1:${app_port}" \
+	IAM_VERIFY_ISSUER="https://issuer.release-check.invalid" \
+	IAM_VERIFY_ADMIN_TOKEN_AUDIENCE="https://admin.release-check.invalid/iam/admin" \
+	IAM_VERIFY_POSTGRES_CONTAINER="${postgres_container}" \
+	IAM_VERIFY_DISPOSABLE_DATABASE=true \
+	IAM_DB_NAME="${db_name}" \
+	IAM_DB_USERNAME="${db_username}" \
+	"${ROOT_DIR}/scripts/verify-admin-mfa-flow"
+
 log "Checking Redis outage and recovery"
 compose pause redis
 wait_for_status /readyz 503 30 || fail "Readiness stayed healthy while Redis was unavailable"

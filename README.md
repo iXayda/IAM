@@ -75,7 +75,7 @@ IAM 不负责：
 - JWT 与 Refresh Token 生命周期可用
 - SCIM 基础用户和组同步可用
 - Admin RBAC 可用
-- 管理员 MFA 可用
+- 管理员 MFA 可用，并纳入 Native 发布门禁
 - 审计与风险事件可用
 - 数据库迁移和部署基础可控
 - 具备接入 LDAP、租户、组织和安全运营能力的扩展点

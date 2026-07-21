@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 - MFA-protected Admin audit event queries with live `audit.read` permission checks and tenant-bound cursors.
 - MFA-protected NDJSON audit export with bounded recorded-time windows, tenant-safe cursors, and live
   `audit.export` permission checks.
+- Native release verification for account TOTP enrollment, Admin MFA authorization, audit access,
+  recovery-code issuance, and live Admin-token invalidation.
 - Audit hot-retention configuration, cached oldest-event metrics, and a tested 90-day Prometheus alert.
 - Session- and authorization-bound authentication factor evidence with independent issuance timestamps.
 - OAuth authorization login continuation through CSRF-protected TOTP or recovery-code verification.
