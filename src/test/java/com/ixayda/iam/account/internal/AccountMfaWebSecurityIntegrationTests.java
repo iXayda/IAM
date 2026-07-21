@@ -60,6 +60,9 @@ class AccountMfaWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 
 	private static final UserId USER_ID = UserId.from("019f5aff-f979-7653-8001-67ea4274fa01");
 
+	private static final String RECOVERY_CODE_PATTERN =
+			"[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}";
+
 	private static final SessionAbsoluteTtl SESSION_TTL = new SessionAbsoluteTtl(Duration.ofHours(1));
 
 	@Autowired
@@ -97,6 +100,10 @@ class AccountMfaWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			.param("userId", USER_ID.value())
 			.update();
 		this.jdbcClient.sql("DELETE FROM user_totp_credentials WHERE tenant_id = :tenantId AND user_id = :userId")
+			.param("tenantId", TenantId.DEFAULT.value())
+			.param("userId", USER_ID.value())
+			.update();
+		this.jdbcClient.sql("DELETE FROM user_recovery_codes WHERE tenant_id = :tenantId AND user_id = :userId")
 			.param("tenantId", TenantId.DEFAULT.value())
 			.param("userId", USER_ID.value())
 			.update();
@@ -153,7 +160,8 @@ class AccountMfaWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 		this.mockMvc.perform(get(AccountMfaWebSecurityConfiguration.MFA_PATH).session(initialHttpSession))
 			.andExpect(status().isOk())
 			.andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
-			.andExpect(jsonPath("$.totpEnabled").value(false));
+			.andExpect(jsonPath("$.totpEnabled").value(false))
+			.andExpect(jsonPath("$.recoveryCodesAvailable").value(false));
 
 		MvcResult enrollment = this.mockMvc
 			.perform(post(AccountMfaWebSecurityConfiguration.TOTP_ENROLLMENTS_PATH)
@@ -224,6 +232,36 @@ class AccountMfaWebSecurityIntegrationTests extends ApplicationIntegrationTest {
 			.andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
 		assertThat(mfaHttpSession.isInvalid()).isTrue();
 		assertThat(this.sessions.findUsable(TenantId.DEFAULT, mfaSession.id())).isEmpty();
+	}
+
+	@Test
+	void replacesRecoveryCodesOnceAndInvalidatesTheSession() throws Exception {
+		UserSession initial = startSession(null);
+		MockHttpSession initialHttpSession = httpSession(initial);
+
+		MvcResult result = this.mockMvc
+			.perform(post(AccountMfaWebSecurityConfiguration.RECOVERY_CODES_PATH)
+				.session(initialHttpSession)
+				.with(csrf()))
+			.andExpect(status().isOk())
+			.andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+			.andExpect(jsonPath("$.codes.length()").value(10))
+			.andExpect(jsonPath("$.codes[*]")
+				.value(org.hamcrest.Matchers.everyItem(matchesPattern(RECOVERY_CODE_PATTERN))))
+			.andReturn();
+		assertThat(initialHttpSession.isInvalid()).isTrue();
+		assertThat(result.getResponse().getContentAsString()).doesNotContain("redacted");
+		assertThat(this.sessions.findUsable(TenantId.DEFAULT, initial.id())).isEmpty();
+
+		Instant verifiedAt = Instant.now();
+		UserSession recoverySession = startSession(Set.of(
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.PASSWORD, verifiedAt),
+				new SessionAuthenticationFactor(SessionAuthenticationFactorType.RECOVERY_CODE, verifiedAt)));
+		this.mockMvc.perform(get(AccountMfaWebSecurityConfiguration.MFA_PATH).session(httpSession(recoverySession)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totpEnabled").value(false))
+			.andExpect(jsonPath("$.recoveryCodesAvailable").value(true));
 	}
 
 	private UserSession startSession(Set<SessionAuthenticationFactor> factors) {

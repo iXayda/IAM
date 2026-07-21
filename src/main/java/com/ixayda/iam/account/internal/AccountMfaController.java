@@ -1,12 +1,16 @@
 package com.ixayda.iam.account.internal;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 
 import com.ixayda.iam.authorization.AuthorizationPrincipal;
+import com.ixayda.iam.credential.GeneratedRecoveryCodes;
+import com.ixayda.iam.credential.RecoveryCodeOperations;
 import com.ixayda.iam.credential.TotpCodeAttempt;
 import com.ixayda.iam.credential.TotpCredentialId;
 import com.ixayda.iam.credential.TotpEnrollment;
@@ -29,9 +33,13 @@ final class AccountMfaController {
 
 	private final AccountTotpProvisioning provisioning;
 
-	AccountMfaController(TotpOperations totp, AccountTotpProvisioning provisioning) {
+	private final RecoveryCodeOperations recoveryCodes;
+
+	AccountMfaController(TotpOperations totp, AccountTotpProvisioning provisioning,
+			RecoveryCodeOperations recoveryCodes) {
 		this.totp = totp;
 		this.provisioning = provisioning;
+		this.recoveryCodes = recoveryCodes;
 	}
 
 	@GetMapping(AccountMfaWebSecurityConfiguration.CSRF_PATH)
@@ -46,7 +54,8 @@ final class AccountMfaController {
 	@GetMapping(AccountMfaWebSecurityConfiguration.MFA_PATH)
 	ResponseEntity<AccountMfaStatusResponse> status(@AuthenticationPrincipal AuthorizationPrincipal principal) {
 		return noStore(new AccountMfaStatusResponse(
-				this.totp.hasActiveCredential(principal.tenantId(), principal.userId())));
+				this.totp.hasActiveCredential(principal.tenantId(), principal.userId()),
+				this.recoveryCodes.hasAvailableCode(principal.tenantId(), principal.userId())));
 	}
 
 	@PostMapping(AccountMfaWebSecurityConfiguration.TOTP_ENROLLMENTS_PATH)
@@ -105,6 +114,30 @@ final class AccountMfaController {
 			invalidate(servletRequest);
 		}
 		return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+	}
+
+	@PostMapping(AccountMfaWebSecurityConfiguration.RECOVERY_CODES_PATH)
+	ResponseEntity<AccountRecoveryCodesResponse> replaceRecoveryCodes(
+			@AuthenticationPrincipal AuthorizationPrincipal principal, HttpServletRequest servletRequest) {
+		try (GeneratedRecoveryCodes generated =
+				this.recoveryCodes.replace(principal.tenantId(), principal.userId())) {
+			char[][] values = generated.copy();
+			try {
+				List<String> codes = new ArrayList<>(values.length);
+				for (char[] value : values) {
+					codes.add(new String(value));
+				}
+				invalidate(servletRequest);
+				return ResponseEntity.ok()
+					.cacheControl(CacheControl.noStore())
+					.body(new AccountRecoveryCodesResponse(codes));
+			}
+			finally {
+				for (char[] value : values) {
+					Arrays.fill(value, '\0');
+				}
+			}
+		}
 	}
 
 	private static <T> ResponseEntity<T> noStore(T body) {

@@ -26,6 +26,8 @@ class AccountMfaWebSecurityConfiguration {
 
 	static final String TOTP_ENROLLMENTS_PATH = TOTP_PATH + "/enrollments";
 
+	static final String RECOVERY_CODES_PATH = MFA_PATH + "/recovery-codes";
+
 	@Bean
 	@Order(Ordered.HIGHEST_PRECEDENCE + 4)
 	SecurityFilterChain accountMfaSecurityFilterChain(HttpSecurity http, SessionOperations sessions,
@@ -35,6 +37,8 @@ class AccountMfaWebSecurityConfiguration {
 			.requestMatchers(HttpMethod.GET, CSRF_PATH, MFA_PATH)
 			.authenticated()
 			.requestMatchers(HttpMethod.POST, TOTP_ENROLLMENTS_PATH, TOTP_ENROLLMENTS_PATH + "/*/activation")
+			.access(properties.primaryAuthenticationAuthorizationManager())
+			.requestMatchers(HttpMethod.POST, RECOVERY_CODES_PATH)
 			.access(properties.primaryAuthenticationAuthorizationManager())
 			.requestMatchers(HttpMethod.DELETE, TOTP_PATH)
 			.access(properties.primaryAuthenticationAuthorizationManager())
