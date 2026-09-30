@@ -2,6 +2,20 @@
 
 适用于整个仓库。通用贡献及 AI 使用要求见 [贡献指南](CONTRIBUTING.md)；漏洞报告按 [安全策略](SECURITY.md)处理。
 
+## 仓库导航
+
+- `src/main/java/com/ixayda/iam/`：Java 源码；`src/test/java/com/ixayda/iam/`：Java 测试及共享夹具。
+
+## 开发环境
+
+- 在仓库根目录使用 Maven Wrapper 和 Oracle JDK 21。
+
+执行完整 Java 验证并构建 JAR：
+
+```bash
+./mvnw clean verify
+```
+
 ## 代码约定
 
 - 修改前阅读受影响实现及已有测试，沿用该文件的缩进、导入和命名方式。

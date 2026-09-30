@@ -12,6 +12,22 @@ IAM 是面向单个组织、多个自有应用的身份与访问管理项目，�
 
 IAM 负责账号、身份认证和应用级授权；业务对象及具体业务操作的权限由接入应用执行。
 
+## 开发与运行
+
+项目使用 Spring Boot 4.1.1 和 Java 21。构建需要 JDK 21，使用仓库中的 Maven Wrapper。
+
+执行测试并构建可执行 JAR：
+
+```bash
+./mvnw clean verify
+```
+
+启动应用：
+
+```bash
+java -jar target/iam.jar
+```
+
 ## 反馈与维护
 
 使用问题和改进建议可在 [GitHub Issues](https://github.com/iXayda/IAM/issues) 提出。项目由 ka1i 维护，联系邮箱：<iXayda@outlook.com>。
@@ -20,4 +36,4 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 
 ## 许可证
 
-[社区行为准则](CODE_OF_CONDUCT.md)按其声明采用 CC BY-SA 4.0。
+除另有声明的文件外，本项目采用 [Apache License 2.0](LICENSE)。[社区行为准则](CODE_OF_CONDUCT.md)按其声明采用 CC BY-SA 4.0。
