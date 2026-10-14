@@ -33,6 +33,14 @@
 
 参考：[LLVM AI Tool Use Policy](https://llvm.org/docs/AIToolPolicy.html)、[ASF Generative Tooling Guidance](https://www.apache.org/legal/generative-tooling.html)。
 
+## 弱密码清单维护
+
+项目自行维护 [password-blocklist.txt](src/main/resources/credential/password-blocklist.txt)，配合最小长度及账号、服务名检查使用，不代表完整的泄露密码数据库。
+
+条目使用 UTF-8，一行一个完整密码。规范化后须满足解析器的 15–256 个 Unicode 码点范围，更短的密码已由策略拒绝。比较采用 NFC 和与语言环境无关的小写处理；忽略空行及以 `#` 开头的行。避免规范化后的重复条目，不擅自裁剪或改写预期密码。
+
+补充条目时说明依据并更新相关策略检查。不得加入真实用户密码、个人资料或下载的泄露数据；引入外部清单前需确认许可证和来源。
+
 ## 提交 Pull Request
 
 说明具体问题、变更后的行为、相关验证和剩余限制，示例及证据不得包含秘密。
