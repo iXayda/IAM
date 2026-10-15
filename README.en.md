@@ -14,7 +14,7 @@ IAM manages accounts, authentication, and application-level authorization. Each 
 
 ## Development and runtime
 
-The project uses Spring Boot 4.1.1 and Java 21. Builds require JDK 21 and use the Maven Wrapper included in the repository.
+The project uses Spring Boot 4.1.1, Java 21, and PostgreSQL 18. Builds require JDK 21 and use the included Maven Wrapper. Integration tests start isolated PostgreSQL containers through Docker and require a working Docker installation.
 
 Run the tests and build an executable JAR:
 
@@ -22,7 +22,17 @@ Run the tests and build an executable JAR:
 ./mvnw clean verify
 ```
 
-Start the application:
+Configure a dedicated PostgreSQL database connection before starting the application:
+
+| Environment variable | Purpose |
+| --- | --- |
+| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC connection URL |
+| `SPRING_DATASOURCE_USERNAME` | Database username |
+| `SPRING_DATASOURCE_PASSWORD` | Database password, supplied by the runtime environment |
+
+The database account needs permission to create tables and run migrations. Flyway creates or upgrades the schema at startup.
+
+Start the application after configuring the environment:
 
 ```bash
 java -jar target/iam.jar
