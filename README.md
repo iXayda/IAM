@@ -12,7 +12,7 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 
 ## 开发与运行
 
-项目使用 Spring Boot 4.1.1 和 Java 21。构建需要 JDK 21，使用仓库中的 Maven Wrapper。
+项目使用 Spring Boot 4.1.1、Java 21 和 PostgreSQL 18。构建需要 JDK 21，使用仓库中的 Maven Wrapper；集成测试通过 Docker 启动隔离的 PostgreSQL 容器，需要可用的 Docker。
 
 首次运行 `./mvnw` 时，有 `unzip` 就下载 ZIP，没有则用 `tar` 解压 `.tar.gz`。升级 Maven 时，在 `.mvn/wrapper/maven-wrapper.properties` 中同步更新两种官方归档各自的 SHA-256。
 
@@ -22,7 +22,17 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 ./mvnw clean verify
 ```
 
-启动应用：
+启动应用前配置专用 PostgreSQL 数据库连接：
+
+| 环境变量 | 内容 |
+| --- | --- |
+| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC 连接地址 |
+| `SPRING_DATASOURCE_USERNAME` | 数据库用户名 |
+| `SPRING_DATASOURCE_PASSWORD` | 数据库密码，由运行环境注入 |
+
+数据库账号需要具备建表和执行迁移的权限。Flyway 在启动时创建或升级表结构。
+
+配置就绪后启动：
 
 ```bash
 java -jar target/iam.jar

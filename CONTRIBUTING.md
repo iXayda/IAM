@@ -4,7 +4,7 @@
 
 ## 开发准备
 
-使用 Oracle JDK 21 和仓库中的 Maven Wrapper。
+使用 Oracle JDK 21、仓库中的 Maven Wrapper 及可用的 Docker。Java 集成测试启动隔离的 PostgreSQL 18 容器。
 
 执行 Java 验证：
 
@@ -17,7 +17,9 @@
 ## 保持改动完整
 
 - 每次提交聚焦一个可审阅的行为，实施、对应测试和必要说明一起交付。
-- README 保持简洁、稳定的使用入口；用户可见变更整理到 [CHANGELOG.md](CHANGELOG.md)。
+- 数据结构修改新增 Flyway 迁移，不改写已交付迁移。
+- 沿用现有分层和命名：服务通过仓储访问数据库，模型不依赖 Spring 或数据库 API。[ArchitectureTests](src/test/java/com/ixayda/iam/ArchitectureTests.java)约束允许的依赖。
+- README 保持简洁、稳定的使用入口；详细操作和设计写入 [文档](docs/README.md)，用户可见变更整理到 [CHANGELOG.md](CHANGELOG.md)。
 
 提交标题使用简短的 Conventional Commits 格式，例如 `feat(sessions): revoke account sessions`。scope 根据实际变更选择，不改写与本次贡献无关的历史。
 

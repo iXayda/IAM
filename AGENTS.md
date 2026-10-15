@@ -8,7 +8,7 @@
 
 ## 开发环境
 
-- 在仓库根目录使用 Maven Wrapper 和 Oracle JDK 21。
+- 在仓库根目录使用 Maven Wrapper 和 Oracle JDK 21；Java 集成测试需要 Docker。
 
 执行完整 Java 验证并构建 JAR：
 
@@ -19,6 +19,8 @@
 ## 代码约定
 
 - 修改前阅读受影响实现及已有测试，沿用该文件的缩进、导入和命名方式。
+- 服务通过 `repository` 访问数据库，`model` 不依赖 Spring 或数据库 API。遵循 [ArchitectureTests](src/test/java/com/ixayda/iam/ArchitectureTests.java)中的依赖约束。
+- 数据结构变化新增 `src/main/resources/db/migration/` 下的 Flyway 迁移，不改写已交付迁移。
 
 ## 测试与检查
 
@@ -28,6 +30,12 @@
 
 ```bash
 ./mvnw -Dtest=PasswordPolicyTests test
+```
+
+包结构或依赖变化时执行：
+
+```bash
+./mvnw -Dtest=ArchitectureTests test
 ```
 
 | 改动 | 补充检查 |
