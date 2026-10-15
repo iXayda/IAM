@@ -18,6 +18,7 @@
 
 - 每次提交聚焦一个可审阅的行为，实施、对应测试和必要说明一起交付。
 - 数据结构修改新增 Flyway 迁移，不改写已交付迁移。
+- 业务变更与必要成功审计保持事务原子性，按受影响的行为和风险选择拒绝、重放、并发及故障回滚检查。
 - 沿用现有分层和命名：服务通过仓储访问数据库，模型不依赖 Spring 或数据库 API。[ArchitectureTests](src/test/java/com/ixayda/iam/ArchitectureTests.java)约束允许的依赖。
 - README 保持简洁、稳定的使用入口；详细操作和设计写入 [文档](docs/README.md)，用户可见变更整理到 [CHANGELOG.md](CHANGELOG.md)。
 
