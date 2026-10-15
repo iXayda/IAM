@@ -8,6 +8,8 @@ import java.util.UUID;
 
 import com.ixayda.iam.credential.PasswordHasher;
 import com.ixayda.iam.model.IdentityUser;
+import com.ixayda.iam.model.SecurityAuditContext;
+import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.repository.IdentityUserRepository;
 
 import org.springframework.stereotype.Service;
@@ -22,14 +24,20 @@ public class IdentityUsers {
 
 	private final PasswordHasher passwords;
 
-	IdentityUsers(IdentityUserRepository repository, PasswordHasher passwords) {
+	private final SecurityAudits audits;
+
+	IdentityUsers(IdentityUserRepository repository, PasswordHasher passwords, SecurityAudits audits) {
 		this.repository = repository;
 		this.passwords = passwords;
+		this.audits = audits;
 	}
 
 	@Transactional
-	public IdentityUser create(String username, String displayName) {
-		return this.repository.create(UUID.randomUUID(), normalizeUsername(username), normalizeDisplayName(displayName));
+	public IdentityUser create(String username, String displayName, SecurityAuditContext audit) {
+		Assert.notNull(audit, "Audit context is required");
+		IdentityUser user = this.repository.create(UUID.randomUUID(), normalizeUsername(username), normalizeDisplayName(displayName));
+		this.audits.recordSuccess(Action.USER_CREATED, user.id(), audit);
+		return user;
 	}
 
 	public Optional<IdentityUser> findById(UUID id) {
@@ -43,13 +51,15 @@ public class IdentityUsers {
 
 	/** Stores the first password without activating the user or replacing an existing credential. */
 	@Transactional
-	public void setInitialPassword(UUID id, String password) {
+	public void setInitialPassword(UUID id, String password, SecurityAuditContext audit) {
 		Assert.notNull(id, "User id is required");
+		Assert.notNull(audit, "Audit context is required");
 		IdentityUser user = this.repository.lockById(id).orElseThrow(() -> new NoSuchElementException("User not found"));
 		if (user.status() != IdentityUser.Status.PENDING) {
 			throw new IllegalStateException("Initial password requires a pending user");
 		}
 		this.repository.insertPassword(id, this.passwords.hash(password, user.username()));
+		this.audits.recordSuccess(Action.INITIAL_PASSWORD_SET, id, audit);
 	}
 
 	private static String normalizeUsername(String value) {
