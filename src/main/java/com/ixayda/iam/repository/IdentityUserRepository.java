@@ -46,11 +46,21 @@ public class IdentityUserRepository {
 				""").param("id", id).query(IdentityUserRepository::mapUser).optional();
 	}
 
+	public Optional<IdentityUser> lockByUsername(String username) {
+		return this.jdbc.sql("""
+				SELECT id, username, display_name, status, created_at FROM iam_user WHERE username = :username FOR UPDATE
+				""").param("username", username).query(IdentityUserRepository::mapUser).optional();
+	}
+
+	public Optional<String> findPasswordHash(UUID id) {
+		return this.jdbc.sql("SELECT password_hash FROM iam_password WHERE user_id = :id")
+				.param("id", id).query(String.class).optional();
+	}
+
 	public void insertPassword(UUID id, String hash) {
 		int changed = this.jdbc.sql("INSERT INTO iam_password (user_id, password_hash) VALUES (:id, :hash)")
 				.param("id", id).param("hash", hash).update();
-		if (changed != 1 || !this.jdbc.sql("SELECT password_hash FROM iam_password WHERE user_id = :id")
-				.param("id", id).query(String.class).optional().equals(Optional.of(hash))) {
+		if (changed != 1 || !findPasswordHash(id).equals(Optional.of(hash))) {
 			throw new IllegalStateException("Initial password was not stored");
 		}
 	}

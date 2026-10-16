@@ -22,6 +22,18 @@ public class SecurityAudits {
 	/** Appends success only within the transaction that performs the business operation. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void recordSuccess(SecurityAuditEvent.Action action, UUID targetUserId, SecurityAuditContext context) {
+		if (action == null || action.isFailure()) {
+			throw new IllegalArgumentException("A success action is required");
+		}
+		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context));
+	}
+
+	/** Failure belongs to a transaction that commits a rejected decision, not to a rolled-back success. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void recordFailure(SecurityAuditEvent.Action action, UUID targetUserId, SecurityAuditContext context) {
+		if (action == null || !action.isFailure()) {
+			throw new IllegalArgumentException("A failure action is required");
+		}
 		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context));
 	}
 

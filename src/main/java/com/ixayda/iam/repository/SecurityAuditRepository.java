@@ -19,10 +19,11 @@ public class SecurityAuditRepository {
 	public void append(SecurityAuditEvent event) {
 		int inserted = this.jdbc.sql("""
 				INSERT INTO iam_security_audit (id, actor, source, correlation_id, target_user_id, action, outcome)
-				VALUES (:id, :actor, :source, :correlationId, :targetUserId, :action, 'success')
+				VALUES (:id, :actor, :source, :correlationId, :targetUserId, :action, :outcome)
 				""").param("id", event.id()).param("actor", event.context().actor())
 				.param("source", event.context().source()).param("correlationId", event.context().correlationId())
 				.param("targetUserId", event.targetUserId()).param("action", event.action().name().toLowerCase(Locale.ROOT))
+				.param("outcome", event.action().isFailure() ? "failure" : "success")
 				.update();
 		if (inserted != 1) {
 			throw new IllegalStateException("Audit event was not stored");
@@ -33,7 +34,7 @@ public class SecurityAuditRepository {
 				      AND target_user_id IS NOT DISTINCT FROM :targetUserId AND action=:action AND outcome=:outcome)
 				""").param("id", event.id()).param("actor", event.context().actor()).param("source", event.context().source())
 				.param("correlationId", event.context().correlationId()).param("targetUserId", event.targetUserId())
-				.param("action", event.action().name().toLowerCase(Locale.ROOT)).param("outcome", "success").query(Boolean.class).single();
+				.param("action", event.action().name().toLowerCase(Locale.ROOT)).param("outcome", event.action().isFailure() ? "failure" : "success").query(Boolean.class).single();
 		if (!matches) { throw new IllegalStateException("Audit event does not match stored state"); }
 	}
 
