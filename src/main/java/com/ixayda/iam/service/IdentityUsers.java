@@ -81,6 +81,16 @@ public class IdentityUsers {
 		this.repository.activateAfterSetup(id);
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityUser> lockForPasswordAuthentication(String username) {
+		return this.repository.lockByUsername(username);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<String> passwordHash(UUID id) {
+		return this.repository.findPasswordHash(id);
+	}
+
 	private static String normalizeUsername(String value) {
 		if (value == null || !value.matches("[a-zA-Z0-9._-]{3,64}")) {
 			throw new IllegalArgumentException("Username requires 3 to 64 ASCII letters, digits, dots, underscores or hyphens");

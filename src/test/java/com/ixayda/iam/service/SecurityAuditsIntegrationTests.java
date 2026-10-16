@@ -1,5 +1,9 @@
 package com.ixayda.iam.service;
 
+import org.springframework.transaction.support.TransactionTemplate;
+
+import org.springframework.transaction.PlatformTransactionManager;
+
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.sql.DriverManager;
@@ -53,6 +57,9 @@ class SecurityAuditsIntegrationTests {
 
 	@Autowired
 	private PostgreSQLContainer postgres;
+
+	@Autowired
+	private PlatformTransactionManager transactions;
 
 	@BeforeEach
 	void removeTestData() {
@@ -166,6 +173,19 @@ class SecurityAuditsIntegrationTests {
 		}
 		finally { removeAuditFault(); }
 		this.users.create("alice", "Alice", this.audit); assertThat(auditCount()).isEqualTo(1);
+	}
+
+	@Test
+	void aChangedFailureAuditCannotCommitTheRelatedDeniedDecision() {
+		auditFault("BEFORE", "IF NEW.action='password_auth_failed' THEN NEW.actor='anonymous'; END IF; RETURN NEW;");
+		try {
+			assertThatIllegalStateException().isThrownBy(() -> new TransactionTemplate(this.transactions).executeWithoutResult(tx -> {
+				this.users.create("alice", "Alice", this.audit);
+				this.audits.recordFailure(Action.PASSWORD_AUTH_FAILED, null, this.audit);
+			})).withMessage("Audit event does not match stored state");
+			assertThat(this.users.findByUsername("alice")).isEmpty(); assertThat(auditCount()).isZero();
+		}
+		finally { removeAuditFault(); }
 	}
 
 	private void auditFault(String timing, String body) {

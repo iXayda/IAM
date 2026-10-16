@@ -25,6 +25,7 @@ class ArchitectureTests {
 		layeredArchitecture().consideringAllDependencies()
 				.ensureAllClassesAreContainedInArchitectureIgnoring(equivalentTo(IamApplication.class))
 				.optionalLayer("Controller").definedBy("com.ixayda.iam.controller..")
+				.layer("Security").definedBy("com.ixayda.iam.security..")
 				.optionalLayer("DTO").definedBy("com.ixayda.iam.dto..")
 				.layer("Service").definedBy("com.ixayda.iam.service..")
 				.layer("Repository").definedBy("com.ixayda.iam.repository..")
@@ -32,9 +33,10 @@ class ArchitectureTests {
 				.layer("Credential").definedBy("com.ixayda.iam.credential..")
 				.whereLayer("Controller").mayNotBeAccessedByAnyLayer()
 				.whereLayer("DTO").mayOnlyBeAccessedByLayers("Controller")
-				.whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
+				.whereLayer("Service").mayOnlyBeAccessedByLayers("Controller", "Security")
+				.whereLayer("Security").mayOnlyBeAccessedByLayers("Controller")
 				.whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
-				.whereLayer("Model").mayOnlyBeAccessedByLayers("Controller", "DTO", "Service", "Repository")
+				.whereLayer("Model").mayOnlyBeAccessedByLayers("Controller", "DTO", "Service", "Repository", "Security")
 				.whereLayer("Credential").mayOnlyBeAccessedByLayers("Service")
 				.check(APPLICATION_CLASSES);
 	}
