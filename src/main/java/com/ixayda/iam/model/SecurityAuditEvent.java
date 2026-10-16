@@ -14,7 +14,7 @@ public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, Secu
 	}
 
 	public enum Action {
-		USER_CREATED, INITIAL_PASSWORD_SET
+		USER_CREATED, INITIAL_PASSWORD_SET, ACCOUNT_SETUP_ISSUED, ACCOUNT_SETUP_CANCELLED, ACCOUNT_SETUP_COMPLETED
 	}
 
 }
