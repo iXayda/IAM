@@ -68,6 +68,7 @@ class IdentityUsersIntegrationTests {
 	@BeforeEach
 	void removeTestUsers() {
 		this.jdbc.sql("DELETE FROM iam_security_audit").update();
+		this.jdbc.sql("DELETE FROM iam_user_setup").update();
 		this.jdbc.sql("DELETE FROM iam_password").update();
 		this.jdbc.sql("DELETE FROM iam_user").update();
 	}

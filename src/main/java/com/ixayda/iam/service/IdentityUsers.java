@@ -13,6 +13,7 @@ import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.repository.IdentityUserRepository;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
@@ -60,6 +61,24 @@ public class IdentityUsers {
 		}
 		this.repository.insertPassword(id, this.passwords.hash(password, user.username()));
 		this.audits.recordSuccess(Action.INITIAL_PASSWORD_SET, id, audit);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	IdentityUser lockById(UUID id) {
+		return this.repository.lockById(id).orElseThrow(() -> new NoSuchElementException("User not found"));
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	void lockForSetup(UUID id) {
+		IdentityUser user = lockById(id);
+		if (user.status() != IdentityUser.Status.PENDING || this.repository.hasPassword(id)) {
+			throw new IllegalStateException("Account setup requires a pending user without a password");
+		}
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	void activateAfterSetup(UUID id) {
+		this.repository.activateAfterSetup(id);
 	}
 
 	private static String normalizeUsername(String value) {
