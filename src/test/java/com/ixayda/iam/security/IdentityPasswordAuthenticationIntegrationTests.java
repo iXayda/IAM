@@ -2,6 +2,7 @@ package com.ixayda.iam.security;
 
 import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.List;
@@ -478,7 +479,7 @@ class IdentityPasswordAuthenticationIntegrationTests {
 			}
 			var waiting = executor.submit(() -> authenticate("alice", PASSWORD, context(1)));
 			try {
-				awaitLock("%FROM iam_user WHERE username = %FOR UPDATE%");
+				awaitBlockedBy(blocker);
 				try (var statement = blocker.prepareStatement("UPDATE iam_user SET status = 'disabled' WHERE id = ?")) {
 					statement.setObject(1, user.id()); statement.executeUpdate();
 				}
@@ -501,7 +502,7 @@ class IdentityPasswordAuthenticationIntegrationTests {
 					var result = statement.executeQuery()) { assertThat(result.next()).isTrue(); }
 			var waiting = executor.submit(() -> authenticate("alice", PASSWORD, context(1)));
 			try {
-				awaitLock("%FROM iam_password_authentication_limit%FOR UPDATE%");
+				awaitBlockedBy(blocker);
 				String sql = mode.equals("block") ? "UPDATE iam_password_authentication_limit SET failures = 50 WHERE dimension = 'source'"
 						: "UPDATE iam_password_authentication_limit SET failures = 50, window_started_at = clock_timestamp() - INTERVAL '5 minutes' WHERE dimension = 'source'";
 				try (var statement = blocker.createStatement()) { statement.executeUpdate(sql); }
@@ -655,11 +656,12 @@ class IdentityPasswordAuthenticationIntegrationTests {
 		return this.jdbc.sql("SELECT password_hash FROM iam_password WHERE user_id = :id").param("id", id).query(String.class).single();
 	}
 
-	private void awaitLock(String query) {
-		await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertThat(this.jdbc.sql("""
-				SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
-				AND wait_event_type = 'Lock' AND query LIKE :pattern
-				""").param("pattern", query).query(Long.class).single()).isEqualTo(1));
+	private void awaitBlockedBy(Connection blocker) {
+		int pid = JdbcClient.create(new SingleConnectionDataSource(blocker, true)).sql("SELECT pg_backend_pid()").query(Integer.class).single();
+		await().atMost(Duration.ofSeconds(10)).until(() -> this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
+				    AND :blocker = ANY(pg_blocking_pids(pid)))
+				""").param("blocker", pid).query(Boolean.class).single());
 	}
 
 	private <T> List<T> runConcurrently(List<Callable<T>> operations) throws Exception {

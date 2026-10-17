@@ -16,6 +16,7 @@ import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.repository.PasswordAuthenticationLimitRepository;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -55,6 +56,11 @@ public class IdentityAuthentications {
 			throw new IllegalStateException("Password authentication requires an independent transaction");
 		}
 		return this.transaction.execute(status -> evaluate(username, password, context));
+	}
+
+	@Scheduled(fixedDelayString = "${iam.password-authentication.cleanup-ms:60000}", initialDelayString = "${iam.password-authentication.cleanup-ms:60000}")
+	public void cleanUpExpiredLimits() {
+		this.transaction.executeWithoutResult(status -> this.repository.cleanUpExpired());
 	}
 
 	private Optional<IdentityUser> evaluate(String username, String password, PasswordAuthenticationContext context) {
