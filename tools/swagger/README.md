@@ -1,6 +1,6 @@
 # OpenAPI 独立预览
 
-读取已导出的 OpenAPI 规范，在本地校验并通过只读 Swagger UI 预览。
+读取已导出的 OpenAPI 规范，在本地校验并通过只读 Swagger UI 预览。规范的导出入口见 [IAM 接口文档](../../README.md#接口文档工具)。
 
 需要可用的 Docker Compose。以下命令在仓库根目录执行，将 `OPENAPI_DIR` 设置为规范目录的绝对路径，`OPENAPI_FILE` 设置为目录内的文件路径，支持 YAML 和 JSON：
 

@@ -22,25 +22,44 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 ./mvnw clean verify
 ```
 
-启动应用前配置专用 PostgreSQL 数据库连接：
+启动应用前配置专用 PostgreSQL 数据库连接及 HTTPS 入口：
 
 | 环境变量 | 内容 |
 | --- | --- |
 | `SPRING_DATASOURCE_URL` | PostgreSQL JDBC 连接地址 |
 | `SPRING_DATASOURCE_USERNAME` | 数据库用户名 |
 | `SPRING_DATASOURCE_PASSWORD` | 数据库密码，由运行环境注入 |
+| `SERVER_SSL_ENABLED` | IAM 提供 HTTPS 时为 `true`；受信代理通过 HTTP 回源时为 `false` |
+| `SERVER_SSL_KEY_STORE` | IAM 提供 HTTPS 时必填，TLS 密钥库位置，例如 `file:/run/secrets/iam.p12` |
+| `SERVER_SSL_KEY_STORE_PASSWORD` | IAM 提供 HTTPS 时必填，密钥库密码，由运行环境注入 |
+| `SERVER_FORWARD_HEADERS_STRATEGY` | 默认 `NONE`；受信代理模式使用 `NATIVE` |
+| `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | `NATIVE` 模式必填，匹配实际代理来源 IP 的正则 |
 
 数据库账号需要具备建表和执行迁移的权限。Flyway 在启动时创建或升级表结构。
 
-配置就绪后启动：
+应用入口使用 HTTPS，可由 IAM 或受信代理终止 TLS。默认不信任转发头；HTTP 回源须显式启用受信代理模式，并限制 IAM 端口仅由代理访问。配置就绪后启动：
 
 ```bash
 java -jar target/iam.jar
 ```
 
+## 应用接入
+
+应用没有默认账号或公开注册入口。用户需经授权创建，由组织核验身份并交付一次性开通凭据，完成密码设置后登录。
+
+身份前端通过同源 HTTPS 调用 IAM，使用会话 Cookie 和 CSRF 防护；前后端可独立部署，但浏览器访问需使用同一固定 origin。代理可使用经过验证的 HTTPS 回源，或在受保护内网使用显式受信的 HTTP 回源；不开放跨源凭据访问。
+
+IAM 会话与应用会话分别管理，IAM 会话不能作为业务 API 的访问令牌。接口字段、请求示例、响应及错误由 OpenAPI 描述；跨请求流程见 [接入指南](docs/integration.md)。
+
 ## 接口文档工具
 
-已导出的规范可通过 [独立预览工具](tools/swagger/README.md)校验和查看。
+接口规范由 springdoc 根据控制器和 DTO 生成，并补充 Spring Security 过滤器处理的登录和退出端点。默认关闭文档入口；需要导出时，在完成数据库和 HTTPS 配置后启用 `documentation` profile：
+
+```bash
+java -jar target/iam.jar --spring.profiles.active=documentation
+```
+
+使用有效会话读取 `/v3/api-docs`（JSON）或 `/v3/api-docs.yaml`（YAML），导出规范到本地后，通过 [独立预览工具](tools/swagger/README.md)校验和查看。
 
 ## 反馈与维护
 

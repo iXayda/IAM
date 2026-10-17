@@ -14,14 +14,12 @@ public class PasswordAuthenticationLimitRepository {
 	}
 
 	public int lockLimit(String dimension, String key, int windowSeconds) {
-		this.jdbc.sql("""
+		// Lock existing buckets during insertion so cleanup cannot remove them before admission.
+		requireOne(this.jdbc.sql("""
 				INSERT INTO iam_password_authentication_limit (dimension, subject_key)
-				VALUES (:dimension, :key) ON CONFLICT DO NOTHING
-				""").param("dimension", dimension).param("key", key).update();
-		this.jdbc.sql("""
-				SELECT subject_key FROM iam_password_authentication_limit
-				WHERE dimension = :dimension AND subject_key = :key FOR UPDATE
-				""").param("dimension", dimension).param("key", key).query(String.class).single();
+				VALUES (:dimension, :key)
+				ON CONFLICT (dimension, subject_key) DO UPDATE SET subject_key = EXCLUDED.subject_key
+				""").param("dimension", dimension).param("key", key).update());
 		// Read real time only after obtaining the lock, rather than using the transaction start time.
 		this.jdbc.sql("""
 				UPDATE iam_password_authentication_limit SET failures = 0, window_started_at = clock_timestamp()
@@ -48,6 +46,18 @@ public class PasswordAuthenticationLimitRepository {
 				WHERE dimension = 'account' AND subject_key = :key
 				""").param("key", key).update();
 		requireOne(changed);
+	}
+
+	public void cleanUpExpired() {
+		this.jdbc.sql("""
+				WITH expired AS (
+				    SELECT dimension, subject_key FROM iam_password_authentication_limit
+				    WHERE window_started_at < clock_timestamp() - INTERVAL '1 day'
+				    ORDER BY window_started_at LIMIT 1000 FOR UPDATE SKIP LOCKED
+				)
+				DELETE FROM iam_password_authentication_limit current USING expired
+				WHERE current.dimension = expired.dimension AND current.subject_key = expired.subject_key
+				""").update();
 	}
 
 	private static void requireOne(int changed) {

@@ -16,11 +16,18 @@
 ./mvnw clean verify
 ```
 
+按 [运行说明](README.md#开发与运行)配置数据库及 HTTPS 后启动 Web 服务：
+
+```bash
+java -jar target/iam.jar
+```
+
 ## 代码约定
 
 - 修改前阅读受影响实现及已有测试，沿用该文件的缩进、导入和命名方式。
 - 服务通过 `repository` 访问数据库，`model` 不依赖 Spring 或数据库 API。遵循 [ArchitectureTests](src/test/java/com/ixayda/iam/ArchitectureTests.java)中的依赖约束。
 - 数据结构变化新增 `src/main/resources/db/migration/` 下的 Flyway 迁移，不改写已交付迁移。
+- HTTP 契约变化同步更新受影响控制器、DTO、OpenAPI 和测试。由 Spring Security 处理的登录及退出端点，另核对 [IdentityBrowserOpenApiConfiguration](src/main/java/com/ixayda/iam/security/IdentityBrowserOpenApiConfiguration.java)中的描述。
 
 ## 测试与检查
 
@@ -45,6 +52,7 @@
 ## 安全注意点
 
 - 安全状态变更与必要成功审计保持事务原子性。
+- 不通过放宽 HTTPS issuer、认证、授权、CSRF、MFA、重放或尝试预算校验，或跳过断言使测试通过。
 - 验证使用隔离数据库、合成数据和临时凭据，不使用生产秘密，不提交日志、数据库归档或本地环境文件。
 
 ## 提交与 PR

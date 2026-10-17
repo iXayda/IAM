@@ -1,0 +1,186 @@
+package com.ixayda.iam.service;
+
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Supplier;
+
+import com.ixayda.iam.model.IdentityUser;
+import com.ixayda.iam.model.PasswordAuthenticationContext;
+import com.ixayda.iam.model.SecurityAuditContext;
+import com.ixayda.iam.model.SecurityAuditEvent.Action;
+import com.ixayda.iam.repository.IdentityBrowserSessionRepository;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextImpl;
+import org.springframework.session.Session;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.SerializationUtils;
+
+/** Atomic session persistence and audit around Spring Session's storage operations. */
+@Service
+public class IdentityBrowserSessions {
+
+	public static final String SECURITY_CONTEXT = "SPRING_SECURITY_CONTEXT";
+	public static final String AUTHENTICATED_AT = "iam.authenticatedAt";
+	public static final String LOGIN_PENDING = "iam.loginPending";
+	public static final String ORIGINAL_ID = "iam.originalSessionId";
+	private static final String PERSISTED = "iam.persisted";
+	private static final String FAILED = "iam.persistenceFailed";
+
+	private final IdentityUsers users;
+	private final IdentityBrowserSessionRepository repository;
+	private final SecurityAudits audits;
+	private final TransactionTemplate transaction;
+	private final Duration idleTimeout;
+	private final Duration absoluteTimeout;
+
+	IdentityBrowserSessions(IdentityUsers users, IdentityBrowserSessionRepository repository, SecurityAudits audits,
+			PlatformTransactionManager manager, @Value("${iam.browser.idle-seconds:1800}") int idleSeconds,
+			@Value("${iam.browser.absolute-seconds:28800}") int absoluteSeconds) {
+		if (idleSeconds < 1 || idleSeconds > 1800 || absoluteSeconds < idleSeconds || absoluteSeconds > 28800) {
+			throw new IllegalArgumentException("Browser session timeouts exceed the supported policy");
+		}
+		this.users = users;
+		this.repository = repository;
+		this.audits = audits;
+		this.transaction = new TransactionTemplate(manager);
+		this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+		this.idleTimeout = Duration.ofSeconds(idleSeconds);
+		this.absoluteTimeout = Duration.ofSeconds(absoluteSeconds);
+	}
+
+	public Duration idleTimeout() {
+		return this.idleTimeout;
+	}
+
+	public boolean isAuthenticationCurrent(UUID userId, Object authenticatedAt) {
+		return withinAbsoluteLifetime(authenticatedAt) && this.users.findById(userId)
+				.filter(user -> user.status() == IdentityUser.Status.ACTIVE).isPresent();
+	}
+
+	public void save(Session session, Runnable persist, Supplier<Session> readStored, Supplier<Set<String>> changedAttributes) {
+		if (Boolean.TRUE.equals(session.getAttribute(FAILED))) {
+			throw new IllegalStateException("Browser session persistence already failed");
+		}
+		try {
+			this.transaction.executeWithoutResult(status -> {
+				SecurityContext context = session.getAttribute(SECURITY_CONTEXT);
+				Authentication authentication = context == null ? null : context.getAuthentication();
+				UUID userId = null;
+				if (authentication != null) {
+					if (!authentication.isAuthenticated() || !(authentication.getPrincipal() instanceof UUID id)) {
+						throw new IllegalStateException("Unexpected browser authentication");
+					}
+					userId = id;
+					if (this.users.lockById(id).status() != IdentityUser.Status.ACTIVE) {
+						throw new IllegalStateException("Browser identity is unavailable");
+					}
+				}
+				boolean login = Boolean.TRUE.equals(session.getAttribute(LOGIN_PENDING));
+				String originalId = login ? session.getAttribute(ORIGINAL_ID) : session.getId();
+				if (Boolean.TRUE.equals(session.getAttribute(PERSISTED))) {
+					if (originalId == null || !this.repository.lock(originalId)) {
+						throw new IllegalStateException("Browser session is no longer available");
+					}
+					if (!login && !this.repository.userId(originalId).equals(Optional.ofNullable(userId))) {
+						throw new IllegalStateException("Browser session identity changed");
+					}
+				}
+				if (userId != null) {
+					if (login) {
+						session.setAttribute(AUTHENTICATED_AT, System.currentTimeMillis());
+					}
+					if (!withinAbsoluteLifetime(session.getAttribute(AUTHENTICATED_AT))) {
+						throw new IllegalStateException("Browser session expired");
+					}
+					// Persist a minimal, serializable identity; transport details and credentials stay outside the session.
+					session.setAttribute(SECURITY_CONTEXT, new SecurityContextImpl(
+							UsernamePasswordAuthenticationToken.authenticated(userId, null, List.of())));
+				}
+				session.removeAttribute(LOGIN_PENDING);
+				session.removeAttribute(ORIGINAL_ID);
+				session.setAttribute(PERSISTED, true);
+				Map<String, byte[]> expectedAttributes = new HashMap<>();
+				for (String name : changedAttributes.get()) {
+					expectedAttributes.put(name, SerializationUtils.serialize(session.getAttribute(name)));
+				}
+				// Repeated framework commits must write the metadata that this transaction verifies.
+				session.setLastAccessedTime(session.getLastAccessedTime());
+				persist.run();
+				this.repository.requireStored(session.getId(), userId,
+						session.getLastAccessedTime().plus(session.getMaxInactiveInterval()).toEpochMilli());
+				requireMatching(session, expectedAttributes, readStored.get());
+				if (login) {
+					if (userId == null) {
+						throw new IllegalStateException("Authenticated browser identity is required");
+					}
+					UUID correlation = authentication.getDetails() instanceof PasswordAuthenticationContext details
+							? details.correlationId() : UUID.randomUUID();
+					this.audits.recordSuccess(Action.BROWSER_SESSION_CREATED, userId,
+							new SecurityAuditContext("user:" + userId, "browser:login", correlation));
+				}
+			});
+		}
+		catch (RuntimeException ex) {
+			// A response commit may be retried by the servlet wrapper; never retry a rolled-back mutable JdbcSession.
+			session.setAttribute(FAILED, true);
+			throw ex;
+		}
+	}
+
+	private static void requireMatching(Session expected, Map<String, byte[]> expectedAttributes, Session stored) {
+		if (stored == null || !expected.getId().equals(stored.getId())
+				// Official JDBC storage uses epoch milliseconds.
+				|| expected.getCreationTime().toEpochMilli() != stored.getCreationTime().toEpochMilli()
+				|| expected.getLastAccessedTime().toEpochMilli() != stored.getLastAccessedTime().toEpochMilli()
+				|| !expected.getMaxInactiveInterval().equals(stored.getMaxInactiveInterval())) {
+			throw new IllegalStateException("Browser session storage differs from the requested state");
+		}
+		for (var entry : expectedAttributes.entrySet()) {
+			if (!Arrays.equals(entry.getValue(), SerializationUtils.serialize(stored.getAttribute(entry.getKey())))) {
+				throw new IllegalStateException("Browser session attribute was not stored");
+			}
+		}
+	}
+
+	public void delete(String id, UUID actor, Runnable remove) {
+		this.transaction.executeWithoutResult(status -> {
+			Optional<UUID> user = this.repository.userId(id);
+			user.ifPresent(this.users::lockById);
+			if (!this.repository.lock(id)) {
+				return;
+			}
+			if (!this.repository.userId(id).equals(user)) {
+				throw new IllegalStateException("Browser session identity changed");
+			}
+			remove.run();
+			this.repository.requireDeleted(id);
+			user.ifPresent(userId -> this.audits.recordSuccess(Action.BROWSER_SESSION_ENDED, userId,
+					new SecurityAuditContext(userId.equals(actor) ? "user:" + actor : "system:browser-session",
+							userId.equals(actor) ? "browser:logout" : "browser:session", UUID.randomUUID())));
+		});
+	}
+
+	public void recordEntryThrottle() {
+		this.transaction.executeWithoutResult(status -> this.audits.recordFailure(Action.BROWSER_ENTRY_THROTTLED,
+				null, new SecurityAuditContext("anonymous", "browser:entry", UUID.randomUUID())));
+	}
+
+	private boolean withinAbsoluteLifetime(Object authenticatedAt) {
+		long now = System.currentTimeMillis();
+		return authenticatedAt instanceof Long time && time <= now && time > now - this.absoluteTimeout.toMillis();
+	}
+
+}
