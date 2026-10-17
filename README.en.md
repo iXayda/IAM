@@ -38,6 +38,10 @@ Start the application after configuring the environment:
 java -jar target/iam.jar
 ```
 
+## API documentation tools
+
+Use the [standalone preview tool](tools/swagger/README.md) to validate and view an exported specification.
+
 ## Support and maintenance
 
 Report usage issues and improvement suggestions through [GitHub Issues](https://github.com/iXayda/IAM/issues). The project is maintained by ka1i. Contact: <iXayda@outlook.com>.

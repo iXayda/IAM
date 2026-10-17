@@ -1,0 +1,35 @@
+name: iam-swagger
+
+services:
+  validate:
+    image: redocly/cli:2.64.1
+    working_dir: /spec
+    command: ["lint", "${OPENAPI_FILE:-openapi.yaml}", "--extends", "spec"]
+    volumes:
+      - type: bind
+        source: ${OPENAPI_DIR:?Set OPENAPI_DIR to the absolute directory containing the OpenAPI document}
+        target: /spec
+        read_only: true
+        bind:
+          create_host_path: false
+
+  ui:
+    image: swaggerapi/swagger-ui:v5.32.14
+    depends_on:
+      validate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${SWAGGER_PORT:-8081}:8080"
+    environment:
+      SWAGGER_JSON: /spec/${OPENAPI_FILE:-openapi.yaml}
+      SWAGGER_ROOT: /spec
+      SWAGGER_JSON_URL: /${OPENAPI_FILE:-openapi.yaml}
+      SUPPORTED_SUBMIT_METHODS: "[]"
+      VALIDATOR_URL: none
+    volumes:
+      - type: bind
+        source: ${OPENAPI_DIR:?Set OPENAPI_DIR to the absolute directory containing the OpenAPI document}
+        target: /spec
+        read_only: true
+        bind:
+          create_host_path: false

@@ -38,6 +38,10 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 java -jar target/iam.jar
 ```
 
+## 接口文档工具
+
+已导出的规范可通过 [独立预览工具](tools/swagger/README.md)校验和查看。
+
 ## 反馈与维护
 
 使用问题和改进建议可在 [GitHub Issues](https://github.com/iXayda/IAM/issues) 提出。项目由 ka1i 维护，联系邮箱：<iXayda@outlook.com>。
