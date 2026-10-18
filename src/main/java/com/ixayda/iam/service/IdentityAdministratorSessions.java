@@ -59,10 +59,14 @@ public class IdentityAdministratorSessions {
 	}
 
 	private boolean isCurrent(IdentityAdministratorAuthentication verified) {
+		return withinLifetime(verified)
+				&& this.administrators.hasCurrentAuthentication(verified.userId(), verified.factorId(), verified.credentialVersion());
+	}
+
+	boolean withinLifetime(IdentityAdministratorAuthentication verified) {
 		Instant now = Instant.now();
 		return !verified.verifiedAt().isAfter(now) && verified.verifiedAt().plusSeconds(MFA_SECONDS).isAfter(now)
-				&& verified.verifiedAt().toEpochMilli() >= verified.passwordAuthenticatedAt()
-				&& this.administrators.hasCurrentAuthentication(verified.userId(), verified.factorId(), verified.credentialVersion());
+				&& verified.verifiedAt().toEpochMilli() >= verified.passwordAuthenticatedAt();
 	}
 
 	/** Called inside the authentication transaction, after the HTTP adapter has flushed the official session repository. */

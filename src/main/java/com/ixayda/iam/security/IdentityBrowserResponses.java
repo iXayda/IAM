@@ -7,19 +7,30 @@ import tools.jackson.databind.json.JsonMapper;
 
 import jakarta.servlet.http.HttpServletResponse;
 
-final class IdentityBrowserResponses {
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+
+public final class IdentityBrowserResponses {
 
 	private static final JsonMapper JSON = new JsonMapper();
 
 	private IdentityBrowserResponses() { }
 
+	public static ResponseEntity<Map<String, String>> error(Error error) {
+		return ResponseEntity.status(error.status).contentType(MediaType.APPLICATION_JSON).body(body(error));
+	}
+
 	static void error(HttpServletResponse response, Error error) throws IOException {
 		response.setStatus(error.status);
 		response.setContentType("application/json;charset=UTF-8");
-		response.getWriter().write(JSON.writeValueAsString(Map.of("code", error.name(), "message", error.message)));
+		response.getWriter().write(JSON.writeValueAsString(body(error)));
 	}
 
-	enum Error {
+	private static Map<String, String> body(Error error) {
+		return Map.of("code", error.name(), "message", error.message);
+	}
+
+	public enum Error {
 		BAD_REQUEST(400, "请求格式无效"),
 		UNAUTHENTICATED(401, "请先登录"),
 		INVALID_CREDENTIALS(401, "账号或密码错误"),

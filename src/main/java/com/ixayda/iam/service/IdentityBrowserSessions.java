@@ -220,7 +220,7 @@ public class IdentityBrowserSessions {
 				null, new SecurityAuditContext("anonymous", "browser:entry", UUID.randomUUID())));
 	}
 
-	private boolean withinAbsoluteLifetime(Object authenticatedAt) {
+	boolean withinAbsoluteLifetime(Object authenticatedAt) {
 		long now = System.currentTimeMillis();
 		return authenticatedAt instanceof Long time && time <= now && time > now - this.absoluteTimeout.toMillis();
 	}
