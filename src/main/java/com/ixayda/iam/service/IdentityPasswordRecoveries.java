@@ -14,6 +14,8 @@ import com.ixayda.iam.repository.IdentityPasswordRecoveryRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
@@ -70,9 +72,19 @@ public class IdentityPasswordRecoveries {
 		Assert.notNull(audit, "Trusted audit context is required");
 		this.transaction.executeWithoutResult(status -> {
 			this.users.lockById(userId);
-			this.repository.cancel(userId);
+			if (!this.repository.cancel(userId)) {
+				throw new IllegalStateException("No outstanding password recovery");
+			}
 			this.audits.recordSuccess(Action.PASSWORD_RECOVERY_CANCELLED, userId, audit);
 		});
+	}
+
+	/** The lifecycle workflow already holds the owning user's lock. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	void cancelOutstanding(UUID userId, SecurityAuditContext audit) {
+		if (this.repository.cancel(userId)) {
+			this.audits.recordSuccess(Action.PASSWORD_RECOVERY_CANCELLED, userId, audit);
+		}
 	}
 
 	/** The proof establishes identity; callers supply the trusted entry source, never a claimed actor. */
@@ -118,7 +130,7 @@ public class IdentityPasswordRecoveries {
 			return Result.INVALID_PROOF;
 		}
 		var audit = new SecurityAuditContext("user:" + userId, anonymous.source(), anonymous.correlationId());
-		this.sessions.revokeAllForCredentialReplacement(userId, audit);
+		this.sessions.revokeAll(userId, audit);
 		this.audits.recordSuccess(Action.PASSWORD_RECOVERY_COMPLETED, userId, audit);
 		return Result.COMPLETED;
 	}

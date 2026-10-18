@@ -101,15 +101,47 @@ public class IdentityUserRepository {
 				.param("id", id).query(Boolean.class).single();
 	}
 
+	/** Called under the user lock; invalidates authentication evidence without changing the password. */
+	public void disable(UUID id) {
+		var version = findPasswordVersion(id);
+		if (version.isPresent()) {
+			long expected = Math.addExact(version.orElseThrow(), 1);
+			int changed = this.jdbc.sql("UPDATE iam_password SET credential_version = :next WHERE user_id = :id AND credential_version = :previous")
+					.param("next", expected).param("id", id).param("previous", version.orElseThrow()).update();
+			if (changed != 1 || !findPasswordVersion(id).equals(Optional.of(expected))) {
+				throw new IllegalStateException("Authentication invalidation was not stored");
+			}
+		}
+		int changed = this.jdbc.sql("UPDATE iam_user SET status = 'disabled' WHERE id = :id AND status IN ('pending', 'active')")
+				.param("id", id).update();
+		requireStatus(id, changed, IdentityUser.Status.DISABLED);
+	}
+
+	/** Password possession alone cannot replace evidence of completed controlled setup. */
+	public void enable(UUID id) {
+		boolean completed = this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_user_setup s JOIN iam_password p ON p.user_id = s.user_id
+				WHERE s.user_id = :id AND s.status = 'consumed')
+				""").param("id", id).query(Boolean.class).single();
+		var status = completed ? IdentityUser.Status.ACTIVE : IdentityUser.Status.PENDING;
+		int changed = this.jdbc.sql("UPDATE iam_user SET status = :status WHERE id = :id AND status = 'disabled'")
+				.param("status", status.name().toLowerCase(Locale.ROOT)).param("id", id).update();
+		requireStatus(id, changed, status);
+	}
+
+	private void requireStatus(UUID id, int changed, IdentityUser.Status expected) {
+		if (changed != 1 || findById(id).filter(user -> user.status() == expected).isEmpty()) {
+			throw new IllegalStateException("Account state change was not stored");
+		}
+	}
+
 	public void activateAfterSetup(UUID id) {
 		int updated = this.jdbc.sql("""
 				UPDATE iam_user SET status = 'active' WHERE id = :id AND status = 'pending'
 				    AND EXISTS (SELECT 1 FROM iam_password WHERE user_id = :id)
 				    AND EXISTS (SELECT 1 FROM iam_user_setup WHERE user_id = :id AND status = 'consumed')
 				""").param("id", id).update();
-		if (updated != 1 || findById(id).filter(user -> user.status() == IdentityUser.Status.ACTIVE).isEmpty()) {
-			throw new IllegalStateException("Account setup did not activate the user");
-		}
+		requireStatus(id, updated, IdentityUser.Status.ACTIVE);
 	}
 
 	private static IdentityUser mapUser(ResultSet result, int row) throws SQLException {

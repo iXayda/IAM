@@ -55,10 +55,23 @@ public class IdentityUserSetupRepository {
 	}
 
 	public boolean cancel(UUID userId) {
-		return this.jdbc.sql("""
+		var digest = this.jdbc.sql("SELECT token_digest FROM iam_user_setup WHERE user_id = :userId AND status = 'issued'")
+				.param("userId", userId).query(String.class).optional();
+		if (digest.isEmpty()) {
+			return false;
+		}
+		int changed = this.jdbc.sql("""
 				UPDATE iam_user_setup SET status = 'cancelled', finished_at = clock_timestamp()
 				WHERE user_id = :userId AND status = 'issued'
-				""").param("userId", userId).update() == 1;
+				""").param("userId", userId).update();
+		boolean stored = this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_user_setup WHERE user_id = :userId AND token_digest = :digest
+				AND status = 'cancelled' AND finished_at IS NOT NULL)
+				""").param("userId", userId).param("digest", digest.orElseThrow()).query(Boolean.class).single();
+		if (changed != 1 || !stored) {
+			throw new IllegalStateException("Account setup was not cancelled");
+		}
+		return true;
 	}
 
 	private record Issuance(OffsetDateTime issuedAt, OffsetDateTime expiresAt) { }
