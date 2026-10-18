@@ -12,6 +12,7 @@ import java.util.stream.Stream;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.IdentityUserPage;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
+import com.ixayda.iam.service.IdentityUserCreations;
 import com.ixayda.iam.service.IdentityUsers;
 
 import jakarta.servlet.ReadListener;
@@ -93,10 +94,10 @@ class IdentityQueryControllerTests {
 		var administrators = mock(IdentityAdministratorSessions.class);
 		return switch (route) {
 			case USERS, USER -> {
-				var service = mock(IdentityUsers.class);
+				var service = mock(IdentityUsers.class); var creations = mock(IdentityUserCreations.class);
 				when(service.search(isNull(), isNull(), eq(20), isNull())).thenReturn(new IdentityUserPage(List.of(), null));
 				when(service.findById(ID)).thenReturn(Optional.of(new IdentityUser(ID, "alice", "Alice", IdentityUser.Status.ACTIVE, Instant.EPOCH)));
-				yield endpoint(new IdentityUserManagementController(service), service);
+				yield endpoint(new IdentityUserManagementController(service, creations, administrators), service, creations, administrators);
 			}
 		};
 	}
@@ -108,8 +109,8 @@ class IdentityQueryControllerTests {
 	private record Endpoint(MockMvc mvc, Object[] services) { }
 
 	private enum Route {
-		USERS("/api/admin/users", "Invalid user query"),
-		USER("/api/admin/users/" + ID, "Invalid user query");
+		USERS("/api/admin/users", "Invalid user request"),
+		USER("/api/admin/users/" + ID, "Invalid user request");
 
 		private final String path;
 		private final String error;

@@ -169,7 +169,7 @@ public class IdentityUsers {
 		this.repository.enable(id);
 	}
 
-	private static String normalizeUsername(String value) {
+	static String normalizeUsername(String value) {
 		if (value == null || !value.matches("[a-zA-Z0-9._-]{3,64}")) {
 			throw new IllegalArgumentException("Username requires 3 to 64 ASCII letters, digits, dots, underscores or hyphens");
 		}

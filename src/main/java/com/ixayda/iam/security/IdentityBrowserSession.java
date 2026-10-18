@@ -2,10 +2,14 @@ package com.ixayda.iam.security;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import org.springframework.session.Session;
+import org.springframework.util.SerializationUtils;
 
 /** Tracks public Session mutations without inspecting the JDBC implementation's private delta. */
 final class IdentityBrowserSession implements Session {
@@ -14,6 +18,7 @@ final class IdentityBrowserSession implements Session {
 	private final Set<String> storedNames;
 	private final Set<String> changes = new HashSet<>();
 	private boolean fresh;
+	private StoredState committedState;
 
 	IdentityBrowserSession(Session delegate, boolean fresh) {
 		this.delegate = delegate;
@@ -29,12 +34,32 @@ final class IdentityBrowserSession implements Session {
 		return this.fresh ? Set.copyOf(getAttributeNames()) : Set.copyOf(this.changes);
 	}
 
-	void saved() {
+	StoredState saved() {
+		var attributes = new HashMap<String, byte[]>();
+		for (String name : getAttributeNames()) {
+			attributes.put(name, SerializationUtils.serialize(getAttribute(name)));
+		}
+		this.committedState = null;
 		this.fresh = false;
 		this.storedNames.clear();
 		this.storedNames.addAll(getAttributeNames());
 		this.changes.clear();
+		return new StoredState(getId(), getCreationTime(), getLastAccessedTime(), getMaxInactiveInterval(), Map.copyOf(attributes));
 	}
+
+	void committed(StoredState state) { this.committedState = state; }
+
+	/** Only the same successfully committed state may bypass a repeated repository save. */
+	boolean isUnchangedSinceCommit() {
+		var state = this.committedState;
+		return state != null && state.id().equals(getId()) && state.createdAt().equals(getCreationTime())
+				&& state.lastAccessedAt().equals(getLastAccessedTime()) && state.maxInactiveInterval().equals(getMaxInactiveInterval())
+				&& state.attributes().keySet().equals(getAttributeNames())
+				&& state.attributes().entrySet().stream().allMatch(entry ->
+						Arrays.equals(entry.getValue(), SerializationUtils.serialize(getAttribute(entry.getKey()))));
+	}
+
+	record StoredState(String id, Instant createdAt, Instant lastAccessedAt, Duration maxInactiveInterval, Map<String, byte[]> attributes) { }
 
 	@Override
 	public String getId() { return this.delegate.getId(); }

@@ -253,12 +253,13 @@ class IdentityUserManagementIntegrationTests extends BrowserHttpTestSupport {
 
 	@ParameterizedTest
 	@ValueSource(strings = { "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS" })
-	void onlyTheTwoExactGetRoutesAreAuthorized(String method) throws Exception {
+	void unopenedMethodsAndUserSubpathsRemainDenied(String method) throws Exception {
 		var factor = administrator();
 		try (var client = client()) {
 			String session = elevate(client, login(client, "alice"), factor);
 			String token = csrf(get(client, "/api/csrf", session));
 			for (String path : List.of("/api/admin/users", "/api/admin/users/" + factor.userId())) {
+				if (method.equals("POST") && path.equals("/api/admin/users")) { continue; }
 				var request = HttpRequest.newBuilder(URI.create("https://localhost:" + this.port + path)).header("Cookie", session)
 						.header("X-CSRF-TOKEN", token).method(method, HttpRequest.BodyPublishers.noBody()).build();
 				assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403);
@@ -369,7 +370,7 @@ class IdentityUserManagementIntegrationTests extends BrowserHttpTestSupport {
 	private long events(String action) { return this.jdbc.sql("SELECT count(*) FROM iam_security_audit WHERE action = :action").param("action", action).query(Long.class).single(); }
 	private static void assertInvalid(HttpResponse<String> response) {
 		assertThat(response.statusCode()).isEqualTo(400);
-		assertThat(response.body()).isEqualTo("Invalid user query");
+		assertThat(response.body()).isEqualTo("Invalid user request");
 		assertSecurityHeaders(response);
 	}
 	private static void assertUnavailable(HttpResponse<String> response) {
