@@ -13,6 +13,7 @@ import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.IdentityUserPage;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityUserCreations;
+import com.ixayda.iam.service.IdentityUserProfileManagement;
 import com.ixayda.iam.service.IdentityUserStateChanges;
 import com.ixayda.iam.service.IdentityUsers;
 
@@ -96,10 +97,10 @@ class IdentityQueryControllerTests {
 		return switch (route) {
 			case USERS, USER -> {
 				var service = mock(IdentityUsers.class); var creations = mock(IdentityUserCreations.class);
-				var states = mock(IdentityUserStateChanges.class);
+				var profiles = mock(IdentityUserProfileManagement.class); var states = mock(IdentityUserStateChanges.class);
 				when(service.search(isNull(), isNull(), eq(20), isNull())).thenReturn(new IdentityUserPage(List.of(), null));
 				when(service.findById(ID)).thenReturn(Optional.of(new IdentityUser(ID, "alice", "Alice", IdentityUser.Status.ACTIVE, Instant.EPOCH)));
-				yield endpoint(new IdentityUserManagementController(service, creations, states, administrators), service, creations, states, administrators);
+				yield endpoint(new IdentityUserManagementController(service, creations, profiles, states, administrators), service, creations, profiles, states, administrators);
 			}
 		};
 	}

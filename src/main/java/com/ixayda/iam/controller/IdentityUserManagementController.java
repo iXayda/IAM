@@ -1,5 +1,9 @@
 package com.ixayda.iam.controller;
 
+import com.ixayda.iam.service.IdentityUserProfileManagement;
+
+import com.ixayda.iam.dto.IdentityUserProfileUpdateRequest;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetAddress;
@@ -61,18 +65,20 @@ public class IdentityUserManagementController {
 
 	private final IdentityUsers users;
 	private final IdentityUserCreations creations;
+	private final IdentityUserProfileManagement profiles;
 	private final IdentityUserStateChanges stateChanges;
 	private final IdentityAdministratorSessions administrators;
 	private final SecurityContextLogoutHandler logout = new SecurityContextLogoutHandler();
 
-	IdentityUserManagementController(IdentityUsers users, IdentityUserCreations creations, IdentityUserStateChanges stateChanges, IdentityAdministratorSessions administrators) {
+	IdentityUserManagementController(IdentityUsers users, IdentityUserCreations creations, IdentityUserProfileManagement profiles, IdentityUserStateChanges stateChanges, IdentityAdministratorSessions administrators) {
 		this.users = users;
 		this.creations = creations;
+		this.profiles = profiles;
 		this.stateChanges = stateChanges;
 		this.administrators = administrators;
 	}
 
-	@InitBinder({ "userSearch", "userCreation", "userStateChange" })
+	@InitBinder({ "userSearch", "userCreation", "userStateChange", "userProfileUpdate" })
 	void userBinding(ExtendedServletRequestDataBinder binder) {
 		binder.setDeclarativeBinding(true);
 		binder.setHeaderPredicate(header -> false);
@@ -187,6 +193,51 @@ public class IdentityUserManagementController {
 			@Parameter(hidden = true) @ModelAttribute("userStateChange") IdentityUserStateChangeRequest command,
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
 		return changeState(actorId, parseUserId(userId), IdentityUserStateChanges.Change.ENABLE, command.code(), request, response);
+	}
+
+	@Operation(operationId = "updateUserProfile", summary = "修改指定用户显示名", description = "需要有效管理员 MFA 会话及本次操作的新 TOTP。仅接受 displayName、code 和 CSRF；拒绝查询参数、重复及额外字段。可修改待开通、活动或禁用用户及本人显示名。相同显示名返回 204，仍消费新 TOTP，不重复记录资料变更事件；不延长管理期限。")
+	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也支持 _csrf 表单字段", schema = @Schema(type = "string"))
+	@ApiResponse(responseCode = "204", description = "资料已更新或显示名未改变", content = @Content)
+	@ApiResponse(responseCode = "400", description = "用户标识、显示名、TOTP 或请求格式无效", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "403", description = "管理资格、MFA 或 CSRF 不满足要求", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@ApiResponse(responseCode = "404", description = "用户不存在；仅在本次 TOTP 验证成功后返回", content = @Content)
+	@ApiResponse(responseCode = "429", description = "TOTP 验证或入口限流", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "415", description = "需要 application/x-www-form-urlencoded", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+			content = @Content(mediaType = "application/x-www-form-urlencoded", schema = @Schema(implementation = IdentityUserProfileUpdateRequest.class)))
+	@PostMapping(path = "/api/admin/users/{userId}/profile", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+	public ResponseEntity<?> updateProfile(@Parameter(hidden = true) @AuthenticationPrincipal UUID actorId, @PathVariable String userId,
+			@Parameter(hidden = true) @ModelAttribute("userProfileUpdate") IdentityUserProfileUpdateRequest command,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		UUID targetId = parseUserId(userId);
+		UUID correlationId = UUID.randomUUID();
+		var session = request.getSession(false);
+		if (session == null || !(session.getAttribute(IdentityBrowserSessions.CREDENTIAL_VERSION) instanceof Long version)
+				|| !(session.getAttribute(IdentityBrowserSessions.AUTHENTICATED_AT) instanceof Long authenticatedAt)) {
+			return invalidSession(actorId, correlationId, request, response);
+		}
+		Object stored = session.getAttribute(IdentityAdministratorSessions.AUTHENTICATION);
+		var management = stored instanceof IdentityAdministratorAuthentication evidence ? evidence : null;
+		var authentication = new TotpAuthenticationContext("browser:admin-user-profile", InetAddress.getByName(request.getRemoteAddr()), correlationId);
+		IdentityUserProfileManagement.Status result;
+		try {
+			result = this.profiles.updateDisplayName(actorId, session.getId(), version, authenticatedAt, management, targetId, command.displayName(), command.code(), authentication, () -> {
+				try { response.flushBuffer(); }
+				catch (IOException ex) { throw new UncheckedIOException(ex); }
+			});
+		}
+		catch (RuntimeException ex) {
+			session.setAttribute(IdentityBrowserSessions.PERSISTENCE_FAILED, true);
+			throw ex;
+		}
+		return switch (result) {
+			case UPDATED, UNCHANGED -> ResponseEntity.noContent().build();
+			case INVALID_SESSION -> invalidSession(actorId, correlationId, request, response);
+			case FORBIDDEN -> IdentityBrowserResponses.error(IdentityBrowserResponses.Error.FORBIDDEN);
+			case NOT_FOUND -> ResponseEntity.notFound().build();
+			case THROTTLED -> ResponseEntity.status(429).contentType(MediaType.TEXT_PLAIN).body("Verification temporarily unavailable");
+			case INVALID_INPUT, REJECTED -> ResponseEntity.badRequest().contentType(MediaType.TEXT_PLAIN).body("User profile update rejected");
+		};
 	}
 
 	private ResponseEntity<?> changeState(UUID actorId, UUID targetId, IdentityUserStateChanges.Change change, String code,
