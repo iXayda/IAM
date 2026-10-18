@@ -67,11 +67,11 @@ public class IdentityBrowserSessionRepository {
 	}
 
 	public void deleteAllForUser(UUID userId) {
-		int deleted = this.jdbc.sql("DELETE FROM iam_browser_session WHERE principal_name = :principal")
+		this.jdbc.sql("DELETE FROM iam_browser_session WHERE principal_name = :principal")
 				.param("principal", userId.toString()).update();
 		long remaining = this.jdbc.sql("SELECT count(*) FROM iam_browser_session WHERE principal_name = :principal")
 				.param("principal", userId.toString()).query(Long.class).single();
-		if (deleted < 1 || remaining != 0) {
+		if (remaining != 0) {
 			throw new IllegalStateException("Browser sessions were not revoked");
 		}
 	}

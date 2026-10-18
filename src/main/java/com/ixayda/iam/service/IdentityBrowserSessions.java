@@ -90,7 +90,7 @@ public class IdentityBrowserSessions {
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
-	void revokeAllForPasswordChange(UUID userId, SecurityAuditContext audit) {
+	void revokeAllForCredentialReplacement(UUID userId, SecurityAuditContext audit) {
 		this.repository.deleteAllForUser(userId);
 		this.audits.recordSuccess(Action.BROWSER_SESSIONS_REVOKED, userId, audit);
 	}
