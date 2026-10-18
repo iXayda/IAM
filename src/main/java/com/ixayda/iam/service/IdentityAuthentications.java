@@ -14,6 +14,8 @@ import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
@@ -51,6 +53,13 @@ public class IdentityAuthentications {
 			throw new IllegalStateException("Password authentication requires an independent transaction");
 		}
 		return this.transaction.execute(status -> evaluate(username, password, context));
+	}
+
+	/** Joins trusted recovery issuance; the workflow acquires recovery budgets before password/user locks. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<PasswordAuthenticationResult> authenticateInTransaction(String username, String password, PasswordAuthenticationContext context) {
+		Assert.notNull(context, "Trusted authentication context is required");
+		return evaluate(username, password, context);
 	}
 
 	@Scheduled(fixedDelayString = "${iam.password-authentication.cleanup-ms:60000}", initialDelayString = "${iam.password-authentication.cleanup-ms:60000}")
