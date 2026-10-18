@@ -62,6 +62,10 @@ Cookie `__Host-IAMSESSION` 使用 Secure、HttpOnly、Path=/ 和 SameSite=Lax。
 
 本人修改密码需要当前密码与有效会话。成功后旧会话失效，前端清理本地认证状态并要求正常登录；不能把修改成功当作新登录会话。
 
+### 管理员交互
+
+管理前端在有效密码会话上通过 `POST /admin/mfa` 验证管理员 TOTP，并重新取得轮换后的 CSRF。普通用户 TOTP、恢复码和应用角色都不等于 IAM 管理资格。
+
 ## 退出与撤销
 
 | 操作 | 作用范围 |

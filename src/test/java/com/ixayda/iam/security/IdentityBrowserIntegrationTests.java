@@ -915,11 +915,12 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			assertFormOperationContract(specification, "/api/me/password", java.util.Set.of("currentPassword", "newPassword"));
 			assertFormOperationContract(specification, "/api/me/profile", java.util.Set.of("displayName"));
+			assertFormOperationContract(specification, "/admin/mfa", java.util.Set.of("code"));
 			assertBrowserAuthenticationResponses(client, docsPort);
 			var operation = specification.path("paths").path("/api/me").path("get");
 			assertThat(operation.path("operationId").asText()).isEqualTo("getCurrentProfile");

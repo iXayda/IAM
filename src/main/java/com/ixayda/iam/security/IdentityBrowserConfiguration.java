@@ -1,8 +1,10 @@
 package com.ixayda.iam.security;
 
 import java.util.List;
+import java.util.UUID;
 
 import com.ixayda.iam.model.PasswordAuthenticationResult;
+import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityBrowserSessions;
 
 import jakarta.servlet.DispatcherType;
@@ -18,12 +20,21 @@ import org.springframework.http.HttpMethod;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationServiceException;
+import org.springframework.security.authorization.AuthorityAuthorizationManager;
+import org.springframework.security.authorization.AuthorizationDecision;
+import org.springframework.security.authorization.AuthorizationManager;
+import org.springframework.security.authorization.AuthorizationManagers;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.core.authority.FactorGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CsrfException;
 import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.web.csrf.CsrfTokenRepository;
+import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.security.web.header.HeaderWriter;
 import org.springframework.security.web.header.writers.CacheControlHeadersWriter;
 import org.springframework.security.web.header.writers.CompositeHeaderWriter;
@@ -52,21 +63,42 @@ public class IdentityBrowserConfiguration {
 
 	@Bean
 	SecurityFilterChain browserSecurity(HttpSecurity http, AuthenticationManager manager,
-			IdentityBrowserSessions sessions) throws Exception {
+			IdentityBrowserSessions sessions, IdentityAdministratorSessions administrators, CsrfTokenRepository csrfTokens) throws Exception {
 		var fixation = new ChangeSessionIdAuthenticationStrategy();
+		AuthorizationManager<RequestAuthorizationContext> administrator = (authentication, context) -> {
+			var current = authentication.get();
+			return new AuthorizationDecision(current.isAuthenticated() && current.getPrincipal() instanceof UUID id && administrators.isAdministrator(id));
+		};
 		http.authenticationManager(manager)
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(HttpMethod.GET, "/api/csrf").permitAll()
 						.requestMatchers(HttpMethod.POST, "/login", "/logout").permitAll()
+						.requestMatchers(HttpMethod.POST, "/admin/mfa").access(administrator)
+						.requestMatchers(HttpMethod.GET, "/api/admin/me").access(AuthorizationManagers.allOf(
+								AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(IdentityAdministratorSessions.ADMINISTRATOR_AUTHORITY),
+								AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
+								AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(IdentityAdministratorSessions.TOTP_AUTHORITY)))
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password").authenticated()
 						.anyRequest().denyAll())
 				.requestCache(cache -> cache.disable())
 				.httpBasic(basic -> basic.disable())
-				.exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) ->
-						IdentityBrowserResponses.error(response, IdentityBrowserResponses.Error.UNAUTHENTICATED))
-						.accessDeniedHandler((request, response, exception) -> IdentityBrowserResponses.error(response,
-								exception instanceof CsrfException ? IdentityBrowserResponses.Error.CSRF_INVALID : IdentityBrowserResponses.Error.FORBIDDEN)))
+				.csrf(csrf -> csrf.csrfTokenRepository(csrfTokens))
+				.exceptionHandling(errors -> errors.defaultAuthenticationEntryPointFor(
+						(request, response, failure) -> {
+							if (isAdministratorPath(request.getServletPath())) {
+								administrators.recordAccessDenied(null, IdentityBrowserDiagnostics.correlationId(request));
+							}
+							IdentityBrowserResponses.error(response, IdentityBrowserResponses.Error.UNAUTHENTICATED);
+						}, request -> true).accessDeniedHandler((request, response, failure) -> {
+							if (isAdministratorPath(request.getServletPath())) {
+								var authentication = SecurityContextHolder.getContext().getAuthentication();
+								administrators.recordAccessDenied(authentication != null && authentication.getPrincipal() instanceof UUID id ? id : null,
+										IdentityBrowserDiagnostics.correlationId(request));
+							}
+							IdentityBrowserResponses.error(response, failure instanceof CsrfException
+								? IdentityBrowserResponses.Error.CSRF_INVALID : IdentityBrowserResponses.Error.FORBIDDEN);
+						}))
 				.sessionManagement(session -> session.sessionAuthenticationStrategy((authentication, request, response) -> {
 					if (!(authentication.getDetails() instanceof PasswordAuthenticationResult verified)
 							|| !verified.userId().equals(authentication.getPrincipal())) {
@@ -77,6 +109,7 @@ public class IdentityBrowserConfiguration {
 					request.getSession().setAttribute(IdentityBrowserSessions.ORIGINAL_ID, originalId);
 					request.getSession().setAttribute(IdentityBrowserSessions.LOGIN_PENDING, true);
 					request.getSession().setAttribute(IdentityBrowserSessions.CREDENTIAL_VERSION, verified.credentialVersion());
+					request.getSession().removeAttribute(IdentityAdministratorSessions.AUTHENTICATION);
 				}))
 				.with(new IdentityBrowserAuthenticationConfigurer(), login -> login
 						.successHandler((request, response, authentication) -> {
@@ -101,9 +134,16 @@ public class IdentityBrowserConfiguration {
 				.logout(logout -> logout.logoutSuccessHandler((request, response, authentication) -> response.setStatus(204)).permitAll())
 				// The outer admission boundary applies the shared policy, including early and rollback responses.
 				.headers(headers -> headers.disable())
-				.addFilterAfter(new IdentityBrowserSessionValidationFilter(sessions), SecurityContextHolderFilter.class);
+				.addFilterAfter(new IdentityBrowserSessionValidationFilter(sessions, administrators), SecurityContextHolderFilter.class);
 		return http.build();
 	}
+
+	private static boolean isAdministratorPath(String path) {
+		return path.startsWith("/admin/") || path.startsWith("/api/admin/");
+	}
+
+	@Bean
+	CsrfTokenRepository browserCsrfTokens() { return new HttpSessionCsrfTokenRepository(); }
 
 	@Bean
 	CookieSerializer browserCookieSerializer() {
