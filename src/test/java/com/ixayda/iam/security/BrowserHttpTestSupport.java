@@ -24,7 +24,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import static org.assertj.core.api.Assertions.*;
 
 /** Shared TLS transport only; each feature test supplies its own accounts and assertions. */
-abstract class BrowserHttpTestSupport {
+public abstract class BrowserHttpTestSupport {
 
 	protected static final Path KEY_STORE = createKeyStore();
 

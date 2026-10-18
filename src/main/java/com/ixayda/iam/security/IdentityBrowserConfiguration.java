@@ -69,15 +69,16 @@ public class IdentityBrowserConfiguration {
 			var current = authentication.get();
 			return new AuthorizationDecision(current.isAuthenticated() && current.getPrincipal() instanceof UUID id && administrators.isAdministrator(id));
 		};
+		AuthorizationManager<RequestAuthorizationContext> management = AuthorizationManagers.allOf(
+				AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(IdentityAdministratorSessions.ADMINISTRATOR_AUTHORITY),
+				AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
+				AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(IdentityAdministratorSessions.TOTP_AUTHORITY));
 		http.authenticationManager(manager)
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(HttpMethod.GET, "/api/csrf").permitAll()
 						.requestMatchers(HttpMethod.POST, "/login", "/logout").permitAll()
 						.requestMatchers(HttpMethod.POST, "/admin/mfa").access(administrator)
-						.requestMatchers(HttpMethod.GET, "/api/admin/me").access(AuthorizationManagers.allOf(
-								AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(IdentityAdministratorSessions.ADMINISTRATOR_AUTHORITY),
-								AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY),
-								AuthorityAuthorizationManager.<RequestAuthorizationContext>hasAuthority(IdentityAdministratorSessions.TOTP_AUTHORITY)))
+						.requestMatchers(HttpMethod.GET, "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password").authenticated()
 						.anyRequest().denyAll())
