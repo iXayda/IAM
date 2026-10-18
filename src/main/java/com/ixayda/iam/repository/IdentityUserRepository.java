@@ -116,6 +116,16 @@ public class IdentityUserRepository {
 		}
 	}
 
+	/** Called under the user lock to invalidate authentication evidence without changing the password. */
+	public void advanceCredentialVersion(UUID id, long version) {
+		long next = Math.addExact(version, 1);
+		int changed = this.jdbc.sql("UPDATE iam_password SET credential_version = :next WHERE user_id = :id AND credential_version = :version")
+				.param("next", next).param("id", id).param("version", version).update();
+		if (changed != 1 || !findPasswordVersion(id).equals(Optional.of(next))) {
+			throw new IllegalStateException("Authentication invalidation was not stored");
+		}
+	}
+
 	public void insertPassword(UUID id, String hash) {
 		int changed = this.jdbc.sql("INSERT INTO iam_password (user_id, password_hash) VALUES (:id, :hash)")
 				.param("id", id).param("hash", hash).update();

@@ -155,6 +155,11 @@ public class IdentityUsers {
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
+	void invalidateAuthentications(UUID id, long version) {
+		this.repository.advanceCredentialVersion(id, version);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
 	void disable(UUID id) {
 		this.repository.disable(id);
 	}
