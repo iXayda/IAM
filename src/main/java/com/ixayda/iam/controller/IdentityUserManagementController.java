@@ -9,6 +9,7 @@ import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -16,13 +17,16 @@ import com.ixayda.iam.dto.IdentityUserCreateRequest;
 import com.ixayda.iam.dto.IdentityUserPageResponse;
 import com.ixayda.iam.dto.IdentityUserResponse;
 import com.ixayda.iam.dto.IdentityUserSearchRequest;
+import com.ixayda.iam.dto.IdentityUserStateChangeRequest;
 import com.ixayda.iam.model.IdentityAdministratorAuthentication;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.IdentityUserPage;
 import com.ixayda.iam.model.TotpAuthenticationContext;
+import com.ixayda.iam.security.IdentityBrowserResponses;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityBrowserSessions;
 import com.ixayda.iam.service.IdentityUserCreations;
+import com.ixayda.iam.service.IdentityUserStateChanges;
 import com.ixayda.iam.service.IdentityUsers;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -57,16 +61,18 @@ public class IdentityUserManagementController {
 
 	private final IdentityUsers users;
 	private final IdentityUserCreations creations;
+	private final IdentityUserStateChanges stateChanges;
 	private final IdentityAdministratorSessions administrators;
 	private final SecurityContextLogoutHandler logout = new SecurityContextLogoutHandler();
 
-	IdentityUserManagementController(IdentityUsers users, IdentityUserCreations creations, IdentityAdministratorSessions administrators) {
+	IdentityUserManagementController(IdentityUsers users, IdentityUserCreations creations, IdentityUserStateChanges stateChanges, IdentityAdministratorSessions administrators) {
 		this.users = users;
 		this.creations = creations;
+		this.stateChanges = stateChanges;
 		this.administrators = administrators;
 	}
 
-	@InitBinder({ "userSearch", "userCreation" })
+	@InitBinder({ "userSearch", "userCreation", "userStateChange" })
 	void userBinding(ExtendedServletRequestDataBinder binder) {
 		binder.setDeclarativeBinding(true);
 		binder.setHeaderPredicate(header -> false);
@@ -108,6 +114,7 @@ public class IdentityUserManagementController {
 	@ApiResponse(responseCode = "403", description = "管理资格、MFA 或 CSRF 不满足要求", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
 	@ApiResponse(responseCode = "409", description = "账号名已被使用", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
 	@ApiResponse(responseCode = "429", description = "TOTP 验证受限，或入口限流", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "415", description = "UNSUPPORTED_MEDIA_TYPE：需要 application/x-www-form-urlencoded", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
 			content = @Content(mediaType = "application/x-www-form-urlencoded", schema = @Schema(implementation = IdentityUserCreateRequest.class)))
 	@PostMapping(path = "/api/admin/users", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -140,18 +147,91 @@ public class IdentityUserManagementController {
 			case CREATED -> ResponseEntity.created(URI.create(request.getContextPath() + "/api/admin/users/" + result.user().id()))
 					.body(response(result.user()));
 			case INVALID_SESSION -> invalidSession(actorId, correlationId, request, response);
-			case FORBIDDEN -> ResponseEntity.status(403).build();
+			case FORBIDDEN -> IdentityBrowserResponses.error(IdentityBrowserResponses.Error.FORBIDDEN);
 			case THROTTLED -> ResponseEntity.status(429).contentType(MediaType.TEXT_PLAIN).body("Verification temporarily unavailable");
 			case CONFLICT -> ResponseEntity.status(409).contentType(MediaType.TEXT_PLAIN).body("Username unavailable");
 			case INVALID_INPUT, REJECTED -> ResponseEntity.badRequest().contentType(MediaType.TEXT_PLAIN).body("User creation rejected");
 		};
 	}
 
-	private ResponseEntity<Void> invalidSession(UUID actorId, UUID correlationId, HttpServletRequest request, HttpServletResponse response) {
+	@Operation(operationId = "disableUser", summary = "禁用用户", description = "需要有效管理员 MFA 会话及本次操作的新 TOTP。userId 使用完整 UUID；仅接受 code 及 CSRF，拒绝查询参数、重复及额外字段。撤销目标全部 IAM 会话，取消未消费的开通和密码恢复凭据；拒绝禁用最后可用管理员。禁用本人成功后清除当前会话 Cookie。重复操作返回 204，不重复记录状态变更事件；每次验证成功均消费该 TOTP，且不延长管理期限。")
+	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也支持 _csrf 表单字段", schema = @Schema(type = "string"))
+	@ApiResponse(responseCode = "204", description = "操作完成或已处于目标状态", content = @Content)
+	@ApiResponse(responseCode = "400", description = "用户标识、TOTP 或请求格式无效", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "403", description = "管理资格、MFA 或 CSRF 不满足要求", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@ApiResponse(responseCode = "404", description = "用户不存在；仅在本次 TOTP 验证成功后返回", content = @Content)
+	@ApiResponse(responseCode = "409", description = "最后可用管理员受保护", content = @Content)
+	@ApiResponse(responseCode = "429", description = "TOTP 验证或入口限流", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "415", description = "UNSUPPORTED_MEDIA_TYPE：需要 application/x-www-form-urlencoded", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+			content = @Content(mediaType = "application/x-www-form-urlencoded", schema = @Schema(implementation = IdentityUserStateChangeRequest.class)))
+	@PostMapping(path = "/api/admin/users/{userId}/disable", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+	public ResponseEntity<?> disable(@Parameter(hidden = true) @AuthenticationPrincipal UUID actorId, @PathVariable String userId,
+			@Parameter(hidden = true) @ModelAttribute("userStateChange") IdentityUserStateChangeRequest command,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		return changeState(actorId, parseUserId(userId), IdentityUserStateChanges.Change.DISABLE, command.code(), request, response);
+	}
+
+	@Operation(operationId = "enableUser", summary = "重新启用用户", description = "需要有效管理员 MFA 会话及本次操作的新 TOTP。userId 使用完整 UUID；仅接受 code 及 CSRF，拒绝查询参数、重复及额外字段。已完成受控开通且有密码的账号恢复 ACTIVE，否则恢复 PENDING；不恢复旧会话或已取消的凭据。重复操作返回 204，不重复记录状态变更事件；每次验证成功均消费该 TOTP，且不延长管理期限。")
+	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也支持 _csrf 表单字段", schema = @Schema(type = "string"))
+	@ApiResponse(responseCode = "204", description = "操作完成或已处于目标状态", content = @Content)
+	@ApiResponse(responseCode = "400", description = "用户标识、TOTP 或请求格式无效", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "403", description = "管理资格、MFA 或 CSRF 不满足要求", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@ApiResponse(responseCode = "404", description = "用户不存在；仅在本次 TOTP 验证成功后返回", content = @Content)
+	@ApiResponse(responseCode = "429", description = "TOTP 验证或入口限流", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "415", description = "UNSUPPORTED_MEDIA_TYPE：需要 application/x-www-form-urlencoded", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+			content = @Content(mediaType = "application/x-www-form-urlencoded", schema = @Schema(implementation = IdentityUserStateChangeRequest.class)))
+	@PostMapping(path = "/api/admin/users/{userId}/enable", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+	public ResponseEntity<?> enable(@Parameter(hidden = true) @AuthenticationPrincipal UUID actorId, @PathVariable String userId,
+			@Parameter(hidden = true) @ModelAttribute("userStateChange") IdentityUserStateChangeRequest command,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		return changeState(actorId, parseUserId(userId), IdentityUserStateChanges.Change.ENABLE, command.code(), request, response);
+	}
+
+	private ResponseEntity<?> changeState(UUID actorId, UUID targetId, IdentityUserStateChanges.Change change, String code,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		UUID correlationId = UUID.randomUUID();
+		var session = request.getSession(false);
+		if (session == null || !(session.getAttribute(IdentityBrowserSessions.CREDENTIAL_VERSION) instanceof Long version)
+				|| !(session.getAttribute(IdentityBrowserSessions.AUTHENTICATED_AT) instanceof Long authenticatedAt)) {
+			return invalidSession(actorId, correlationId, request, response);
+		}
+		Object stored = session.getAttribute(IdentityAdministratorSessions.AUTHENTICATION);
+		var management = stored instanceof IdentityAdministratorAuthentication evidence ? evidence : null;
+		String source = change == IdentityUserStateChanges.Change.DISABLE ? "browser:admin-user-disable" : "browser:admin-user-enable";
+		var context = new TotpAuthenticationContext(source, InetAddress.getByName(request.getRemoteAddr()), correlationId);
+		IdentityUserStateChanges.Status result;
+		try {
+			result = this.stateChanges.change(actorId, session.getId(), version, authenticatedAt, management, targetId, change, code, context, () -> {
+				try { response.flushBuffer(); }
+				catch (IOException ex) { throw new UncheckedIOException(ex); }
+			});
+		}
+		catch (RuntimeException ex) {
+			session.setAttribute(IdentityBrowserSessions.PERSISTENCE_FAILED, true);
+			throw ex;
+		}
+		if (result == IdentityUserStateChanges.Status.CHANGED && actorId.equals(targetId) && change == IdentityUserStateChanges.Change.DISABLE) {
+			SecurityContextHolder.clearContext();
+			this.logout.logout(request, response, null);
+		}
+		return switch (result) {
+			case CHANGED, UNCHANGED -> ResponseEntity.noContent().build();
+			case INVALID_SESSION -> invalidSession(actorId, correlationId, request, response);
+			case FORBIDDEN -> IdentityBrowserResponses.error(IdentityBrowserResponses.Error.FORBIDDEN);
+			case NOT_FOUND -> ResponseEntity.notFound().build();
+			case LAST_ADMINISTRATOR_PROTECTED -> ResponseEntity.status(409).build();
+			case THROTTLED -> ResponseEntity.status(429).contentType(MediaType.TEXT_PLAIN).body("Verification temporarily unavailable");
+			case REJECTED -> ResponseEntity.badRequest().contentType(MediaType.TEXT_PLAIN).body("User state change rejected");
+		};
+	}
+
+	private ResponseEntity<Map<String, String>> invalidSession(UUID actorId, UUID correlationId, HttpServletRequest request, HttpServletResponse response) {
 		SecurityContextHolder.clearContext();
 		this.logout.logout(request, response, null);
 		this.administrators.recordAccessDenied(actorId, correlationId);
-		return ResponseEntity.status(401).build();
+		return IdentityBrowserResponses.error(IdentityBrowserResponses.Error.UNAUTHENTICATED);
 	}
 
 	@ExceptionHandler({ IllegalArgumentException.class, BindException.class })

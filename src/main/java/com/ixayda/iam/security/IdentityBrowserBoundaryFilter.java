@@ -85,7 +85,9 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			boolean profileChange = request.getServletPath().equals("/api/me/profile");
 			boolean administratorMfa = request.getServletPath().equals("/admin/mfa");
 			boolean userCreation = request.getMethod().equals("POST") && request.getServletPath().equals("/api/admin/users");
-			boolean accountChange = passwordChange || profileChange || administratorMfa || userCreation;
+			boolean userStateChange = request.getMethod().equals("POST")
+					&& request.getServletPath().matches("/api/admin/users/[^/]+/(disable|enable)");
+			boolean accountChange = passwordChange || profileChange || administratorMfa || userCreation || userStateChange;
 			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
@@ -111,7 +113,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
-			if (administratorMfa && !Set.of("code", "_csrf").containsAll(request.getParameterMap().keySet())) {
+			if ((administratorMfa || userStateChange) && !Set.of("code", "_csrf").containsAll(request.getParameterMap().keySet())) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}

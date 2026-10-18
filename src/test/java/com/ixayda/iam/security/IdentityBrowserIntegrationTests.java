@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -933,6 +933,15 @@ class IdentityBrowserIntegrationTests {
 			assertFormOperationContract(specification, "/api/me/profile", java.util.Set.of("displayName"));
 			assertFormOperationContract(specification, "/admin/mfa", java.util.Set.of("code"));
 			assertFormOperationContract(specification, "/api/admin/users", java.util.Set.of("username", "displayName", "code"));
+			assertFormOperationContract(specification, "/api/admin/users/{userId}/disable", java.util.Set.of("code"));
+			assertFormOperationContract(specification, "/api/admin/users/{userId}/enable", java.util.Set.of("code"));
+			for (String path : List.of("/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable")) {
+				var responses = specification.path("paths").path(path).path("post").path("responses");
+				for (String status : List.of("401", "403", "415")) {
+					assertThat(responses.path(status).path("content").path("application/json").path("schema").path("$ref").asText())
+							.as("POST %s %s", path, status).isEqualTo("#/components/schemas/IdentityErrorResponse");
+				}
+			}
 			assertBrowserAuthenticationResponses(client, docsPort);
 			var operation = specification.path("paths").path("/api/me").path("get");
 			assertThat(operation.path("operationId").asText()).isEqualTo("getCurrentProfile");
