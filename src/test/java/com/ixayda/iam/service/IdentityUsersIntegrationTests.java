@@ -152,13 +152,14 @@ class IdentityUsersIntegrationTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "missing", "hash" })
+	@ValueSource(strings = { "missing", "hash", "version" })
 	void initialPasswordStorageMustMatchTheRequestedCredential(String fault) {
 		IdentityUser user = this.users.create("alice", "Alice", this.audit);
 		String password = "seven amber lanterns by the river";
 		String mutation = switch (fault) {
 			case "missing" -> "RETURN NULL;";
 			case "hash" -> "NEW.password_hash = '" + this.passwords.hash("seven silver lanterns on the hill", user.username()) + "'; RETURN NEW;";
+			case "version" -> "NEW.credential_version = 2; RETURN NEW;";
 			default -> throw new AssertionError(fault);
 		};
 		this.jdbc.sql("CREATE FUNCTION initial_password_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN " + mutation + " END $$").update();
@@ -172,6 +173,7 @@ class IdentityUsersIntegrationTests {
 		assertThat(count("iam_security_audit")).isEqualTo(1);
 		this.users.setInitialPassword(user.id(), password, this.audit);
 		assertThat(this.passwords.matches(password, storedPassword(user.id()))).isTrue();
+		assertThat(this.jdbc.sql("SELECT credential_version FROM iam_password WHERE user_id = :id").param("id", user.id()).query(Long.class).single()).isEqualTo(1);
 		assertThat(count("iam_security_audit")).isEqualTo(2);
 	}
 

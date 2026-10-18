@@ -1,10 +1,5 @@
 package com.ixayda.iam.service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
-import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,9 +7,9 @@ import java.util.UUID;
 import com.ixayda.iam.credential.PasswordHasher;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.PasswordAuthenticationContext;
+import com.ixayda.iam.model.PasswordAuthenticationResult;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
-import com.ixayda.iam.repository.PasswordAuthenticationLimitRepository;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -31,7 +26,7 @@ public class IdentityAuthentications {
 
 	private final PasswordHasher passwords;
 
-	private final PasswordAuthenticationLimitRepository repository;
+	private final PasswordAuthenticationLimits limits;
 
 	private final SecurityAudits audits;
 
@@ -39,18 +34,18 @@ public class IdentityAuthentications {
 
 	private final TransactionTemplate transaction;
 
-	IdentityAuthentications(IdentityUsers users, PasswordHasher passwords, PasswordAuthenticationLimitRepository repository,
+	IdentityAuthentications(IdentityUsers users, PasswordHasher passwords, PasswordAuthenticationLimits limits,
 			SecurityAudits audits, PlatformTransactionManager transactionManager) {
 		this.users = users;
 		this.passwords = passwords;
-		this.repository = repository;
+		this.limits = limits;
 		this.audits = audits;
 		this.transaction = new TransactionTemplate(transactionManager);
 		this.placeholderHash = passwords.hash(UUID.randomUUID().toString(), "iam-authentication-placeholder");
 	}
 
 	/** Ordinary denial is a result so failure counters and failure audit commit before the adapter throws. */
-	public Optional<IdentityUser> authenticate(String username, String password, PasswordAuthenticationContext context) {
+	public Optional<PasswordAuthenticationResult> authenticate(String username, String password, PasswordAuthenticationContext context) {
 		Assert.notNull(context, "Trusted authentication context is required");
 		if (TransactionSynchronizationManager.isActualTransactionActive()) {
 			throw new IllegalStateException("Password authentication requires an independent transaction");
@@ -60,17 +55,15 @@ public class IdentityAuthentications {
 
 	@Scheduled(fixedDelayString = "${iam.password-authentication.cleanup-ms:60000}", initialDelayString = "${iam.password-authentication.cleanup-ms:60000}")
 	public void cleanUpExpiredLimits() {
-		this.transaction.executeWithoutResult(status -> this.repository.cleanUpExpired());
+		this.transaction.executeWithoutResult(status -> this.limits.cleanUpExpired());
 	}
 
-	private Optional<IdentityUser> evaluate(String username, String password, PasswordAuthenticationContext context) {
+	private Optional<PasswordAuthenticationResult> evaluate(String username, String password, PasswordAuthenticationContext context) {
 		String account = normalizeAccount(username);
-		String sourceKey = digest("password-authentication:source:", addressBytes(context));
-		String accountKey = digest("password-authentication:account:", account.getBytes(StandardCharsets.US_ASCII));
-		int sourceFailures = this.repository.lockLimit("source", sourceKey, 300);
+		var attempt = this.limits.lock(account, context);
 		SecurityAuditContext anonymous = new SecurityAuditContext("anonymous", context.source(), context.correlationId());
 		// Short-circuit a blocked source before creating, resetting, or locking an account bucket.
-		if (sourceFailures >= 50 || this.repository.lockLimit("account", accountKey, 900) >= 10) {
+		if (!attempt.allowed()) {
 			this.audits.recordFailure(Action.PASSWORD_AUTH_THROTTLED, null, anonymous);
 			return Optional.empty();
 		}
@@ -79,13 +72,13 @@ public class IdentityAuthentications {
 		boolean matches = this.passwords.matches(password, storedHash.orElse(this.placeholderHash));
 		if (matches && storedHash.isPresent() && user.orElseThrow().status() == IdentityUser.Status.ACTIVE) {
 			IdentityUser authenticated = user.orElseThrow();
-			this.repository.clearAccount(accountKey);
+			this.limits.succeeded(attempt);
 			this.audits.recordSuccess(Action.PASSWORD_AUTHENTICATED, authenticated.id(),
 					new SecurityAuditContext("user:" + authenticated.id(), context.source(), context.correlationId()));
-			return user;
+			return Optional.of(new PasswordAuthenticationResult(authenticated.id(),
+					this.users.passwordVersion(authenticated.id()).orElseThrow(), context.correlationId()));
 		}
-		this.repository.recordFailure("source", sourceKey);
-		this.repository.recordFailure("account", accountKey);
+		this.limits.failed(attempt);
 		this.audits.recordFailure(Action.PASSWORD_AUTH_FAILED, user.map(IdentityUser::id).orElse(null), anonymous);
 		return Optional.empty();
 	}
@@ -93,27 +86,6 @@ public class IdentityAuthentications {
 	private static String normalizeAccount(String username) {
 		return username != null && username.length() >= 3 && username.length() <= 64
 				&& username.matches("[a-zA-Z0-9._-]{3,64}") ? username.toLowerCase(Locale.ROOT) : "<invalid>";
-	}
-
-	private static byte[] addressBytes(PasswordAuthenticationContext context) {
-		byte[] address = context.clientAddress().getAddress();
-		// Treat an IPv4-mapped IPv6 address as the same peer as its four-byte IPv4 form.
-		if (address.length == 16 && Arrays.equals(Arrays.copyOf(address, 12),
-				new byte[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (byte) 0xff, (byte) 0xff })) {
-			return Arrays.copyOfRange(address, 12, 16);
-		}
-		return address;
-	}
-
-	private static String digest(String purpose, byte[] value) {
-		try {
-			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			digest.update(purpose.getBytes(StandardCharsets.US_ASCII));
-			return HexFormat.of().formatHex(digest.digest(value));
-		}
-		catch (NoSuchAlgorithmException ex) {
-			throw new IllegalStateException("SHA-256 is unavailable", ex);
-		}
 	}
 
 }

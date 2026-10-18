@@ -69,6 +69,7 @@ class IdentityBrowserIntegrationTests {
 
 	@LocalServerPort
 	private int port;
+
 	@Autowired
 	private JdbcClient jdbc;
 	@Autowired
@@ -252,7 +253,7 @@ class IdentityBrowserIntegrationTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "idle", "absolute", "missing-time", "future-time", "overflow-time", "disabled" })
+	@ValueSource(strings = { "idle", "absolute", "missing-time", "future-time", "overflow-time", "disabled", "missing-version", "stale-version", "malformed-version" })
 	void expiryAndAccountStatusRejectPersistedAuthentication(String mode) throws Exception {
 		var user = activeUser("alice");
 		try (var client = client()) {
@@ -265,6 +266,14 @@ class IdentityBrowserIntegrationTests {
 			}
 			else if (mode.equals("missing-time")) {
 				this.jdbc.sql("DELETE FROM iam_browser_session_attributes WHERE attribute_name = 'iam.authenticatedAt'").update();
+			}
+			else if (mode.equals("missing-version")) {
+				this.jdbc.sql("DELETE FROM iam_browser_session_attributes WHERE attribute_name = 'iam.credentialVersion'").update();
+			}
+			else if (mode.endsWith("version")) {
+				Object version = mode.equals("stale-version") ? 2L : "1";
+				this.jdbc.sql("UPDATE iam_browser_session_attributes SET attribute_bytes = :bytes WHERE attribute_name = 'iam.credentialVersion'")
+						.param("bytes", SerializationUtils.serialize(version)).update();
 			}
 			else {
 				long time = switch (mode) {
@@ -288,13 +297,13 @@ class IdentityBrowserIntegrationTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "session", "audit", "deferred-audit", "silent-session", "silent-attributes", "silent-csrf" })
+	@ValueSource(strings = { "session", "audit", "deferred-audit", "silent-session", "silent-attributes", "silent-csrf", "silent-version" })
 	void loginStorageOrAuditFailureCannotPublishSuccessAndRollsBackSession(String mode) throws Exception {
 		activeUser("alice");
 		try (var client = client()) {
 			var page = get(client, "/api/csrf", null);
 			String anonymous = cookie(page);
-			String table = mode.contains("audit") ? "iam_security_audit" : (mode.equals("silent-attributes") || mode.equals("silent-csrf")) ? "iam_browser_session_attributes" : "iam_browser_session";
+			String table = mode.contains("audit") ? "iam_security_audit" : (mode.equals("silent-attributes") || mode.equals("silent-csrf") || mode.equals("silent-version")) ? "iam_browser_session_attributes" : "iam_browser_session";
 			installFault(mode, table, "browser_session_created", false);
 			try {
 				var response = post(client, "/login", anonymous, credentials("alice", PASSWORD, csrf(page)));
@@ -906,9 +915,10 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
+			assertFormOperationContract(specification, "/api/me/password", java.util.Set.of("currentPassword", "newPassword"));
 			assertBrowserAuthenticationResponses(client, docsPort);
 			var operation = specification.path("paths").path("/api/me").path("get");
 			assertThat(operation.path("operationId").asText()).isEqualTo("getCurrentProfile");
@@ -995,6 +1005,21 @@ class IdentityBrowserIntegrationTests {
 		assertThat(csrf.path("security").size()).isZero();
 	}
 
+
+	private static void assertFormOperationContract(JsonNode specification, String path, java.util.Set<String> fields) {
+		var operation = specification.path("paths").path(path).path("post");
+		var body = operation.path("requestBody");
+		assertThat(body.path("required").asBoolean()).as(path).isTrue();
+		var schema = body.path("content").path("application/x-www-form-urlencoded").path("schema");
+		if (schema.has("$ref")) {
+			schema = specification.path("components").path("schemas").path(schema.path("$ref").asText().substring("#/components/schemas/".length()));
+		}
+		assertThat(schema.path("properties").propertyNames()).as(path).containsExactlyInAnyOrderElementsOf(fields);
+		for (var parameter : operation.path("parameters")) {
+			assertThat(parameter.path("in").asText()).as(path).isNotEqualTo("query");
+		}
+	}
+
 	private void assertBrowserAuthenticationResponses(HttpClient client, int port) throws Exception {
 		var token = get(client, port, "/api/csrf", null);
 		String anonymous = cookie(token);
@@ -1036,6 +1061,7 @@ class IdentityBrowserIntegrationTests {
 		assertThat(response.headers().firstValue("Cache-Control").orElseThrow()).contains("no-store");
 	}
 
+
 	private String login(HttpClient client) throws Exception {
 		var page = get(client, "/api/csrf", null);
 		var response = post(client, "/login", cookie(page), credentials("alice", PASSWORD, csrf(page)));
@@ -1052,6 +1078,9 @@ class IdentityBrowserIntegrationTests {
 		String condition = table.equals("iam_security_audit") ? "IF NEW.action <> '" + action + "' THEN RETURN NEW; END IF; " : "";
 		if (mode.equals("silent-csrf")) {
 			condition = "IF NEW.attribute_name NOT LIKE '%CSRF_TOKEN' THEN RETURN NEW; END IF; ";
+		}
+		if (mode.equals("silent-version")) {
+			condition = "IF NEW.attribute_name <> 'iam.credentialVersion' THEN RETURN NEW; END IF; ";
 		}
 		String result = mode.startsWith("silent") ? "RETURN NULL;" : "RAISE EXCEPTION 'injected session failure';";
 		this.jdbc.sql("CREATE FUNCTION browser_test_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN " + condition + result + " END $$").update();

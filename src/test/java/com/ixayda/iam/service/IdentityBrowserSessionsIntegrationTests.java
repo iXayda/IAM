@@ -70,10 +70,11 @@ class IdentityBrowserSessionsIntegrationTests {
 						""").param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("user", id).update();
 				previous.sql("INSERT INTO iam_password_authentication_limit (dimension, subject_key, failures) VALUES ('source', repeat('a', 64), 3)").update();
 				var tables = List.of("iam_user", "iam_password", "iam_user_setup", "iam_security_audit", "iam_password_authentication_limit");
-				var before = tables.stream().map(t -> previous.sql("SELECT row_to_json(t)::text FROM " + t + " t").query(String.class).single()).toList();
+				var before = tables.stream().map(t -> previous.sql("SELECT (to_jsonb(t) - 'credential_version')::text FROM " + t + " t").query(String.class).single()).toList();
 				flyway(schema, "latest").migrate();
-				var after = tables.stream().map(t -> previous.sql("SELECT row_to_json(t)::text FROM " + t + " t").query(String.class).single()).toList();
+				var after = tables.stream().map(t -> previous.sql("SELECT (to_jsonb(t) - 'credential_version')::text FROM " + t + " t").query(String.class).single()).toList();
 				assertThat(after).isEqualTo(before);
+				assertThat(previous.sql("SELECT credential_version FROM iam_password").query(Long.class).single()).isEqualTo(1);
 				assertThat(previous.sql("SELECT count(*) FROM iam_browser_session").query(Long.class).single()).isZero();
 				assertThat(previous.sql("SELECT count(*) FROM iam_browser_session_attributes").query(Long.class).single()).isZero();
 			}

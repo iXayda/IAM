@@ -3,8 +3,8 @@ package com.ixayda.iam.security;
 import java.util.List;
 import java.util.Optional;
 
-import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.PasswordAuthenticationContext;
+import com.ixayda.iam.model.PasswordAuthenticationResult;
 import com.ixayda.iam.service.IdentityAuthentications;
 
 import org.springframework.security.authentication.AuthenticationProvider;
@@ -39,7 +39,7 @@ public class IdentityPasswordAuthenticationProvider implements AuthenticationPro
 			}
 			String username = request.getPrincipal() instanceof String value ? value : null;
 			String password = request.getCredentials() instanceof String value ? value : null;
-			Optional<IdentityUser> user;
+			Optional<PasswordAuthenticationResult> user;
 			try {
 				user = this.authentications.authenticate(username, password, context);
 			}
@@ -49,7 +49,10 @@ public class IdentityPasswordAuthenticationProvider implements AuthenticationPro
 			if (user.isEmpty()) {
 				throw new BadCredentialsException("Invalid credentials");
 			}
-			return UsernamePasswordAuthenticationToken.authenticated(user.orElseThrow().id(), null, List.of());
+			var verified = user.orElseThrow();
+			var result = UsernamePasswordAuthenticationToken.authenticated(verified.userId(), null, List.of());
+			result.setDetails(verified);
+			return result;
 		}
 		finally {
 			request.eraseCredentials();
