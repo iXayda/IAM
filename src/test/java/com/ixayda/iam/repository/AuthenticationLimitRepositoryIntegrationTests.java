@@ -216,7 +216,8 @@ class AuthenticationLimitRepositoryIntegrationTests {
 	private record Repository(IntSupplier lock, Runnable recordFailure, Runnable cleanup) { }
 
 	private enum Limit {
-		PASSWORD("iam_password_authentication_limit");
+		PASSWORD("iam_password_authentication_limit"),
+		TOTP("iam_totp_authentication_limit");
 
 		private final String table;
 
@@ -227,6 +228,10 @@ class AuthenticationLimitRepositoryIntegrationTests {
 				case PASSWORD -> {
 					var repository = new PasswordAuthenticationLimitRepository(jdbc);
 					yield new Repository(() -> repository.lockLimit("account", KEY, 300), () -> repository.recordFailure("account", KEY), repository::cleanUpExpired);
+				}
+				case TOTP -> {
+					var repository = new TotpAuthenticationLimitRepository(jdbc);
+					yield new Repository(() -> repository.lockLimit("account", KEY), () -> repository.recordFailure("account", KEY), repository::cleanUpExpired);
 				}
 			};
 		}

@@ -34,8 +34,9 @@ Before starting the application, configure a dedicated PostgreSQL database and H
 | `SERVER_SSL_KEY_STORE_PASSWORD` | Required for IAM TLS; keystore password, supplied by the runtime environment |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | Defaults to `NONE`; use `NATIVE` for trusted proxies |
 | `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | Required with `NATIVE`; a regular expression matching actual proxy source IPs |
+| `IAM_TOTP_KEY_FILE` | Required when TOTP is enabled; path to an external protection key file containing 32 raw binary bytes |
 
-The database account needs permission to create tables and run migrations. Flyway creates or upgrades the schema at startup.
+The database account needs permission to create tables and run migrations. Flyway creates or upgrades the schema at startup. Keep the TOTP protection key persistent and restrict read access. Do not commit it to the repository or regenerate it on every startup.
 
 The public entry point uses HTTPS, terminated by IAM or a trusted proxy. Forwarded headers are ignored by default; HTTP upstream connections require explicit proxy trust and network access restricted to those proxies. Start after configuration:
 

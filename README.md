@@ -34,8 +34,9 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 | `SERVER_SSL_KEY_STORE_PASSWORD` | IAM 提供 HTTPS 时必填，密钥库密码，由运行环境注入 |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | 默认 `NONE`；受信代理模式使用 `NATIVE` |
 | `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | `NATIVE` 模式必填，匹配实际代理来源 IP 的正则 |
+| `IAM_TOTP_KEY_FILE` | 启用 TOTP 功能时必填，指向包含 32 个原始二进制字节的外部保护密钥文件 |
 
-数据库账号需要具备建表和执行迁移的权限。Flyway 在启动时创建或升级表结构。
+数据库账号需要具备建表和执行迁移的权限。Flyway 在启动时创建或升级表结构。TOTP 保护密钥需要持久保存并限制读取权限，不应提交到仓库或在每次启动时重新生成。
 
 应用入口使用 HTTPS，可由 IAM 或受信代理终止 TLS。默认不信任转发头；HTTP 回源须显式启用受信代理模式，并限制 IAM 端口仅由代理访问。配置就绪后启动：
 
