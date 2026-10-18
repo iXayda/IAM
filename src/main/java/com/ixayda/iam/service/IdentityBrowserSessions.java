@@ -11,7 +11,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 import com.ixayda.iam.model.IdentityUser;
-import com.ixayda.iam.model.PasswordAuthenticationContext;
+import com.ixayda.iam.model.PasswordAuthenticationResult;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.repository.IdentityBrowserSessionRepository;
@@ -25,6 +25,8 @@ import org.springframework.session.Session;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.SerializationUtils;
 
@@ -34,6 +36,7 @@ public class IdentityBrowserSessions {
 
 	public static final String SECURITY_CONTEXT = "SPRING_SECURITY_CONTEXT";
 	public static final String AUTHENTICATED_AT = "iam.authenticatedAt";
+	public static final String CREDENTIAL_VERSION = "iam.credentialVersion";
 	public static final String LOGIN_PENDING = "iam.loginPending";
 	public static final String ORIGINAL_ID = "iam.originalSessionId";
 	private static final String PERSISTED = "iam.persisted";
@@ -65,9 +68,31 @@ public class IdentityBrowserSessions {
 		return this.idleTimeout;
 	}
 
-	public boolean isAuthenticationCurrent(UUID userId, Object authenticatedAt) {
-		return withinAbsoluteLifetime(authenticatedAt) && this.users.findById(userId)
-				.filter(user -> user.status() == IdentityUser.Status.ACTIVE).isPresent();
+	public boolean isAuthenticationCurrent(UUID userId, Object authenticatedAt, Object credentialVersion) {
+		return withinAbsoluteLifetime(authenticatedAt) && credentialVersion instanceof Long version
+				&& this.users.hasCurrentPasswordVersion(userId, version);
+	}
+
+	/** The caller already holds the user's lock, before checking the session and revoking its peers. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	boolean lockOwnedSession(UUID userId, String sessionId) {
+		return this.repository.lock(sessionId) && this.repository.ownedAndUnexpired(sessionId, userId);
+	}
+
+	/** Capture the locked idle deadline before a workflow renews or revokes the session. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<Long> lockOwnedSessionExpiry(UUID userId, String sessionId) {
+		return this.repository.lock(sessionId) ? this.repository.ownedSessionExpiry(sessionId, userId) : Optional.empty();
+	}
+
+	boolean isWithinSessionDeadline(long authenticatedAt, long idleExpiry) {
+		return withinAbsoluteLifetime(authenticatedAt) && this.repository.isBeforeExpiry(idleExpiry);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	void revokeAllForPasswordChange(UUID userId, SecurityAuditContext audit) {
+		this.repository.deleteAllForUser(userId);
+		this.audits.recordSuccess(Action.BROWSER_SESSIONS_REVOKED, userId, audit);
 	}
 
 	public void save(Session session, Runnable persist, Supplier<Session> readStored, Supplier<Set<String>> changedAttributes) {
@@ -86,6 +111,10 @@ public class IdentityBrowserSessions {
 					userId = id;
 					if (this.users.lockById(id).status() != IdentityUser.Status.ACTIVE) {
 						throw new IllegalStateException("Browser identity is unavailable");
+					}
+					if (!(session.getAttribute(CREDENTIAL_VERSION) instanceof Long version)
+							|| !this.users.passwordVersion(id).equals(Optional.of(version))) {
+						throw new IllegalStateException("Browser credential version is no longer current");
 					}
 				}
 				boolean login = Boolean.TRUE.equals(session.getAttribute(LOGIN_PENDING));
@@ -126,7 +155,7 @@ public class IdentityBrowserSessions {
 					if (userId == null) {
 						throw new IllegalStateException("Authenticated browser identity is required");
 					}
-					UUID correlation = authentication.getDetails() instanceof PasswordAuthenticationContext details
+					UUID correlation = authentication.getDetails() instanceof PasswordAuthenticationResult details
 							? details.correlationId() : UUID.randomUUID();
 					this.audits.recordSuccess(Action.BROWSER_SESSION_CREATED, userId,
 							new SecurityAuditContext("user:" + userId, "browser:login", correlation));

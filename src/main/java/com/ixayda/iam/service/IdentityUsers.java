@@ -91,6 +91,20 @@ public class IdentityUsers {
 		return this.repository.findPasswordHash(id);
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<Long> passwordVersion(UUID id) {
+		return this.repository.findPasswordVersion(id);
+	}
+
+	public boolean hasCurrentPasswordVersion(UUID id, long version) {
+		return this.repository.hasCurrentPasswordVersion(id, version);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	void replacePassword(UUID id, String hash, long version) {
+		this.repository.replacePassword(id, hash, version);
+	}
+
 	private static String normalizeUsername(String value) {
 		if (value == null || !value.matches("[a-zA-Z0-9._-]{3,64}")) {
 			throw new IllegalArgumentException("Username requires 3 to 64 ASCII letters, digits, dots, underscores or hyphens");

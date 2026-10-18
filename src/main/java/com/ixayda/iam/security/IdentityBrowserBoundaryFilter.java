@@ -80,11 +80,25 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
 			}
+			boolean passwordChange = request.getServletPath().equals("/api/me/password");
+			if (passwordChange && request.getMethod().equals("POST")
+					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
+				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
+				return;
+			}
+			if (passwordChange && request.getQueryString() != null) {
+				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				return;
+			}
 			// Reject invalid servlet parameters before opening a session; JSON credentials have a separate bounded reader.
 			try {
 				request.getParameterMap();
 			}
 			catch (IllegalStateException ex) {
+				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				return;
+			}
+			if (passwordChange && request.getParameterMap().values().stream().anyMatch(values -> values.length != 1)) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}

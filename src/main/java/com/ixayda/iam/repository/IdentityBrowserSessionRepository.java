@@ -27,6 +27,25 @@ public class IdentityBrowserSessionRepository {
 				.param("id", id).query(String.class).optional().map(UUID::fromString);
 	}
 
+	public boolean ownedAndUnexpired(String id, UUID userId) {
+		return this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_browser_session WHERE session_id = :id
+				AND principal_name = :principal AND expiry_time > extract(epoch FROM clock_timestamp()) * 1000)
+				""").param("id", id).param("principal", userId.toString()).query(Boolean.class).single();
+	}
+
+	public Optional<Long> ownedSessionExpiry(String id, UUID userId) {
+		return this.jdbc.sql("""
+				SELECT expiry_time FROM iam_browser_session WHERE session_id = :id
+				AND principal_name = :principal AND expiry_time > extract(epoch FROM clock_timestamp()) * 1000
+				""").param("id", id).param("principal", userId.toString()).query(Long.class).optional();
+	}
+
+	public boolean isBeforeExpiry(long expiryTime) {
+		return this.jdbc.sql("SELECT :expiry > extract(epoch FROM clock_timestamp()) * 1000")
+				.param("expiry", expiryTime).query(Boolean.class).single();
+	}
+
 	public void requireStored(String id, UUID userId, long expiryTime) {
 		long count = this.jdbc.sql("""
 				SELECT count(*) FROM iam_browser_session
@@ -44,6 +63,16 @@ public class IdentityBrowserSessionRepository {
 		if (this.jdbc.sql("SELECT count(*) FROM iam_browser_session WHERE session_id = :id")
 				.param("id", id).query(Long.class).single() != 0) {
 			throw new IllegalStateException("Browser session was not removed");
+		}
+	}
+
+	public void deleteAllForUser(UUID userId) {
+		int deleted = this.jdbc.sql("DELETE FROM iam_browser_session WHERE principal_name = :principal")
+				.param("principal", userId.toString()).update();
+		long remaining = this.jdbc.sql("SELECT count(*) FROM iam_browser_session WHERE principal_name = :principal")
+				.param("principal", userId.toString()).query(Long.class).single();
+		if (deleted < 1 || remaining != 0) {
+			throw new IllegalStateException("Browser sessions were not revoked");
 		}
 	}
 

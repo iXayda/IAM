@@ -57,10 +57,33 @@ public class IdentityUserRepository {
 				.param("id", id).query(String.class).optional();
 	}
 
+	public Optional<Long> findPasswordVersion(UUID id) {
+		return this.jdbc.sql("SELECT credential_version FROM iam_password WHERE user_id = :id")
+				.param("id", id).query(Long.class).optional();
+	}
+
+	public boolean hasCurrentPasswordVersion(UUID id, long version) {
+		return this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_user u JOIN iam_password p ON p.user_id = u.id
+				WHERE u.id = :id AND u.status = 'active' AND p.credential_version = :version)
+				""").param("id", id).param("version", version).query(Boolean.class).single();
+	}
+
+	public void replacePassword(UUID id, String hash, long version) {
+		int updated = this.jdbc.sql("""
+				UPDATE iam_password SET password_hash = :hash, credential_version = credential_version + 1
+				WHERE user_id = :id AND credential_version = :version
+				""").param("id", id).param("hash", hash).param("version", version).update();
+		if (updated != 1 || !findPasswordHash(id).filter(hash::equals).isPresent()
+				|| !findPasswordVersion(id).filter(stored -> stored == Math.addExact(version, 1)).isPresent()) {
+			throw new IllegalStateException("Password change was not stored");
+		}
+	}
+
 	public void insertPassword(UUID id, String hash) {
 		int changed = this.jdbc.sql("INSERT INTO iam_password (user_id, password_hash) VALUES (:id, :hash)")
 				.param("id", id).param("hash", hash).update();
-		if (changed != 1 || !findPasswordHash(id).equals(Optional.of(hash))) {
+		if (changed != 1 || !findPasswordHash(id).equals(Optional.of(hash)) || !findPasswordVersion(id).equals(Optional.of(1L))) {
 			throw new IllegalStateException("Initial password was not stored");
 		}
 	}

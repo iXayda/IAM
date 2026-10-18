@@ -27,7 +27,8 @@ final class IdentityBrowserSessionValidationFilter extends OncePerRequestFilter 
 		var authentication = SecurityContextHolder.getContext().getAuthentication();
 		if (authentication != null && authentication.getPrincipal() instanceof UUID userId) {
 			var session = request.getSession(false);
-			if (session == null || !this.sessions.isAuthenticationCurrent(userId, session.getAttribute(IdentityBrowserSessions.AUTHENTICATED_AT))) {
+			if (session == null || !this.sessions.isAuthenticationCurrent(userId, session.getAttribute(IdentityBrowserSessions.AUTHENTICATED_AT),
+					session.getAttribute(IdentityBrowserSessions.CREDENTIAL_VERSION))) {
 				SecurityContextHolder.clearContext();
 				if (session != null) {
 					session.invalidate();

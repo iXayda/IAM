@@ -2,6 +2,7 @@ package com.ixayda.iam.security;
 
 import java.util.List;
 
+import com.ixayda.iam.model.PasswordAuthenticationResult;
 import com.ixayda.iam.service.IdentityBrowserSessions;
 
 import jakarta.servlet.DispatcherType;
@@ -58,6 +59,7 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.GET, "/api/csrf").permitAll()
 						.requestMatchers(HttpMethod.POST, "/login", "/logout").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
+						.requestMatchers(HttpMethod.POST, "/api/me/password").authenticated()
 						.anyRequest().denyAll())
 				.requestCache(cache -> cache.disable())
 				.httpBasic(basic -> basic.disable())
@@ -66,10 +68,15 @@ public class IdentityBrowserConfiguration {
 						.accessDeniedHandler((request, response, exception) -> IdentityBrowserResponses.error(response,
 								exception instanceof CsrfException ? IdentityBrowserResponses.Error.CSRF_INVALID : IdentityBrowserResponses.Error.FORBIDDEN)))
 				.sessionManagement(session -> session.sessionAuthenticationStrategy((authentication, request, response) -> {
+					if (!(authentication.getDetails() instanceof PasswordAuthenticationResult verified)
+							|| !verified.userId().equals(authentication.getPrincipal())) {
+						throw new AuthenticationServiceException("Verified password version is required");
+					}
 					String originalId = request.getSession().getId();
 					fixation.onAuthentication(authentication, request, response);
 					request.getSession().setAttribute(IdentityBrowserSessions.ORIGINAL_ID, originalId);
 					request.getSession().setAttribute(IdentityBrowserSessions.LOGIN_PENDING, true);
+					request.getSession().setAttribute(IdentityBrowserSessions.CREDENTIAL_VERSION, verified.credentialVersion());
 				}))
 				.with(new IdentityBrowserAuthenticationConfigurer(), login -> login
 						.successHandler((request, response, authentication) -> {

@@ -26,7 +26,7 @@ final class IdentityBrowserResponses {
 		FORBIDDEN(403, "无权执行此操作"),
 		CSRF_INVALID(403, "安全凭据缺失或已失效，请重试"),
 		PAYLOAD_TOO_LARGE(413, "请求体超过允许的大小"),
-		UNSUPPORTED_MEDIA_TYPE(415, "请使用 application/json 提交登录请求"),
+		UNSUPPORTED_MEDIA_TYPE(415, "请求内容类型不受支持"),
 		TOO_MANY_REQUESTS(429, "请求过于频繁，请稍后重试"),
 		AUTHENTICATION_UNAVAILABLE(503, "认证服务暂不可用"),
 		SERVICE_UNAVAILABLE(503, "服务暂不可用");
