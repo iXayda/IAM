@@ -3,11 +3,14 @@ package com.ixayda.iam.repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
 import com.ixayda.iam.model.IdentityUser;
+import com.ixayda.iam.model.IdentityUserPage;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -38,6 +41,31 @@ public class IdentityUserRepository {
 		return this.jdbc.sql("""
 				SELECT id, username, display_name, status, created_at FROM iam_user WHERE username = :username
 				""").param("username", username).query(IdentityUserRepository::mapUser).optional();
+	}
+
+	public List<IdentityUser> search(String keyword, IdentityUser.Status status, int limit, IdentityUserPage.Cursor after) {
+		var sql = new StringBuilder("SELECT id, username, display_name, status, created_at FROM iam_user WHERE 1 = 1");
+		if (!keyword.isEmpty()) {
+			sql.append(" AND (strpos(username, :usernameKeyword) > 0 OR strpos(display_name COLLATE \"C\", :keyword) > 0)");
+		}
+		if (status != null) {
+			sql.append(" AND status = :status");
+		}
+		if (after != null) {
+			sql.append(" AND (created_at, id) > (:createdAt, :id)");
+		}
+		sql.append(" ORDER BY created_at, id LIMIT :limit");
+		var query = this.jdbc.sql(sql.toString()).param("limit", limit);
+		if (!keyword.isEmpty()) {
+			query.param("usernameKeyword", keyword.toLowerCase(Locale.ROOT)).param("keyword", keyword);
+		}
+		if (status != null) {
+			query.param("status", status.name().toLowerCase(Locale.ROOT));
+		}
+		if (after != null) {
+			query.param("createdAt", OffsetDateTime.ofInstant(after.createdAt(), ZoneOffset.UTC)).param("id", after.id());
+		}
+		return query.query(IdentityUserRepository::mapUser).list();
 	}
 
 	public Optional<IdentityUser> lockById(UUID id) {
