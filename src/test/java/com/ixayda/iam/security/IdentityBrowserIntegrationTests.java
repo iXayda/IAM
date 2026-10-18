@@ -915,9 +915,17 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
+			var search = specification.path("paths").path("/api/admin/users").path("get");
+			var searchParameters = new java.util.HashSet<String>();
+			for (var parameter : search.path("parameters")) {
+				assertThat(parameter.path("in").asText()).isEqualTo("query");
+				searchParameters.add(parameter.path("name").asText());
+			}
+			assertThat(searchParameters).containsExactlyInAnyOrder("keyword", "status", "pageSize", "cursor");
+
 			assertFormOperationContract(specification, "/api/me/password", java.util.Set.of("currentPassword", "newPassword"));
 			assertFormOperationContract(specification, "/api/me/profile", java.util.Set.of("displayName"));
 			assertFormOperationContract(specification, "/admin/mfa", java.util.Set.of("code"));
