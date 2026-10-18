@@ -18,6 +18,8 @@ import com.ixayda.iam.repository.IdentityTotpRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
@@ -100,40 +102,52 @@ public class IdentityTotps {
 		if (activate) { Assert.notNull(factorId, "Factor id is required"); }
 		Assert.notNull(context, "Trusted authentication context is required");
 		this.secrets.requireConfigured();
-		return this.transaction.execute(status -> {
-			var attempt = this.limits.lock(userId, context);
-			var anonymous = new SecurityAuditContext("anonymous", context.source(), context.correlationId());
-			if (!attempt.allowed()) {
-				this.audits.recordFailure(activate ? Action.TOTP_ENROLLMENT_THROTTLED : Action.TOTP_AUTH_THROTTLED, null, anonymous);
-				return Optional.empty();
-			}
-			var user = this.users.lockForTotp(userId);
-			var version = user.filter(value -> value.status() == IdentityUser.Status.ACTIVE)
-					.flatMap(value -> this.users.passwordVersion(userId));
-			var factor = this.repository.find(userId).filter(value -> (!activate || value.factorId().equals(factorId))
-					&& value.active() != activate && (!activate || (value.unexpired() && version.isPresent()
-							&& value.enrollmentCredentialVersion() == version.orElseThrow())));
-			if (version.isPresent() && factor.isPresent()) {
-				var stored = factor.orElseThrow();
-				byte[] secret = this.secrets.decrypt(userId, stored.factorId(), stored.keyId(), stored.encryptedSecret());
-				try {
-					var step = this.codes.match(secret, code, stored.now(), stored.lastUsedStep() == null ? -1 : stored.lastUsedStep());
-					Optional<Instant> consumedAt = step.isPresent()
-							? this.repository.consume(userId, stored.factorId(), step.getAsLong(), activate) : Optional.empty();
-					if (consumedAt.isPresent()) {
-						this.limits.succeeded(attempt);
-						this.audits.recordSuccess(activate ? Action.TOTP_ENROLLMENT_COMPLETED : Action.TOTP_AUTHENTICATED,
-								userId, new SecurityAuditContext("user:" + userId, context.source(), context.correlationId()));
-						return Optional.of(new IdentityTotpVerification(userId, stored.factorId(), version.orElseThrow(), step.getAsLong(), consumedAt.orElseThrow(), context.correlationId()));
-					}
-				}
-				finally { Arrays.fill(secret, (byte) 0); }
-			}
-			this.limits.failed(attempt);
-			this.audits.recordFailure(activate ? Action.TOTP_ENROLLMENT_FAILED : Action.TOTP_AUTH_FAILED,
-					user.map(IdentityUser::id).orElse(null), anonymous);
+		return this.transaction.execute(status -> evaluateLocked(userId, factorId, code, context, activate));
+	}
+
+	/** Joins an internal workflow so factor consumption and its protected operation commit together. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityTotpVerification> verifyInTransaction(UUID userId, String code, TotpAuthenticationContext context) {
+		Assert.notNull(userId, "User id is required");
+		Assert.notNull(context, "Trusted authentication context is required");
+		this.secrets.requireConfigured();
+		return evaluateLocked(userId, null, code, context, false);
+	}
+
+	private Optional<IdentityTotpVerification> evaluateLocked(UUID userId, UUID factorId, String code,
+			TotpAuthenticationContext context, boolean activate) {
+		var attempt = this.limits.lock(userId, context);
+		var anonymous = new SecurityAuditContext("anonymous", context.source(), context.correlationId());
+		if (!attempt.allowed()) {
+			this.audits.recordFailure(activate ? Action.TOTP_ENROLLMENT_THROTTLED : Action.TOTP_AUTH_THROTTLED, null, anonymous);
 			return Optional.empty();
-		});
+		}
+		var user = this.users.lockForTotp(userId);
+		var version = user.filter(value -> value.status() == IdentityUser.Status.ACTIVE)
+				.flatMap(value -> this.users.passwordVersion(userId));
+		var factor = this.repository.find(userId).filter(value -> (!activate || value.factorId().equals(factorId))
+				&& value.active() != activate && (!activate || (value.unexpired() && version.isPresent()
+						&& value.enrollmentCredentialVersion() == version.orElseThrow())));
+		if (version.isPresent() && factor.isPresent()) {
+			var stored = factor.orElseThrow();
+			byte[] secret = this.secrets.decrypt(userId, stored.factorId(), stored.keyId(), stored.encryptedSecret());
+			try {
+				var step = this.codes.match(secret, code, stored.now(), stored.lastUsedStep() == null ? -1 : stored.lastUsedStep());
+				Optional<Instant> consumedAt = step.isPresent()
+						? this.repository.consume(userId, stored.factorId(), step.getAsLong(), activate) : Optional.empty();
+				if (consumedAt.isPresent()) {
+					this.limits.succeeded(attempt);
+					this.audits.recordSuccess(activate ? Action.TOTP_ENROLLMENT_COMPLETED : Action.TOTP_AUTHENTICATED,
+							userId, new SecurityAuditContext("user:" + userId, context.source(), context.correlationId()));
+					return Optional.of(new IdentityTotpVerification(userId, stored.factorId(), version.orElseThrow(), step.getAsLong(), consumedAt.orElseThrow(), context.correlationId()));
+				}
+			}
+			finally { Arrays.fill(secret, (byte) 0); }
+		}
+		this.limits.failed(attempt);
+		this.audits.recordFailure(activate ? Action.TOTP_ENROLLMENT_FAILED : Action.TOTP_AUTH_FAILED,
+				user.map(IdentityUser::id).orElse(null), anonymous);
+		return Optional.empty();
 	}
 
 	@Scheduled(fixedDelayString = "${iam.totp.cleanup-ms:60000}", initialDelayString = "${iam.totp.cleanup-ms:60000}")

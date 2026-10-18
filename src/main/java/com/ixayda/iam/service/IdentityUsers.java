@@ -102,6 +102,11 @@ public class IdentityUsers {
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityUser> lockForMfaRecovery(UUID id) {
+		return this.repository.lockById(id);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
 	void lockForSetup(UUID id) {
 		IdentityUser user = lockById(id);
 		if (user.status() != IdentityUser.Status.PENDING || this.repository.hasPassword(id)) {

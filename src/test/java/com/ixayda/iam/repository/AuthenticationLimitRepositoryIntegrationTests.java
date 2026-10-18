@@ -217,7 +217,8 @@ class AuthenticationLimitRepositoryIntegrationTests {
 
 	private enum Limit {
 		PASSWORD("iam_password_authentication_limit"),
-		TOTP("iam_totp_authentication_limit");
+		TOTP("iam_totp_authentication_limit"),
+		MFA_RECOVERY("iam_mfa_recovery_limit");
 
 		private final String table;
 
@@ -231,6 +232,10 @@ class AuthenticationLimitRepositoryIntegrationTests {
 				}
 				case TOTP -> {
 					var repository = new TotpAuthenticationLimitRepository(jdbc);
+					yield new Repository(() -> repository.lockLimit("account", KEY), () -> repository.recordFailure("account", KEY), repository::cleanUpExpired);
+				}
+				case MFA_RECOVERY -> {
+					var repository = new MfaRecoveryCodeLimitRepository(jdbc);
 					yield new Repository(() -> repository.lockLimit("account", KEY), () -> repository.recordFailure("account", KEY), repository::cleanUpExpired);
 				}
 			};
