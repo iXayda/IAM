@@ -46,6 +46,14 @@ public class IdentityBrowserSessionRepository {
 				.param("expiry", expiryTime).query(Boolean.class).single();
 	}
 
+	public byte[] attribute(String id, String name) {
+		return this.jdbc.sql("""
+				SELECT a.attribute_bytes FROM iam_browser_session_attributes a
+				JOIN iam_browser_session s ON s.primary_id = a.session_primary_id
+				WHERE s.session_id = :id AND a.attribute_name = :name
+				""").param("id", id).param("name", name).query(byte[].class).optional().orElse(null);
+	}
+
 	public void requireStored(String id, UUID userId, long expiryTime) {
 		long count = this.jdbc.sql("""
 				SELECT count(*) FROM iam_browser_session

@@ -48,6 +48,15 @@ public class IdentityAdministratorRepository {
 		return this.jdbc.sql("SELECT EXISTS (SELECT 1 FROM iam_administrator)").query(Boolean.class).single();
 	}
 
+	public boolean hasCurrentAuthentication(UUID userId, UUID factorId, long credentialVersion) {
+		return this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_administrator a JOIN iam_user u ON u.id = a.user_id
+				    JOIN iam_password p ON p.user_id = u.id JOIN iam_user_totp t ON t.user_id = u.id
+				    WHERE u.id = :id AND u.status = 'active' AND p.credential_version = :version
+				    AND t.status = 'active' AND t.factor_id = :factor)
+				""").param("id", userId).param("factor", factorId).param("version", credentialVersion).query(Boolean.class).single();
+	}
+
 	/** Structural availability is independent of paging, sessions, and temporary failure budgets. */
 	public boolean hasOtherUsableAdministrator(UUID userId) {
 		return this.jdbc.sql("""

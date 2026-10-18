@@ -3,7 +3,6 @@ package com.ixayda.iam.service;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -39,18 +38,21 @@ public class IdentityBrowserSessions {
 	public static final String CREDENTIAL_VERSION = "iam.credentialVersion";
 	public static final String LOGIN_PENDING = "iam.loginPending";
 	public static final String ORIGINAL_ID = "iam.originalSessionId";
+	public static final String MFA_PENDING = "iam.mfaPending";
+	public static final String PERSISTENCE_FAILED = "iam.persistenceFailed";
 	private static final String PERSISTED = "iam.persisted";
-	private static final String FAILED = "iam.persistenceFailed";
 
 	private final IdentityUsers users;
 	private final IdentityBrowserSessionRepository repository;
 	private final SecurityAudits audits;
+	private final IdentityAdministratorSessions administrators;
 	private final TransactionTemplate transaction;
+	private final TransactionTemplate saveTransaction;
 	private final Duration idleTimeout;
 	private final Duration absoluteTimeout;
 
 	IdentityBrowserSessions(IdentityUsers users, IdentityBrowserSessionRepository repository, SecurityAudits audits,
-			PlatformTransactionManager manager, @Value("${iam.browser.idle-seconds:1800}") int idleSeconds,
+			IdentityAdministratorSessions administrators, PlatformTransactionManager manager, @Value("${iam.browser.idle-seconds:1800}") int idleSeconds,
 			@Value("${iam.browser.absolute-seconds:28800}") int absoluteSeconds) {
 		if (idleSeconds < 1 || idleSeconds > 1800 || absoluteSeconds < idleSeconds || absoluteSeconds > 28800) {
 			throw new IllegalArgumentException("Browser session timeouts exceed the supported policy");
@@ -58,8 +60,11 @@ public class IdentityBrowserSessions {
 		this.users = users;
 		this.repository = repository;
 		this.audits = audits;
+		this.administrators = administrators;
 		this.transaction = new TransactionTemplate(manager);
 		this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+		// Normal saves own their transaction; an explicit MFA workflow includes persistence in its transaction.
+		this.saveTransaction = new TransactionTemplate(manager);
 		this.idleTimeout = Duration.ofSeconds(idleSeconds);
 		this.absoluteTimeout = Duration.ofSeconds(absoluteSeconds);
 	}
@@ -96,11 +101,11 @@ public class IdentityBrowserSessions {
 	}
 
 	public void save(Session session, Runnable persist, Supplier<Session> readStored, Supplier<Set<String>> changedAttributes) {
-		if (Boolean.TRUE.equals(session.getAttribute(FAILED))) {
+		if (Boolean.TRUE.equals(session.getAttribute(PERSISTENCE_FAILED))) {
 			throw new IllegalStateException("Browser session persistence already failed");
 		}
 		try {
-			this.transaction.executeWithoutResult(status -> {
+			this.saveTransaction.executeWithoutResult(status -> {
 				SecurityContext context = session.getAttribute(SECURITY_CONTEXT);
 				Authentication authentication = context == null ? null : context.getAuthentication();
 				UUID userId = null;
@@ -118,7 +123,8 @@ public class IdentityBrowserSessions {
 					}
 				}
 				boolean login = Boolean.TRUE.equals(session.getAttribute(LOGIN_PENDING));
-				String originalId = login ? session.getAttribute(ORIGINAL_ID) : session.getId();
+				boolean mfa = Boolean.TRUE.equals(session.getAttribute(MFA_PENDING));
+				String originalId = login || mfa ? session.getAttribute(ORIGINAL_ID) : session.getId();
 				if (Boolean.TRUE.equals(session.getAttribute(PERSISTED))) {
 					if (originalId == null || !this.repository.lock(originalId)) {
 						throw new IllegalStateException("Browser session is no longer available");
@@ -129,6 +135,7 @@ public class IdentityBrowserSessions {
 				}
 				if (userId != null) {
 					if (login) {
+						session.removeAttribute(IdentityAdministratorSessions.AUTHENTICATION);
 						session.setAttribute(AUTHENTICATED_AT, System.currentTimeMillis());
 					}
 					if (!withinAbsoluteLifetime(session.getAttribute(AUTHENTICATED_AT))) {
@@ -136,9 +143,12 @@ public class IdentityBrowserSessions {
 					}
 					// Persist a minimal, serializable identity; transport details and credentials stay outside the session.
 					session.setAttribute(SECURITY_CONTEXT, new SecurityContextImpl(
-							UsernamePasswordAuthenticationToken.authenticated(userId, null, List.of())));
+							UsernamePasswordAuthenticationToken.authenticated(userId, null,
+									this.administrators.authorities(userId, session.getAttribute(AUTHENTICATED_AT),
+											session.getAttribute(IdentityAdministratorSessions.AUTHENTICATION)))));
 				}
 				session.removeAttribute(LOGIN_PENDING);
+				session.removeAttribute(MFA_PENDING);
 				session.removeAttribute(ORIGINAL_ID);
 				session.setAttribute(PERSISTED, true);
 				Map<String, byte[]> expectedAttributes = new HashMap<>();
@@ -164,7 +174,7 @@ public class IdentityBrowserSessions {
 		}
 		catch (RuntimeException ex) {
 			// A response commit may be retried by the servlet wrapper; never retry a rolled-back mutable JdbcSession.
-			session.setAttribute(FAILED, true);
+			session.setAttribute(PERSISTENCE_FAILED, true);
 			throw ex;
 		}
 	}
