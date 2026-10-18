@@ -61,10 +61,29 @@ class IdentityUserStateIntegrationTests extends BrowserHttpTestSupport {
 
 	@BeforeEach
 	void clean() {
+		this.jdbc.sql("DELETE FROM iam_administrator").update();
+		this.jdbc.sql("UPDATE iam_admin_bootstrap SET initial_user_id = NULL, completed_at = NULL, revision = 0").update();
 		for (String table : List.of("iam_browser_session_attributes", "iam_browser_session", "iam_password_authentication_limit",
 				"iam_security_audit", "iam_password_recovery", "iam_user_setup", "iam_password", "iam_user")) {
 			this.jdbc.sql("DELETE FROM " + table).update();
 		}
+	}
+
+	@Test
+	void administratorMembershipDoesNotElevateAnOrdinaryPasswordSessionOrExposeBootstrap() throws Exception {
+		var user = activeUser("alice");
+		this.jdbc.sql("INSERT INTO iam_administrator (user_id) VALUES (:id)").param("id", user.id()).update();
+		try (var client = client()) {
+			String session = login(client, "alice");
+			assertThat(get(client, "/api/me", session).statusCode()).isEqualTo(200);
+			String token = csrf(get(client, "/api/csrf", session));
+			for (String path : List.of("/admin", "/admin/bootstrap", "/api/admin", "/api/admin/bootstrap")) {
+				assertThat(get(client, path, session).statusCode()).isEqualTo(403);
+				assertThat(post(client, path, session, "_csrf=" + encode(token)).statusCode()).isEqualTo(403);
+				assertThat(get(client, path, null).statusCode()).isEqualTo(401);
+			}
+		}
+		assertThat(eventCount("admin_bootstrap_completed")).isZero();
 	}
 
 	@Test

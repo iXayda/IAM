@@ -15,12 +15,15 @@ IAM 面向单个组织及其自有应用，提供身份认证、应用级授权�
 | `controller` | 请求绑定和响应 |
 | `dto` | HTTP 传输数据 |
 | `security` | Spring Security 认证、会话及请求防护适配 |
+| `cli` | 不监听 HTTP 的离线维护入口 |
 | `service` | 组织用例、事务和业务校验 |
 | `repository` | SQL、锁、持久化及数据库约束适配 |
 | `model` | 领域值与状态，不依赖 Spring 或数据库 API |
 | `credential` | 密码策略、凭据摘要及秘密处理 |
 
-服务通过仓储访问数据库；凭据组件供服务使用。模型不反向调用服务。依赖规则由 [ArchitectureTests](../src/test/java/com/ixayda/iam/ArchitectureTests.java)约束。
+控制器、安全适配器及 CLI 调用服务，服务通过仓储访问数据库；凭据组件供服务使用。模型不反向调用服务。依赖规则及顶层类型之间的循环检查由 [ArchitectureTests](../src/test/java/com/ixayda/iam/ArchitectureTests.java)约束。
+
+离线维护仍通过应用服务执行校验与审计。部署维护身份和浏览器用户权限分别控制，持有维护连接不等于建立了管理员浏览器会话。
 
 ## 身份认证与管理资格
 

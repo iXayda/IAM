@@ -1,5 +1,7 @@
 package com.ixayda.iam;
 
+import com.ixayda.iam.cli.AdministratorBootstrapCommand;
+
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
@@ -22,6 +24,16 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class IamApplication {
 
 	public static void main(String[] args) {
+		for (int index = 1; index < args.length; index++) {
+			if (!args[index].startsWith("--")) {
+				throw new IllegalArgumentException("Unexpected positional argument: maintenance commands must appear first and accept no arguments");
+			}
+		}
+		if (args.length > 0 && args[0].equals("bootstrap-admin")) {
+			AdministratorBootstrapCommand.run(IamApplication.class, args);
+			return;
+		}
+		if (args.length > 0 && !args[0].startsWith("--")) { throw new IllegalArgumentException("Unknown maintenance command"); }
 		SpringApplication.run(IamApplication.class, args);
 	}
 

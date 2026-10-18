@@ -9,7 +9,6 @@ import com.tngtech.archunit.library.dependencies.SliceIdentifier;
 
 import org.junit.jupiter.api.Test;
 
-import static com.tngtech.archunit.core.domain.JavaClass.Predicates.equivalentTo;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
@@ -23,8 +22,10 @@ class ArchitectureTests {
 	@Test
 	void respectsLayerDependencies() {
 		layeredArchitecture().consideringAllDependencies()
-				.ensureAllClassesAreContainedInArchitectureIgnoring(equivalentTo(IamApplication.class))
+				.ensureAllClassesAreContainedInArchitecture()
+				.layer("Application").definedBy("com.ixayda.iam")
 				.optionalLayer("Controller").definedBy("com.ixayda.iam.controller..")
+				.layer("CLI").definedBy("com.ixayda.iam.cli..")
 				.layer("Security").definedBy("com.ixayda.iam.security..")
 				.optionalLayer("DTO").definedBy("com.ixayda.iam.dto..")
 				.layer("Service").definedBy("com.ixayda.iam.service..")
@@ -32,11 +33,13 @@ class ArchitectureTests {
 				.layer("Model").definedBy("com.ixayda.iam.model..")
 				.layer("Credential").definedBy("com.ixayda.iam.credential..")
 				.whereLayer("Controller").mayNotBeAccessedByAnyLayer()
+				.whereLayer("Application").mayNotBeAccessedByAnyLayer()
+				.whereLayer("CLI").mayOnlyBeAccessedByLayers("Application")
 				.whereLayer("DTO").mayOnlyBeAccessedByLayers("Controller")
-				.whereLayer("Service").mayOnlyBeAccessedByLayers("Controller", "Security")
+				.whereLayer("Service").mayOnlyBeAccessedByLayers("Controller", "Security", "CLI")
 				.whereLayer("Security").mayOnlyBeAccessedByLayers("Controller")
 				.whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
-				.whereLayer("Model").mayOnlyBeAccessedByLayers("Controller", "DTO", "Service", "Repository", "Security")
+				.whereLayer("Model").mayOnlyBeAccessedByLayers("Controller", "DTO", "Service", "Repository", "Security", "CLI")
 				.whereLayer("Credential").mayOnlyBeAccessedByLayers("Service")
 				.check(APPLICATION_CLASSES);
 	}

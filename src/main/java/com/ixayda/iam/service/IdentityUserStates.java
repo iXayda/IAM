@@ -18,14 +18,16 @@ public class IdentityUserStates {
 	private final IdentityUserSetups setups;
 	private final IdentityPasswordRecoveries recoveries;
 	private final IdentityBrowserSessions sessions;
+	private final IdentityAdministrators administrators;
 	private final SecurityAudits audits;
 
 	IdentityUserStates(IdentityUsers users, IdentityUserSetups setups, IdentityPasswordRecoveries recoveries,
-			IdentityBrowserSessions sessions, SecurityAudits audits) {
+			IdentityBrowserSessions sessions, IdentityAdministrators administrators, SecurityAudits audits) {
 		this.users = users;
 		this.setups = setups;
 		this.recoveries = recoveries;
 		this.sessions = sessions;
+		this.administrators = administrators;
 		this.audits = audits;
 	}
 
@@ -34,6 +36,9 @@ public class IdentityUserStates {
 		validate(userId, audit);
 		if (this.users.lockById(userId).status() == IdentityUser.Status.DISABLED) {
 			return Result.UNCHANGED;
+		}
+		if (!this.administrators.allowDisable(userId, audit)) {
+			return Result.LAST_ADMINISTRATOR_PROTECTED;
 		}
 		this.users.disable(userId);
 		this.setups.cancelOutstanding(userId, audit);
@@ -60,7 +65,7 @@ public class IdentityUserStates {
 	}
 
 	public enum Result {
-		CHANGED, UNCHANGED
+		CHANGED, UNCHANGED, LAST_ADMINISTRATOR_PROTECTED
 	}
 
 }
