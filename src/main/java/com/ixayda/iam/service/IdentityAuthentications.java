@@ -55,7 +55,7 @@ public class IdentityAuthentications {
 		return this.transaction.execute(status -> evaluate(username, password, context));
 	}
 
-	/** Joins trusted recovery issuance; the workflow acquires recovery budgets before password/user locks. */
+	/** Joins trusted recovery or factor replacement; workflows prelock their factor budgets before password/user locks. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<PasswordAuthenticationResult> authenticateInTransaction(String username, String password, PasswordAuthenticationContext context) {
 		Assert.notNull(context, "Trusted authentication context is required");

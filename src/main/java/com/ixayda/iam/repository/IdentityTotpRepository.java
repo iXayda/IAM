@@ -2,6 +2,7 @@ package com.ixayda.iam.repository;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -83,6 +84,40 @@ public class IdentityTotpRepository {
 			throw new IllegalStateException("TOTP enrollment was not cancelled");
 		}
 		return changed == 1;
+	}
+
+	public void replaceActive(UUID userId, UUID oldFactorId, Replacement replacement, long step, Instant activatedAt, long nextVersion) {
+		requireOne(this.jdbc.sql("DELETE FROM iam_user_totp WHERE user_id = :userId AND factor_id = :factorId AND status = 'active'")
+				.param("userId", userId).param("factorId", oldFactorId).update());
+		requireOne(this.jdbc.sql("""
+				INSERT INTO iam_user_totp (user_id, factor_id, secret_ciphertext, key_id, enrollment_credential_version,
+				    status, issued_at, expires_at, activated_at, last_used_step)
+				VALUES (:userId, :factorId, :secret, :keyId, :version, 'active', :issuedAt, :expiresAt, :activatedAt, :step)
+				""").param("userId", userId).param("factorId", replacement.factorId()).param("secret", replacement.ciphertext())
+				.param("keyId", replacement.keyId()).param("version", nextVersion).param("issuedAt", at(replacement.issuedAt()))
+				.param("expiresAt", at(replacement.expiresAt())).param("activatedAt", at(activatedAt)).param("step", step).update());
+		boolean stored = this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_user_totp WHERE user_id = :userId AND factor_id = :factorId
+				    AND secret_ciphertext = :secret AND key_id = :keyId AND enrollment_credential_version = :version
+				    AND status = 'active' AND issued_at = :issuedAt AND expires_at = :expiresAt
+				    AND activated_at = :activatedAt AND last_used_step = :step)
+				""").param("userId", userId).param("factorId", replacement.factorId()).param("secret", replacement.ciphertext())
+				.param("keyId", replacement.keyId()).param("version", nextVersion).param("issuedAt", at(replacement.issuedAt()))
+				.param("expiresAt", at(replacement.expiresAt())).param("activatedAt", at(activatedAt)).param("step", step)
+				.query(Boolean.class).single();
+		if (!stored) { throw new IllegalStateException("Replacement TOTP factor was not stored"); }
+	}
+
+	private static void requireOne(int changed) {
+		if (changed != 1) { throw new IllegalStateException("TOTP factor mutation was not stored"); }
+	}
+
+	private static OffsetDateTime at(Instant instant) { return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC); }
+
+	public record Replacement(UUID factorId, String ciphertext, String keyId, Instant issuedAt, Instant expiresAt) {
+
+		@Override
+		public String toString() { return "Replacement[factorId=" + this.factorId + ", secret=REDACTED]"; }
 	}
 
 	public record Factor(UUID factorId, String encryptedSecret, String keyId, long enrollmentCredentialVersion,

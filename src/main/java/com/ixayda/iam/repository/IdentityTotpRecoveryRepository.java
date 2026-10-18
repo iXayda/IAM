@@ -2,14 +2,13 @@ package com.ixayda.iam.repository;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
-/** Recovery and factor mutations run under the owning user's lock. */
+/** Pending recovery mutations run under the owning user's lock. */
 @Repository
 public class IdentityTotpRecoveryRepository {
 
@@ -81,28 +80,6 @@ public class IdentityTotpRecoveryRepository {
 		return consumedAt;
 	}
 
-	public void replaceFactor(UUID userId, Recovery recovery, long step, Instant activatedAt, long nextVersion) {
-		requireOne(this.jdbc.sql("DELETE FROM iam_user_totp WHERE user_id = :userId AND factor_id = :factorId AND status = 'active'")
-				.param("userId", userId).param("factorId", recovery.oldFactorId()).update());
-		requireOne(this.jdbc.sql("""
-				INSERT INTO iam_user_totp (user_id, factor_id, secret_ciphertext, key_id, enrollment_credential_version,
-				    status, issued_at, expires_at, activated_at, last_used_step)
-				VALUES (:userId, :factorId, :secret, :keyId, :version, 'active', :issuedAt, :expiresAt, :activatedAt, :step)
-				""").param("userId", userId).param("factorId", recovery.newFactorId()).param("secret", recovery.ciphertext())
-				.param("keyId", recovery.keyId()).param("version", nextVersion).param("issuedAt", at(recovery.issuedAt()))
-				.param("expiresAt", at(recovery.expiresAt())).param("activatedAt", at(activatedAt)).param("step", step).update());
-		boolean stored = this.jdbc.sql("""
-				SELECT EXISTS (SELECT 1 FROM iam_user_totp WHERE user_id = :userId AND factor_id = :factorId
-				    AND secret_ciphertext = :secret AND key_id = :keyId AND enrollment_credential_version = :version
-				    AND status = 'active' AND issued_at = :issuedAt AND expires_at = :expiresAt
-				    AND activated_at = :activatedAt AND last_used_step = :step)
-				""").param("userId", userId).param("factorId", recovery.newFactorId()).param("secret", recovery.ciphertext())
-				.param("keyId", recovery.keyId()).param("version", nextVersion).param("issuedAt", at(recovery.issuedAt()))
-				.param("expiresAt", at(recovery.expiresAt())).param("activatedAt", at(activatedAt)).param("step", step)
-				.query(Boolean.class).single();
-		if (!stored) { throw new IllegalStateException("Recovered TOTP factor was not stored"); }
-	}
-
 	public void cleanUpExpired() {
 		this.jdbc.sql("""
 				WITH expired AS (SELECT user_id FROM iam_totp_recovery WHERE expires_at <= clock_timestamp()
@@ -110,8 +87,6 @@ public class IdentityTotpRecoveryRepository {
 				DELETE FROM iam_totp_recovery current USING expired WHERE current.user_id = expired.user_id
 				""").update();
 	}
-
-	private static OffsetDateTime at(Instant instant) { return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC); }
 
 	private static void requireOne(int changed) {
 		if (changed != 1) { throw new IllegalStateException("TOTP recovery mutation was not stored"); }

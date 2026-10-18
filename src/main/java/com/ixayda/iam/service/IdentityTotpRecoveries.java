@@ -139,7 +139,9 @@ public class IdentityTotpRecoveries {
 						var consumedAt = step.isPresent() ? this.repository.consume(userId, recoveryId, digest, step.getAsLong()) : Optional.<Instant>empty();
 						if (consumedAt.isPresent()) {
 							long nextVersion = Math.addExact(version.orElseThrow(), 1);
-							this.repository.replaceFactor(userId, recovery, step.getAsLong(), consumedAt.orElseThrow(), nextVersion);
+							this.factors.replaceActive(userId, recovery.oldFactorId(), new IdentityTotpRepository.Replacement(
+									recovery.newFactorId(), recovery.ciphertext(), recovery.keyId(), recovery.issuedAt(), recovery.expiresAt()),
+									step.getAsLong(), consumedAt.orElseThrow(), nextVersion);
 							this.users.invalidateAuthentications(userId, version.orElseThrow());
 							var audit = userAudit(userId, context.source(), context.correlationId());
 							this.sessions.revokeAll(userId, audit);
