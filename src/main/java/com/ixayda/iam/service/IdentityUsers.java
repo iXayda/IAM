@@ -87,6 +87,11 @@ public class IdentityUsers {
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityUser> lockForPasswordRecovery(UUID id) {
+		return this.repository.lockById(id).filter(user -> user.status() == IdentityUser.Status.ACTIVE);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<String> passwordHash(UUID id) {
 		return this.repository.findPasswordHash(id);
 	}

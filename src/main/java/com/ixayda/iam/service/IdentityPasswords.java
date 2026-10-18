@@ -96,7 +96,7 @@ public class IdentityPasswords {
 			return Result.INVALID_SESSION;
 		}
 		this.users.replacePassword(userId, replacement, credentialVersion);
-		this.sessions.revokeAllForPasswordChange(userId, audit);
+		this.sessions.revokeAllForCredentialReplacement(userId, audit);
 		this.limits.succeeded(attempt);
 		this.audits.recordSuccess(Action.PASSWORD_CHANGED, userId, audit);
 		// Revocation is intentional; preserve the original deadlines through all writes and audit.
