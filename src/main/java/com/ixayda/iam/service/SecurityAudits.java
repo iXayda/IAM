@@ -4,6 +4,8 @@ import java.util.UUID;
 
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent;
+import com.ixayda.iam.model.SecurityAuditFilter;
+import com.ixayda.iam.model.SecurityAuditPage;
 import com.ixayda.iam.repository.SecurityAuditRepository;
 
 import org.springframework.stereotype.Service;
@@ -17,6 +19,28 @@ public class SecurityAudits {
 
 	SecurityAudits(SecurityAuditRepository repository) {
 		this.repository = repository;
+	}
+
+	/** Internal query; the caller authorizes access and retains the returned cursor's filters. */
+	public SecurityAuditPage search(SecurityAuditFilter filter, int pageSize, SecurityAuditPage.Cursor after) {
+		if (filter == null) {
+			throw new IllegalArgumentException("Audit filter is required");
+		}
+		if (pageSize < 1 || pageSize > 100) {
+			throw new IllegalArgumentException("Page size must be between 1 and 100");
+		}
+		if (after != null && !after.filter().equals(filter)) {
+			throw new IllegalArgumentException("Cursor audit filters do not match");
+		}
+		var rows = this.repository.search(filter, pageSize + 1, after);
+		boolean hasMore = rows.size() > pageSize;
+		var items = hasMore ? rows.subList(0, pageSize) : rows;
+		SecurityAuditPage.Cursor next = null;
+		if (hasMore) {
+			var last = items.getLast();
+			next = new SecurityAuditPage.Cursor(last.recordedAt(), last.id(), filter);
+		}
+		return new SecurityAuditPage(items, next);
 	}
 
 	/** Appends success only within the transaction that performs the business operation. */
