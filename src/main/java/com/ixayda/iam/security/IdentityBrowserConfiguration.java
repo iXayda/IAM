@@ -59,7 +59,7 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.GET, "/api/csrf").permitAll()
 						.requestMatchers(HttpMethod.POST, "/login", "/logout").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
-						.requestMatchers(HttpMethod.POST, "/api/me/password").authenticated()
+						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password").authenticated()
 						.anyRequest().denyAll())
 				.requestCache(cache -> cache.disable())
 				.httpBasic(basic -> basic.disable())
