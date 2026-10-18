@@ -15,6 +15,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.session.Session;
 import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Adapts the official repository through its public interfaces and tracks session mutations. */
 final class IdentityBrowserSessionRepositoryAdapter implements BeanPostProcessor {
@@ -49,9 +51,20 @@ final class IdentityBrowserSessionRepositoryAdapter implements BeanPostProcessor
 				if (!(invocation.getArguments()[0] instanceof IdentityBrowserSession session)) {
 					throw new IllegalArgumentException("Tracked browser session is required");
 				}
+				if (session.isUnchangedSinceCommit()) { return null; }
 				invocation.getArguments()[0] = session.delegate();
-				this.sessions.getObject().save(session, () -> proceed(invocation), () -> repository.findById(session.getId()), session::changedAttributes);
-				session.saved();
+				this.sessions.getObject().save(session, () -> {
+					proceed(invocation);
+					// Capture inside the transaction; a failed save or outer workflow must never become a reusable checkpoint.
+					var stored = session.saved();
+					TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+						@Override
+						public void afterCompletion(int status) {
+							if (status == STATUS_COMMITTED) { session.committed(stored); }
+							else { session.setAttribute(IdentityBrowserSessions.PERSISTENCE_FAILED, true); }
+						}
+					});
+				}, () -> repository.findById(session.getId()), session::changedAttributes);
 				return null;
 			}
 			if (method.equals("deleteById")) {

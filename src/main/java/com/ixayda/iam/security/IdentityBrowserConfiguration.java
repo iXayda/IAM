@@ -78,6 +78,7 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.GET, "/api/csrf").permitAll()
 						.requestMatchers(HttpMethod.POST, "/login", "/logout").permitAll()
 						.requestMatchers(HttpMethod.POST, "/admin/mfa").access(administrator)
+						.requestMatchers(HttpMethod.POST, "/api/admin/users").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password").authenticated()

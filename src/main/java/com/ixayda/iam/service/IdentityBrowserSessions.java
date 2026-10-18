@@ -161,6 +161,9 @@ public class IdentityBrowserSessions {
 				this.repository.requireStored(session.getId(), userId,
 						session.getLastAccessedTime().plus(session.getMaxInactiveInterval()).toEpochMilli());
 				requireMatching(session, expectedAttributes, readStored.get());
+				if (userId != null && !withinAbsoluteLifetime(session.getAttribute(AUTHENTICATED_AT))) {
+					throw new IllegalStateException("Browser session expired during persistence");
+				}
 				if (login) {
 					if (userId == null) {
 						throw new IllegalStateException("Authenticated browser identity is required");
