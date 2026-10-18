@@ -6,6 +6,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.function.LongSupplier;
 
@@ -81,16 +82,18 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				return;
 			}
 			boolean passwordChange = request.getServletPath().equals("/api/me/password");
-			if (passwordChange && request.getMethod().equals("POST")
+			boolean profileChange = request.getServletPath().equals("/api/me/profile");
+			boolean accountChange = passwordChange || profileChange;
+			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
 			}
-			if (passwordChange && request.getQueryString() != null) {
+			if (accountChange && request.getQueryString() != null) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
-			// Reject invalid servlet parameters before opening a session; JSON credentials have a separate bounded reader.
+			// Let the servlet container enforce its form limit, including chunked requests, before opening a session.
 			try {
 				request.getParameterMap();
 			}
@@ -98,7 +101,11 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
-			if (passwordChange && request.getParameterMap().values().stream().anyMatch(values -> values.length != 1)) {
+			if (accountChange && request.getParameterMap().values().stream().anyMatch(values -> values.length != 1)) {
+				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				return;
+			}
+			if (profileChange && !Set.of("displayName", "_csrf").containsAll(request.getParameterMap().keySet())) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}

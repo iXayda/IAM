@@ -105,6 +105,12 @@ public class IdentityUsers {
 		return this.repository.hasCurrentPasswordVersion(id, version);
 	}
 
+	/** The profile workflow holds the user lock and supplies the normalized display name. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	void updateDisplayName(UUID id, String displayName) {
+		this.repository.updateDisplayName(id, displayName);
+	}
+
 	@Transactional(propagation = Propagation.MANDATORY)
 	void replacePassword(UUID id, String hash, long version) {
 		this.repository.replacePassword(id, hash, version);
@@ -117,7 +123,7 @@ public class IdentityUsers {
 		return value.toLowerCase(Locale.ROOT);
 	}
 
-	private static String normalizeDisplayName(String value) {
+	static String normalizeDisplayName(String value) {
 		if (value == null || value.length() > 65_536) {
 			throw new IllegalArgumentException("Display name is invalid");
 		}

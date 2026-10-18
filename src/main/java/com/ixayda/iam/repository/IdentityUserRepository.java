@@ -69,6 +69,14 @@ public class IdentityUserRepository {
 				""").param("id", id).param("version", version).query(Boolean.class).single();
 	}
 
+	public void updateDisplayName(UUID id, String displayName) {
+		int updated = this.jdbc.sql("UPDATE iam_user SET display_name = :displayName WHERE id = :id")
+				.param("id", id).param("displayName", displayName).update();
+		if (updated != 1 || findById(id).filter(user -> user.displayName().equals(displayName)).isEmpty()) {
+			throw new IllegalStateException("Display name update was not stored");
+		}
+	}
+
 	public void replacePassword(UUID id, String hash, long version) {
 		int updated = this.jdbc.sql("""
 				UPDATE iam_password SET password_hash = :hash, credential_version = credential_version + 1
