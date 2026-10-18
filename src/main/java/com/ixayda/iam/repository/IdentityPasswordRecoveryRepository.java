@@ -58,10 +58,13 @@ public class IdentityPasswordRecoveryRepository {
 		return true;
 	}
 
-	public void cancel(UUID userId) {
+	public boolean cancel(UUID userId) {
 		var proof = this.jdbc.sql("SELECT token_digest, credential_version FROM iam_password_recovery WHERE user_id = :user AND status = 'issued'")
 				.param("user", userId).query((row, index) -> new OutstandingProof(row.getString("token_digest"), row.getLong("credential_version")))
-				.optional().orElseThrow(() -> new IllegalStateException("No outstanding password recovery"));
+				.optional();
+		if (proof.isEmpty()) {
+			return false;
+		}
 		int changed = this.jdbc.sql("""
 				UPDATE iam_password_recovery SET status = 'cancelled', finished_at = clock_timestamp()
 				WHERE user_id = :user AND status = 'issued'
@@ -69,7 +72,8 @@ public class IdentityPasswordRecoveryRepository {
 		if (changed != 1) {
 			throw new IllegalStateException("Password recovery was not cancelled");
 		}
-		requireFinished(userId, proof.digest(), proof.version(), "cancelled");
+		requireFinished(userId, proof.orElseThrow().digest(), proof.orElseThrow().version(), "cancelled");
+		return true;
 	}
 
 	private void requireFinished(UUID userId, String digest, long version, String status) {

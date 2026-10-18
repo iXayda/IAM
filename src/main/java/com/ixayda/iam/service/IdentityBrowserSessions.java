@@ -73,7 +73,7 @@ public class IdentityBrowserSessions {
 				&& this.users.hasCurrentPasswordVersion(userId, version);
 	}
 
-	/** The caller already holds the user's lock, before checking the session and revoking its peers. */
+	/** The caller already holds the user's lock before checking its session. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	boolean lockOwnedSession(UUID userId, String sessionId) {
 		return this.repository.lock(sessionId) && this.repository.ownedAndUnexpired(sessionId, userId);
@@ -90,7 +90,7 @@ public class IdentityBrowserSessions {
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
-	void revokeAllForCredentialReplacement(UUID userId, SecurityAuditContext audit) {
+	void revokeAll(UUID userId, SecurityAuditContext audit) {
 		this.repository.deleteAllForUser(userId);
 		this.audits.recordSuccess(Action.BROWSER_SESSIONS_REVOKED, userId, audit);
 	}

@@ -9,6 +9,7 @@ import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.repository.IdentityUserSetupRepository;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
@@ -53,6 +54,14 @@ public class IdentityUserSetups {
 			throw new IllegalStateException("No outstanding account setup");
 		}
 		this.audits.recordSuccess(Action.ACCOUNT_SETUP_CANCELLED, userId, audit);
+	}
+
+	/** The lifecycle workflow already holds the owning user's lock. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	void cancelOutstanding(UUID userId, SecurityAuditContext audit) {
+		if (this.repository.cancel(userId)) {
+			this.audits.recordSuccess(Action.ACCOUNT_SETUP_CANCELLED, userId, audit);
+		}
 	}
 
 	/** Source and correlation id belong to the trusted entry; the proof establishes the actor. */
