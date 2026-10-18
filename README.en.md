@@ -62,6 +62,10 @@ java -jar target/iam.jar --spring.profiles.active=documentation
 
 Use a valid session to read `/v3/api-docs` (JSON) or `/v3/api-docs.yaml` (YAML). Export the specification locally, then validate and view it with the [standalone preview tool](tools/swagger/README.md).
 
+## Operations
+
+See the [operations guide](docs/operations.md) for administrator initialization and deployment maintenance.
+
 ## Support and maintenance
 
 Report usage issues and improvement suggestions through [GitHub Issues](https://github.com/iXayda/IAM/issues). The project is maintained by ka1i. Contact: <iXayda@outlook.com>.

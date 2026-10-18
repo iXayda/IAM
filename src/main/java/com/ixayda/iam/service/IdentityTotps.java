@@ -51,26 +51,38 @@ public class IdentityTotps {
 		validateInvocation(userId);
 		Assert.notNull(audit, "Trusted audit context is required");
 		this.secrets.requireConfigured();
-		return this.transaction.execute(status -> {
-			if (this.users.lockById(userId).status() != IdentityUser.Status.ACTIVE) {
-				throw new IllegalStateException("TOTP enrollment requires an active user with a password");
-			}
-			long version = this.users.passwordVersion(userId).orElseThrow(
-					() -> new IllegalStateException("TOTP enrollment requires an active user with a password"));
-			if (this.repository.find(userId).filter(IdentityTotpRepository.Factor::active).isPresent()) {
-				throw new IllegalStateException("An active TOTP factor cannot be replaced through enrollment");
-			}
-			UUID factorId = UUID.randomUUID();
-			byte[] secret = this.secrets.generate();
-			try {
-				var expires = this.repository.enroll(userId, factorId, this.secrets.encrypt(userId, factorId, secret), this.secrets.keyId(), version);
-				this.audits.recordSuccess(Action.TOTP_ENROLLMENT_STARTED, userId, audit);
-				String encoded = this.codes.encodeSecret(secret);
-				String uri = "otpauth://totp/IAM:" + userId + "?secret=" + encoded + "&issuer=IAM&algorithm=SHA1&digits=6&period=30";
-				return new IdentityTotpEnrollment(userId, factorId, encoded, uri, expires);
-			}
-			finally { Arrays.fill(secret, (byte) 0); }
-		});
+		return this.transaction.execute(status -> beginEnrollmentInTransaction(userId, audit));
+	}
+
+	/** The caller holds its workflow locks and delivers the secret only after its transaction commits. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	IdentityTotpEnrollment beginEnrollmentInTransaction(UUID userId, SecurityAuditContext audit) {
+		Assert.notNull(userId, "User id is required");
+		Assert.notNull(audit, "Trusted audit context is required");
+		this.secrets.requireConfigured();
+		if (this.users.lockById(userId).status() != IdentityUser.Status.ACTIVE) {
+			throw new IllegalStateException("TOTP enrollment requires an active user with a password");
+		}
+		long version = this.users.passwordVersion(userId).orElseThrow(
+				() -> new IllegalStateException("TOTP enrollment requires an active user with a password"));
+		if (this.repository.find(userId).filter(IdentityTotpRepository.Factor::active).isPresent()) {
+			throw new IllegalStateException("An active TOTP factor cannot be replaced through enrollment");
+		}
+		UUID factorId = UUID.randomUUID();
+		byte[] secret = this.secrets.generate();
+		try {
+			var expires = this.repository.enroll(userId, factorId, this.secrets.encrypt(userId, factorId, secret), this.secrets.keyId(), version);
+			this.audits.recordSuccess(Action.TOTP_ENROLLMENT_STARTED, userId, audit);
+			String encoded = this.codes.encodeSecret(secret);
+			String uri = "otpauth://totp/IAM:" + userId + "?secret=" + encoded + "&issuer=IAM&algorithm=SHA1&digits=6&period=30";
+			return new IdentityTotpEnrollment(userId, factorId, encoded, uri, expires);
+		}
+		finally { Arrays.fill(secret, (byte) 0); }
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	boolean hasActiveFactor(UUID userId) {
+		return this.repository.find(userId).filter(IdentityTotpRepository.Factor::active).isPresent();
 	}
 
 	public boolean cancelEnrollment(UUID userId, UUID factorId, SecurityAuditContext audit) {
@@ -112,6 +124,17 @@ public class IdentityTotps {
 		Assert.notNull(context, "Trusted authentication context is required");
 		this.secrets.requireConfigured();
 		return evaluateLocked(userId, null, code, context, false);
+	}
+
+	/** Factor activation joins the protected bootstrap grant; failure rolls both back. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityTotpVerification> confirmEnrollmentInTransaction(UUID userId, UUID factorId, String code,
+			TotpAuthenticationContext context) {
+		Assert.notNull(userId, "User id is required");
+		Assert.notNull(factorId, "Factor id is required");
+		Assert.notNull(context, "Trusted authentication context is required");
+		this.secrets.requireConfigured();
+		return evaluateLocked(userId, factorId, code, context, true);
 	}
 
 	private Optional<IdentityTotpVerification> evaluateLocked(UUID userId, UUID factorId, String code,

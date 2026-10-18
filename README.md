@@ -62,6 +62,10 @@ java -jar target/iam.jar --spring.profiles.active=documentation
 
 使用有效会话读取 `/v3/api-docs`（JSON）或 `/v3/api-docs.yaml`（YAML），导出规范到本地后，通过 [独立预览工具](tools/swagger/README.md)校验和查看。
 
+## 运行维护
+
+管理员初始化及部署维护说明见 [运维指南](docs/operations.md)。
+
 ## 反馈与维护
 
 使用问题和改进建议可在 [GitHub Issues](https://github.com/iXayda/IAM/issues) 提出。项目由 ka1i 维护，联系邮箱：<iXayda@outlook.com>。
