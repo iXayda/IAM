@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -936,7 +936,19 @@ class IdentityBrowserIntegrationTests {
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/disable", java.util.Set.of("code"));
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/enable", java.util.Set.of("code"));
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/profile", java.util.Set.of("displayName", "code"));
-			for (String path : List.of("/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable")) {
+			assertFormOperationContract(specification, "/api/admin/users/{userId}/setup", java.util.Set.of("code"));
+			assertFormOperationContract(specification, "/api/admin/users/{userId}/setup/cancel", java.util.Set.of("code"));
+			var setup = specification.path("paths").path("/api/admin/users/{userId}/setup").path("post");
+			assertThat(setup.path("operationId").asText()).isEqualTo("issueUserSetup");
+			assertThat(setup.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityUserSetupResponse");
+			var delivery = specification.path("components").path("schemas").path("IdentityUserSetupResponse");
+			assertThat(delivery.path("properties").propertyNames()).containsExactlyInAnyOrder("userId", "token", "expiresAt");
+			assertThat(delivery.path("required").size()).isEqualTo(3);
+			assertThat(delivery.path("properties").path("token").path("writeOnly").asBoolean()).isFalse();
+			var cancellation = specification.path("paths").path("/api/admin/users/{userId}/setup/cancel").path("post");
+			assertThat(cancellation.path("operationId").asText()).isEqualTo("cancelUserSetup");
+			assertThat(cancellation.path("responses").path("204").has("content")).isFalse();
+			for (String path : List.of("/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel")) {
 				var responses = specification.path("paths").path(path).path("post").path("responses");
 				for (String status : List.of("401", "403", "415")) {
 					assertThat(responses.path(status).path("content").path("application/json").path("schema").path("$ref").asText())

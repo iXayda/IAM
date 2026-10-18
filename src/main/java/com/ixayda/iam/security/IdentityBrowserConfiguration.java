@@ -79,6 +79,7 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.POST, "/login", "/logout").permitAll()
 						.requestMatchers(HttpMethod.POST, "/admin/mfa").access(administrator)
 						.requestMatchers(HttpMethod.POST, "/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile").access(management)
+						.requestMatchers(HttpMethod.POST, "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password").authenticated()
