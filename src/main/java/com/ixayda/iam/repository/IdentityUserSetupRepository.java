@@ -47,11 +47,29 @@ public class IdentityUserSetupRepository {
 	}
 
 	public boolean consume(UUID userId, String digest) {
-		return this.jdbc.sql("""
+		int changed = this.jdbc.sql("""
 				UPDATE iam_user_setup SET status = 'consumed', finished_at = clock_timestamp()
 				WHERE user_id = :userId AND token_digest = :digest AND status = 'issued'
 				    AND expires_at > clock_timestamp()
-				""").param("userId", userId).param("digest", digest).update() == 1;
+				""").param("userId", userId).param("digest", digest).update();
+		if (changed == 0) {
+			if (isUsable(userId, digest)) { throw new IllegalStateException("Account setup consumption was not stored"); }
+			return false;
+		}
+		boolean stored = this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_user_setup WHERE user_id = :userId AND token_digest = :digest
+				    AND status = 'consumed' AND finished_at IS NOT NULL)
+				""").param("userId", userId).param("digest", digest).query(Boolean.class).single();
+		if (changed != 1 || !stored) { throw new IllegalStateException("Account setup consumption was not stored"); }
+		return true;
+	}
+
+	public boolean isFreshlyConsumed(UUID userId, String digest) {
+		return this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_user_setup WHERE user_id = :userId AND token_digest = :digest
+				    AND status = 'consumed' AND finished_at IS NOT NULL AND finished_at < expires_at
+				    AND expires_at > clock_timestamp())
+				""").param("userId", userId).param("digest", digest).query(Boolean.class).single();
 	}
 
 	public boolean cancel(UUID userId) {

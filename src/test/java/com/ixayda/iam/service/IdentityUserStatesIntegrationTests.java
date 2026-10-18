@@ -328,7 +328,14 @@ class IdentityUserStatesIntegrationTests {
 				connection.setSchema(schema);
 				var previous = JdbcClient.create(new SingleConnectionDataSource(connection, true));
 				for (String table : TABLES) { previous.sql("INSERT INTO " + table + " SELECT * FROM public." + table).update(); }
-				for (Action action : EnumSet.range(Action.USER_CREATED, Action.USER_PROFILE_UPDATED)) {
+				// Freeze the V8 contract instead of depending on the current enum's declaration order.
+				for (Action action : EnumSet.of(Action.USER_CREATED, Action.INITIAL_PASSWORD_SET,
+						Action.ACCOUNT_SETUP_ISSUED, Action.ACCOUNT_SETUP_CANCELLED, Action.ACCOUNT_SETUP_COMPLETED,
+						Action.PASSWORD_AUTHENTICATED, Action.PASSWORD_AUTH_FAILED, Action.PASSWORD_AUTH_THROTTLED,
+						Action.BROWSER_SESSION_CREATED, Action.BROWSER_SESSION_ENDED, Action.BROWSER_ENTRY_THROTTLED,
+						Action.PASSWORD_CHANGED, Action.PASSWORD_CHANGE_FAILED, Action.PASSWORD_CHANGE_THROTTLED,
+						Action.BROWSER_SESSIONS_REVOKED, Action.PASSWORD_RECOVERY_ISSUED, Action.PASSWORD_RECOVERY_CANCELLED,
+						Action.PASSWORD_RECOVERY_COMPLETED, Action.PASSWORD_RECOVERY_FAILED, Action.USER_PROFILE_UPDATED)) {
 					insertEvent(previous, user.id(), action);
 				}
 				var before = snapshot(previous);

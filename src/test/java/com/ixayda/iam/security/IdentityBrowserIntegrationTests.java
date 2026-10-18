@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -938,6 +938,17 @@ class IdentityBrowserIntegrationTests {
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/profile", java.util.Set.of("displayName", "code"));
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/setup", java.util.Set.of("code"));
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/setup/cancel", java.util.Set.of("code"));
+			assertFormOperationContract(specification, "/api/account-setup/complete", java.util.Set.of("userId", "token", "password"));
+			var completion = specification.path("paths").path("/api/account-setup/complete").path("post");
+			assertThat(completion.path("operationId").asText()).isEqualTo("completeUserSetup");
+			assertThat(completion.has("security")).isTrue();
+			assertThat(completion.path("security").size()).isZero();
+			assertThat(completion.path("responses").path("204").has("content")).isFalse();
+			var completionRequest = specification.path("components").path("schemas").path("IdentityUserSetupCompletionRequest");
+			assertThat(completionRequest.path("properties").propertyNames()).containsExactlyInAnyOrder("userId", "token", "password");
+			assertThat(completionRequest.path("required").size()).isEqualTo(3);
+			assertThat(completionRequest.path("properties").path("token").path("writeOnly").asBoolean()).isTrue();
+			assertThat(completionRequest.path("properties").path("password").path("writeOnly").asBoolean()).isTrue();
 			var setup = specification.path("paths").path("/api/admin/users/{userId}/setup").path("post");
 			assertThat(setup.path("operationId").asText()).isEqualTo("issueUserSetup");
 			assertThat(setup.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityUserSetupResponse");

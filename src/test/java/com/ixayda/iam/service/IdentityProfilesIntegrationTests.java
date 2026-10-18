@@ -254,7 +254,14 @@ class IdentityProfilesIntegrationTests {
 				for (String table : tables) {
 					previous.sql("INSERT INTO " + table + " SELECT * FROM public." + table).update();
 				}
-				for (Action action : EnumSet.range(Action.USER_CREATED, Action.PASSWORD_RECOVERY_FAILED)) {
+				// Freeze the V7 contract; later enum additions must not enter an older schema's fixture.
+				for (Action action : EnumSet.of(Action.USER_CREATED, Action.INITIAL_PASSWORD_SET,
+						Action.ACCOUNT_SETUP_ISSUED, Action.ACCOUNT_SETUP_CANCELLED, Action.ACCOUNT_SETUP_COMPLETED,
+						Action.PASSWORD_AUTHENTICATED, Action.PASSWORD_AUTH_FAILED, Action.PASSWORD_AUTH_THROTTLED,
+						Action.BROWSER_SESSION_CREATED, Action.BROWSER_SESSION_ENDED, Action.BROWSER_ENTRY_THROTTLED,
+						Action.PASSWORD_CHANGED, Action.PASSWORD_CHANGE_FAILED, Action.PASSWORD_CHANGE_THROTTLED,
+						Action.BROWSER_SESSIONS_REVOKED, Action.PASSWORD_RECOVERY_ISSUED, Action.PASSWORD_RECOVERY_CANCELLED,
+						Action.PASSWORD_RECOVERY_COMPLETED, Action.PASSWORD_RECOVERY_FAILED)) {
 					previous.sql("""
 							INSERT INTO iam_security_audit (id, actor, source, correlation_id, target_user_id, action, outcome)
 							VALUES (:id, 'system:upgrade', 'internal:test', :correlation, :user, :action, :outcome)
