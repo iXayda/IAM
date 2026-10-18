@@ -72,15 +72,20 @@ public class IdentityUserSetups {
 		String digest = this.tokens.digest(token);
 		this.users.lockForSetup(userId);
 		if (!this.repository.isUsable(userId, digest)) {
-			throw new IllegalArgumentException("Invalid account setup credential");
+			throw new InvalidProofException();
 		}
 		this.users.setInitialPassword(userId, password, audit);
 		// Recheck real time after password hashing; a failed consume rolls back the password and audit.
 		if (!this.repository.consume(userId, digest)) {
-			throw new IllegalArgumentException("Invalid account setup credential");
+			throw new InvalidProofException();
 		}
 		this.users.activateAfterSetup(userId);
 		this.audits.recordSuccess(Action.ACCOUNT_SETUP_COMPLETED, userId, audit);
+	}
+
+	/** A late proof rejection must roll back all writes before the HTTP workflow records its denial. */
+	static final class InvalidProofException extends IllegalArgumentException {
+		InvalidProofException() { super("Invalid account setup credential"); }
 	}
 
 }

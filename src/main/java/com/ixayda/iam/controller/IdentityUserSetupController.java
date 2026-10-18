@@ -5,13 +5,16 @@ import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.util.UUID;
 
+import com.ixayda.iam.dto.IdentityUserSetupCompletionRequest;
 import com.ixayda.iam.dto.IdentityUserSetupManagementRequest;
 import com.ixayda.iam.dto.IdentityUserSetupResponse;
+import com.ixayda.iam.model.AccountSetupContext;
 import com.ixayda.iam.model.IdentityAdministratorAuthentication;
 import com.ixayda.iam.model.TotpAuthenticationContext;
 import com.ixayda.iam.security.IdentityBrowserResponses;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityBrowserSessions;
+import com.ixayda.iam.service.IdentityUserSetupCompletions;
 import com.ixayda.iam.service.IdentityUserSetupManagement;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,6 +23,7 @@ import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,17 +51,44 @@ public class IdentityUserSetupController {
 
 	private final IdentityUserSetupManagement setups;
 	private final IdentityAdministratorSessions administrators;
+	private final IdentityUserSetupCompletions completions;
 	private final SecurityContextLogoutHandler logout = new SecurityContextLogoutHandler();
 
-	IdentityUserSetupController(IdentityUserSetupManagement setups, IdentityAdministratorSessions administrators) {
+	IdentityUserSetupController(IdentityUserSetupManagement setups, IdentityAdministratorSessions administrators, IdentityUserSetupCompletions completions) {
 		this.setups = setups;
 		this.administrators = administrators;
+		this.completions = completions;
 	}
 
-	@InitBinder("setupManagement")
+	@InitBinder({ "setupManagement", "setupCompletion" })
 	void setupBinding(ExtendedServletRequestDataBinder binder) {
 		binder.setDeclarativeBinding(true);
 		binder.setHeaderPredicate(header -> false);
+	}
+
+	@SecurityRequirements
+	@Operation(operationId = "completeUserSetup", summary = "设置密码并完成账号开通", description = "无需登录。先从 /api/csrf 获取匿名会话 Cookie 和 CSRF 令牌，通过同源 HTTPS 提交 userId、token、password 及 CSRF；拒绝查询参数、重复和额外字段。userId 为完整 UUID，凭据原样提交，不得进入 URL、日志或本地存储。账号和来源分别限制每 15 分钟 5 次及 30 次失败；未知或无效账号、错绑、过期、取消、被替换和重放的凭据统一返回无效凭据。仅在凭据有效时检查密码规则，不合规可在剩余有效期及预算内重试。成功原子保存密码、消费凭据、激活账号并记录审计，不自动登录，不授予管理权限；之后通过 /login 正常登录。")
+	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也支持 _csrf 表单字段", schema = @Schema(type = "string"))
+	@ApiResponse(responseCode = "204", description = "账号已开通，仍需正常登录", content = @Content)
+	@ApiResponse(responseCode = "400", description = "无效凭据返回 Invalid account setup credential；有效凭据的密码不合规则返回 Password does not meet policy；请求边界拒绝使用 JSON 错误", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@ApiResponse(responseCode = "403", description = "CSRF 令牌缺失或无效", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@ApiResponse(responseCode = "415", description = "需要 application/x-www-form-urlencoded", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@ApiResponse(responseCode = "429", description = "开通失败预算耗尽，或公共入口限流；只有公共入口限流提供 Retry-After", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+			content = @Content(mediaType = "application/x-www-form-urlencoded", schema = @Schema(implementation = IdentityUserSetupCompletionRequest.class)))
+	@PostMapping(path = "/api/account-setup/complete", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+	public ResponseEntity<String> complete(@Parameter(hidden = true) @ModelAttribute("setupCompletion") IdentityUserSetupCompletionRequest command,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		var context = new AccountSetupContext("browser:account-setup", InetAddress.getByName(request.getRemoteAddr()), UUID.randomUUID());
+		// Persist the existing CSRF session before mutation. This request never authenticates or changes it afterwards.
+		// The outer response buffer prevents this Spring Session flush from publishing an HTTP response.
+		response.flushBuffer();
+		return switch (this.completions.complete(command.userId(), command.token(), command.password(), context)) {
+			case COMPLETED -> ResponseEntity.noContent().build();
+			case INVALID_PROOF -> ResponseEntity.badRequest().contentType(MediaType.TEXT_PLAIN).body("Invalid account setup credential");
+			case INVALID_PASSWORD -> ResponseEntity.badRequest().contentType(MediaType.TEXT_PLAIN).body("Password does not meet policy");
+			case THROTTLED -> ResponseEntity.status(429).contentType(MediaType.TEXT_PLAIN).body("Account setup temporarily unavailable");
+		};
 	}
 
 	@Operation(operationId = "issueUserSetup", summary = "签发开通凭据", description = "由组织工作人员先核验身份，再签发并通过已核验渠道人工交付。需要有效管理员 MFA 会话及本次操作的新 TOTP。userId 使用完整 UUID；仅接受 code 及 CSRF，拒绝查询参数、重复及额外字段。只允许尚无密码的待开通账号，有效期为 30 分钟；重新签发立即替换旧凭据。事务提交后仅本次响应返回原文，不能查询找回；交付失败或结果不确定时取消或重新签发。不设置密码、不激活用户、不延长认证期限。原文不得进入 URL、日志或浏览器本地存储。")

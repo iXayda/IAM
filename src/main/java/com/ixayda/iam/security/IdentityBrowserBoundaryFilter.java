@@ -90,7 +90,8 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 					&& request.getServletPath().matches("/api/admin/users/[^/]+/(disable|enable)");
 			boolean setupManagement = request.getMethod().equals("POST")
 					&& request.getServletPath().matches("/api/admin/users/[^/]+/setup(/cancel)?");
-			boolean accountChange = userProfileUpdate || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement;
+			boolean setupCompletion = request.getMethod().equals("POST") && request.getServletPath().equals("/api/account-setup/complete");
+			boolean accountChange = userProfileUpdate || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion;
 			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
@@ -125,6 +126,10 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				return;
 			}
 			if (userCreation && !Set.of("username", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet())) {
+				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				return;
+			}
+			if (setupCompletion && !Set.of("userId", "token", "password", "_csrf").containsAll(request.getParameterMap().keySet())) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
