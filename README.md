@@ -35,6 +35,7 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 | `SERVER_FORWARD_HEADERS_STRATEGY` | 默认 `NONE`；受信代理模式使用 `NATIVE` |
 | `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | `NATIVE` 模式必填，匹配实际代理来源 IP 的正则 |
 | `IAM_TOTP_KEY_FILE` | 启用 TOTP 功能时必填，指向包含 32 个原始二进制字节的外部保护密钥文件 |
+| `IAM_SIGNING_KEY_FILE` | 签名私钥的保护密钥文件，包含 32 个原始二进制字节，须与 TOTP 使用不同的密钥 |
 
 数据库账号需要具备建表和执行迁移的权限。Flyway 在启动时创建或升级表结构。TOTP 保护密钥需要持久保存并限制读取权限，不应提交到仓库或在每次启动时重新生成。
 
