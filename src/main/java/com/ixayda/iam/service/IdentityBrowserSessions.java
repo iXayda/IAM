@@ -41,6 +41,7 @@ public class IdentityBrowserSessions {
 	public static final String ORIGINAL_ID = "iam.originalSessionId";
 	public static final String MFA_PENDING = "iam.mfaPending";
 	public static final String PERSISTENCE_FAILED = "iam.persistenceFailed";
+	public static final String TOTP_ENROLLMENT = "iam.totpEnrollment";
 	private static final String PERSISTED = "iam.persisted";
 
 	private final IdentityUsers users;
@@ -139,6 +140,7 @@ public class IdentityBrowserSessions {
 				if (userId != null) {
 					if (login) {
 						session.removeAttribute(IdentityAdministratorSessions.AUTHENTICATION);
+						session.removeAttribute(TOTP_ENROLLMENT);
 						session.setAttribute(AUTHENTICATED_AT, this.clock.millis());
 					}
 					if (!withinAbsoluteLifetime(session.getAttribute(AUTHENTICATED_AT))) {

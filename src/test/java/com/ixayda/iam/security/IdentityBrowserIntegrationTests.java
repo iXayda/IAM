@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/api/me/mfa/recovery-codes", "/admin/mfa", "/api/admin/me", "/api/admin/audits", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/api/me/mfa/recovery-codes", "/api/me/mfa/totp/enrollment", "/api/me/mfa/totp/enrollment/confirm", "/api/me/mfa/totp/enrollment/cancel", "/admin/mfa", "/api/admin/me", "/api/admin/audits", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -962,6 +962,7 @@ class IdentityBrowserIntegrationTests {
 
 			assertFormOperationContract(specification, "/api/me/password", java.util.Set.of("currentPassword", "newPassword"));
 			assertFormOperationContract(specification, "/api/me/profile", java.util.Set.of("displayName"));
+			assertTotpEnrollmentContract(specification);
 			assertFormOperationContract(specification, "/api/me/mfa/recovery-codes", java.util.Set.of("code"));
 			assertThat(specification.path("paths").path("/api/me/mfa/recovery-codes").propertyNames()).containsExactly("post");
 			var regeneration = specification.path("paths").path("/api/me/mfa/recovery-codes").path("post");
@@ -1131,6 +1132,52 @@ class IdentityBrowserIntegrationTests {
 		assertThat(csrf.path("security").size()).isZero();
 	}
 
+
+	private static void assertTotpEnrollmentContract(JsonNode specification) {
+		String path = "/api/me/mfa/totp/enrollment";
+		for (String suffix : List.of("", "/confirm", "/cancel")) {
+			var item = specification.path("paths").path(path + suffix);
+			assertThat(item.propertyNames()).containsExactly("post");
+			// These operations inherit the application's browserSession security requirement.
+			assertThat(item.path("post").has("security")).isFalse();
+			for (var parameter : item.path("post").path("parameters")) {
+				assertThat(parameter.path("in").asText()).isEqualTo("header");
+				assertThat(parameter.path("name").asText()).isEqualTo("X-CSRF-TOKEN");
+			}
+			for (String status : List.of("400", "401", "403", "413", "415", "429", "503")) {
+				assertThat(item.path("post").path("responses").has(status)).as(path + suffix + " " + status).isTrue();
+			}
+		}
+		var begin = specification.path("paths").path(path).path("post");
+		assertThat(begin.path("operationId").asText()).isEqualTo("beginCurrentTotpEnrollment");
+		assertFormOperationContract(specification, path, java.util.Set.of("currentPassword"));
+		var request = specification.path("components").path("schemas").path("IdentityTotpEnrollmentRequest");
+		assertThat(request.path("required").valueStream().map(JsonNode::asText).toList()).containsExactly("currentPassword");
+		assertThat(request.path("properties").path("currentPassword").path("format").asText()).isEqualTo("password");
+		assertThat(request.path("properties").path("currentPassword").path("writeOnly").asBoolean()).isTrue();
+		assertThat(begin.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityTotpEnrollmentResponse");
+		var enrollment = specification.path("components").path("schemas").path("IdentityTotpEnrollmentResponse");
+		assertThat(enrollment.path("properties").propertyNames()).containsExactlyInAnyOrder("factorId", "secret", "provisioningUri", "expiresAt");
+		assertThat(enrollment.path("required").valueStream().map(JsonNode::asText).toList()).containsExactlyInAnyOrder("factorId", "secret", "provisioningUri", "expiresAt");
+		assertThat(enrollment.path("properties").path("factorId").path("format").asText()).isEqualTo("uuid");
+		assertThat(enrollment.path("properties").path("expiresAt").path("format").asText()).isEqualTo("date-time");
+		assertThat(enrollment.path("properties").path("provisioningUri").path("format").asText()).isEqualTo("uri");
+		assertThat(enrollment.path("properties").path("secret").path("writeOnly").asBoolean()).isFalse();
+		assertThat(Pattern.compile(enrollment.path("properties").path("secret").path("pattern").asText()).matcher("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567").matches()).isTrue();
+		assertFormOperationContract(specification, path + "/confirm", java.util.Set.of("factorId", "code"));
+		var confirm = specification.path("paths").path(path + "/confirm").path("post");
+		assertThat(confirm.path("operationId").asText()).isEqualTo("confirmCurrentTotpEnrollment");
+		assertThat(confirm.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityMfaRecoveryCodesResponse");
+		var confirmation = specification.path("components").path("schemas").path("IdentityTotpEnrollmentConfirmationRequest");
+		assertThat(confirmation.path("required").size()).isEqualTo(2);
+		assertThat(confirmation.path("properties").path("factorId").path("format").asText()).isEqualTo("uuid");
+		assertThat(confirmation.path("properties").path("code").path("writeOnly").asBoolean()).isTrue();
+		assertThat(Pattern.compile(confirmation.path("properties").path("code").path("pattern").asText()).matcher("123456").matches()).isTrue();
+		assertFormOperationContract(specification, path + "/cancel", java.util.Set.of("factorId"));
+		var cancel = specification.path("paths").path(path + "/cancel").path("post");
+		assertThat(cancel.path("operationId").asText()).isEqualTo("cancelCurrentTotpEnrollment");
+		assertThat(cancel.path("responses").path("204").has("content")).isFalse();
+	}
 
 	private static void assertFormOperationContract(JsonNode specification, String path, java.util.Set<String> fields) {
 		var operation = specification.path("paths").path(path).path("post");
