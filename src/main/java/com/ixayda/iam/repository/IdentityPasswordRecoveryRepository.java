@@ -58,6 +58,17 @@ public class IdentityPasswordRecoveryRepository {
 		return true;
 	}
 
+	public boolean isFreshlyConsumed(UUID userId, String digest) {
+		return this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_password_recovery recovery
+				    JOIN iam_password password ON password.user_id = recovery.user_id
+				    WHERE recovery.user_id = :user AND recovery.token_digest = :digest
+				    AND recovery.status = 'consumed' AND recovery.finished_at < recovery.expires_at
+				    AND recovery.expires_at > clock_timestamp()
+				    AND recovery.credential_version = password.credential_version - 1)
+				""").param("user", userId).param("digest", digest).query(Boolean.class).single();
+	}
+
 	public boolean cancel(UUID userId) {
 		var proof = this.jdbc.sql("SELECT token_digest, credential_version FROM iam_password_recovery WHERE user_id = :user AND status = 'issued'")
 				.param("user", userId).query((row, index) -> new OutstandingProof(row.getString("token_digest"), row.getLong("credential_version")))

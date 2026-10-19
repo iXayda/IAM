@@ -109,6 +109,22 @@ class IdentityPasswordRecoveriesIntegrationTests {
 		assertThat(count("password_recovery_issued")).isEqualTo(1);
 	}
 
+	@Test
+	void transactionalConsumptionRequiresATransactionAndRollsBackWithItsCaller() {
+		var user = activeUser("alice");
+		var proof = this.recoveries.issue(user.id(), SYSTEM);
+		assertThatThrownBy(() -> this.recoveries.completeInTransaction(user.id(), proof.token(), NEW_PASSWORD, SYSTEM))
+				.isInstanceOf(org.springframework.transaction.IllegalTransactionStateException.class);
+		new TransactionTemplate(this.transactions).executeWithoutResult(status -> {
+			assertThat(this.recoveries.completeInTransaction(user.id(), proof.token(), NEW_PASSWORD, SYSTEM)).isEqualTo(COMPLETED);
+			status.setRollbackOnly();
+		});
+		assertThat(version(user.id())).isEqualTo(1);
+		assertThat(proofRow(user.id()).get("status")).isEqualTo("issued");
+		assertThat(count("password_recovery_completed")).isZero();
+		assertThat(complete(proof)).isEqualTo(COMPLETED);
+	}
+
 	@ParameterizedTest
 	@ValueSource(booleans = { false, true })
 	void managementIssuanceRequiresATransactionAndRollsBackWithItsCaller(boolean replacing) {
