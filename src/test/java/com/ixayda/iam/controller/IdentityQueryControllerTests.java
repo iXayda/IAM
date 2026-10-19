@@ -11,11 +11,13 @@ import java.util.stream.Stream;
 
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.IdentityUserPage;
+import com.ixayda.iam.model.SecurityAuditPage;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityUserCreations;
 import com.ixayda.iam.service.IdentityUserProfileManagement;
 import com.ixayda.iam.service.IdentityUserStateChanges;
 import com.ixayda.iam.service.IdentityUsers;
+import com.ixayda.iam.service.SecurityAudits;
 
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
@@ -102,6 +104,11 @@ class IdentityQueryControllerTests {
 				when(service.findById(ID)).thenReturn(Optional.of(new IdentityUser(ID, "alice", "Alice", IdentityUser.Status.ACTIVE, Instant.EPOCH)));
 				yield endpoint(new IdentityUserManagementController(service, creations, profiles, states, administrators), service, creations, profiles, states, administrators);
 			}
+			case AUDITS -> {
+				var service = mock(SecurityAudits.class);
+				when(service.search(any(), eq(20), isNull())).thenReturn(new SecurityAuditPage(List.of(), null));
+				yield endpoint(new SecurityAuditController(service), service);
+			}
 		};
 	}
 
@@ -113,7 +120,8 @@ class IdentityQueryControllerTests {
 
 	private enum Route {
 		USERS("/api/admin/users", "Invalid user request"),
-		USER("/api/admin/users/" + ID, "Invalid user request");
+		USER("/api/admin/users/" + ID, "Invalid user request"),
+		AUDITS("/api/admin/audits", "Invalid audit query");
 
 		private final String path;
 		private final String error;

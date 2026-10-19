@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/audits", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -928,6 +928,37 @@ class IdentityBrowserIntegrationTests {
 				searchParameters.add(parameter.path("name").asText());
 			}
 			assertThat(searchParameters).containsExactlyInAnyOrder("keyword", "status", "pageSize", "cursor");
+
+			assertThat(specification.path("paths").path("/api/admin/audits").propertyNames()).containsExactly("get");
+			var auditQuery = specification.path("paths").path("/api/admin/audits").path("get");
+			assertThat(auditQuery.path("operationId").asText()).isEqualTo("searchSecurityAudits");
+			assertThat(auditQuery.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/SecurityAuditPageResponse");
+			var auditParameters = new java.util.HashSet<String>();
+			for (var parameter : auditQuery.path("parameters")) {
+				assertThat(parameter.path("in").asText()).isEqualTo("query");
+				auditParameters.add(parameter.path("name").asText());
+				if (parameter.path("name").asText().equals("pageSize")) {
+					assertThat(parameter.path("schema").path("minimum").asInt()).isEqualTo(1);
+					assertThat(parameter.path("schema").path("maximum").asInt()).isEqualTo(100);
+					assertThat(parameter.path("schema").path("default").asInt()).isEqualTo(20);
+				}
+				if (parameter.path("name").asText().equals("action")) {
+					assertThat(parameter.path("schema").path("enum").size()).isEqualTo(com.ixayda.iam.model.SecurityAuditEvent.Action.values().length);
+				}
+			}
+			assertThat(auditParameters).containsExactlyInAnyOrder("from", "until", "action", "outcome", "actor", "source", "targetUserId", "correlationId", "pageSize", "cursor");
+			assertThat(specification.path("components").path("schemas").path("SecurityAuditPageResponse").path("properties").propertyNames()).containsExactlyInAnyOrder("items", "nextCursor");
+			assertThat(specification.path("components").path("schemas").path("SecurityAuditEntryResponse").path("properties").propertyNames()).containsExactlyInAnyOrder("id", "action", "outcome", "targetUserId", "actor", "source", "correlationId", "recordedAt");
+			var auditTarget = specification.path("components").path("schemas").path("SecurityAuditEntryResponse").path("properties").path("targetUserId");
+			var auditContinuation = specification.path("components").path("schemas").path("SecurityAuditPageResponse").path("properties").path("nextCursor");
+			assertThat(specification.path("openapi").asText()).startsWith("3.1.");
+			for (var field : List.of(auditTarget, auditContinuation)) {
+				var types = field.path("type");
+				assertThat(types.isArray()).isTrue();
+				assertThat(types.size()).isEqualTo(2);
+				assertThat(List.of(types.path(0).asText(), types.path(1).asText())).containsExactlyInAnyOrder("string", "null");
+			}
+			assertThat(auditTarget.path("format").asText()).isEqualTo("uuid");
 
 			assertFormOperationContract(specification, "/api/me/password", java.util.Set.of("currentPassword", "newPassword"));
 			assertFormOperationContract(specification, "/api/me/profile", java.util.Set.of("displayName"));
