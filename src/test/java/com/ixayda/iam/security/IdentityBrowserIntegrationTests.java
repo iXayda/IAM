@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/api/me/mfa/recovery-codes", "/api/me/mfa/totp/enrollment", "/api/me/mfa/totp/enrollment/confirm", "/api/me/mfa/totp/enrollment/cancel", "/api/me/mfa/totp/replacement", "/api/me/mfa/totp/replacement/complete", "/admin/mfa", "/api/admin/me", "/api/admin/audits", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/api/me/mfa/recovery-codes", "/api/me/mfa/totp/enrollment", "/api/me/mfa/totp/enrollment/confirm", "/api/me/mfa/totp/enrollment/cancel", "/api/me/mfa/totp/replacement", "/api/me/mfa/totp/replacement/complete", "/api/me/mfa/totp/recovery", "/api/me/mfa/totp/recovery/complete", "/admin/mfa", "/api/admin/me", "/api/admin/audits", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -964,6 +964,7 @@ class IdentityBrowserIntegrationTests {
 			assertFormOperationContract(specification, "/api/me/profile", java.util.Set.of("displayName"));
 			assertTotpEnrollmentContract(specification);
 			assertTotpReplacementContract(specification);
+			assertTotpRecoveryContract(specification);
 			assertFormOperationContract(specification, "/api/me/mfa/recovery-codes", java.util.Set.of("code"));
 			assertThat(specification.path("paths").path("/api/me/mfa/recovery-codes").propertyNames()).containsExactly("post");
 			var regeneration = specification.path("paths").path("/api/me/mfa/recovery-codes").path("post");
@@ -1180,6 +1181,59 @@ class IdentityBrowserIntegrationTests {
 		assertThat(begin.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityTotpReplacementResponse");
 		var complete = specification.path("paths").path(path + "/complete").path("post");
 		assertThat(complete.path("operationId").asText()).isEqualTo("completeCurrentTotpReplacement");
+		assertThat(complete.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityMfaRecoveryCodesResponse");
+		assertThat(complete.path("responses").path("200").path("headers").has("Set-Cookie")).isTrue();
+	}
+
+	private static void assertTotpRecoveryContract(JsonNode specification) {
+		String path = "/api/me/mfa/totp/recovery";
+		for (String suffix : List.of("", "/complete")) {
+			var item = specification.path("paths").path(path + suffix);
+			assertThat(item.propertyNames()).containsExactly("post");
+			var operation = item.path("post");
+			assertThat(operation.has("security")).isFalse();
+			for (var parameter : operation.path("parameters")) {
+				assertThat(parameter.path("in").asText()).isEqualTo("header");
+				assertThat(parameter.path("name").asText()).isEqualTo("X-CSRF-TOKEN");
+			}
+			for (String status : List.of("400", "401", "403", "413", "415", "429", "503")) {
+				assertThat(operation.path("responses").has(status)).as(path + suffix + " " + status).isTrue();
+			}
+			assertThat(operation.path("responses").path("429").path("headers").has("Retry-After")).isTrue();
+		}
+		assertFormOperationContract(specification, path, java.util.Set.of("currentPassword", "recoveryCode"));
+		assertFormOperationContract(specification, path + "/complete", java.util.Set.of("recoveryId", "token", "code"));
+		var schemas = specification.path("components").path("schemas");
+		var request = schemas.path("IdentityTotpRecoveryRequest");
+		assertThat(request.path("required").valueStream().map(JsonNode::asText).toList()).containsExactlyInAnyOrder("currentPassword", "recoveryCode");
+		assertThat(request.path("properties").path("currentPassword").path("format").asText()).isEqualTo("password");
+		for (String field : List.of("currentPassword", "recoveryCode")) {
+			assertThat(request.path("properties").path(field).path("writeOnly").asBoolean()).isTrue();
+		}
+		var recoveryCodePattern = Pattern.compile(request.path("properties").path("recoveryCode").path("pattern").asText());
+		assertThat(recoveryCodePattern.matcher("abcd-0123-abcd-0123-abcd-0123-abcd-0123").matches()).isTrue();
+		assertThat(recoveryCodePattern.matcher("ABCD-0123-abcd-0123-abcd-0123-abcd-0123").matches()).isFalse();
+		var completion = schemas.path("IdentityTotpRecoveryCompletionRequest");
+		assertThat(completion.path("required").valueStream().map(JsonNode::asText).toList()).containsExactlyInAnyOrder("recoveryId", "token", "code");
+		assertThat(completion.path("properties").path("recoveryId").path("format").asText()).isEqualTo("uuid");
+		var tokenPattern = Pattern.compile(completion.path("properties").path("token").path("pattern").asText());
+		assertThat(tokenPattern.matcher("A".repeat(43)).matches()).isTrue();
+		assertThat(tokenPattern.matcher("A".repeat(42) + "B").matches()).isFalse();
+		for (String field : List.of("token", "code")) {
+			assertThat(completion.path("properties").path(field).path("writeOnly").asBoolean()).isTrue();
+		}
+		var response = schemas.path("IdentityTotpRecoveryResponse");
+		assertThat(response.path("properties").propertyNames()).containsExactlyInAnyOrder("recoveryId", "token", "factorId", "secret", "provisioningUri", "expiresAt");
+		assertThat(response.path("required").size()).isEqualTo(6);
+		assertThat(response.path("properties").path("token").path("writeOnly").asBoolean()).isFalse();
+		assertThat(response.path("properties").path("token").path("pattern").asText()).isEqualTo(tokenPattern.pattern());
+		assertThat(response.path("properties").path("secret").path("writeOnly").asBoolean()).isFalse();
+		assertThat(response.path("properties").path("expiresAt").path("format").asText()).isEqualTo("date-time");
+		var begin = specification.path("paths").path(path).path("post");
+		assertThat(begin.path("operationId").asText()).isEqualTo("beginCurrentTotpRecovery");
+		assertThat(begin.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityTotpRecoveryResponse");
+		var complete = specification.path("paths").path(path + "/complete").path("post");
+		assertThat(complete.path("operationId").asText()).isEqualTo("completeCurrentTotpRecovery");
 		assertThat(complete.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityMfaRecoveryCodesResponse");
 		assertThat(complete.path("responses").path("200").path("headers").has("Set-Cookie")).isTrue();
 	}
