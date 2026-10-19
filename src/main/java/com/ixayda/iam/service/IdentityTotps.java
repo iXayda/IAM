@@ -89,14 +89,18 @@ public class IdentityTotps {
 		validateInvocation(userId);
 		Assert.notNull(factorId, "Factor id is required");
 		Assert.notNull(audit, "Trusted audit context is required");
-		return this.transaction.execute(status -> {
-			this.users.lockById(userId);
-			if (!this.repository.cancel(userId, factorId)) {
-				return false;
-			}
-			this.audits.recordSuccess(Action.TOTP_ENROLLMENT_CANCELLED, userId, audit);
-			return true;
-		});
+		return this.transaction.execute(status -> cancelEnrollmentInTransaction(userId, factorId, audit));
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
+	boolean cancelEnrollmentInTransaction(UUID userId, UUID factorId, SecurityAuditContext audit) {
+		Assert.notNull(userId, "User id is required");
+		Assert.notNull(factorId, "Factor id is required");
+		Assert.notNull(audit, "Trusted audit context is required");
+		this.users.lockById(userId);
+		if (!this.repository.cancel(userId, factorId)) { return false; }
+		this.audits.recordSuccess(Action.TOTP_ENROLLMENT_CANCELLED, userId, audit);
+		return true;
 	}
 
 	/** The confirming code is consumed; confirmation alone does not create an MFA session. */
@@ -126,7 +130,7 @@ public class IdentityTotps {
 		return evaluateLocked(userId, null, code, context, false);
 	}
 
-	/** Factor activation joins the protected bootstrap grant; failure rolls both back. */
+	/** Factor activation joins its protected workflow; failure rolls both back. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<IdentityTotpVerification> confirmEnrollmentInTransaction(UUID userId, UUID factorId, String code,
 			TotpAuthenticationContext context) {

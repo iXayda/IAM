@@ -95,7 +95,10 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 					&& request.getServletPath().matches("/api/admin/users/[^/]+/password-recovery(/cancel)?");
 			boolean recoveryCompletion = request.getMethod().equals("POST") && request.getServletPath().equals("/api/password-recovery/complete");
 			boolean recoveryCodeIssuance = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/recovery-codes");
-			boolean accountChange = userProfileUpdate || recoveryCodeIssuance || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement || recoveryCompletion;
+			boolean totpEnrollment = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/enrollment");
+			boolean totpConfirmation = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/enrollment/confirm");
+			boolean totpCancellation = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/enrollment/cancel");
+			boolean accountChange = userProfileUpdate || totpEnrollment || totpConfirmation || totpCancellation || recoveryCodeIssuance || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement || recoveryCompletion;
 			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
@@ -122,6 +125,12 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				return;
 			}
 			if (profileChange && !Set.of("displayName", "_csrf").containsAll(request.getParameterMap().keySet())) {
+				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				return;
+			}
+			if ((totpEnrollment && !Set.of("currentPassword", "_csrf").containsAll(request.getParameterMap().keySet()))
+					|| (totpConfirmation && !Set.of("factorId", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
+					|| (totpCancellation && !Set.of("factorId", "_csrf").containsAll(request.getParameterMap().keySet()))) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}

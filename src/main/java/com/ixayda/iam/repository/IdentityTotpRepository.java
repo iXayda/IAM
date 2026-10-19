@@ -55,18 +55,31 @@ public class IdentityTotpRepository {
 
 	public Optional<Instant> consume(UUID userId, UUID factorId, long step, boolean activate) {
 		var consumedAt = this.jdbc.sql("""
-				WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS now)
+				WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS now),
+				eligible AS MATERIALIZED (
+				    SELECT 1 FROM iam_user_totp CROSS JOIN instant
+				    WHERE user_id = :userId AND factor_id = :factorId
+				        AND status = :expectedStatus AND (NOT :activate OR expires_at > now)
+				        AND (last_used_step IS NULL OR last_used_step < :step)
+				        AND :step BETWEEN floor(extract(epoch FROM now) / 30)::BIGINT - 1
+				            AND floor(extract(epoch FROM now) / 30)::BIGINT + 1
+				), consumed AS (
 				UPDATE iam_user_totp SET status = 'active', last_used_step = :step,
 				    activated_at = CASE WHEN :activate THEN now ELSE activated_at END
 				FROM instant WHERE user_id = :userId AND factor_id = :factorId
-				    AND status = :expectedStatus AND (NOT :activate OR expires_at > now)
-				    AND (last_used_step IS NULL OR last_used_step < :step)
-				    AND :step BETWEEN floor(extract(epoch FROM now) / 30)::BIGINT - 1
-				        AND floor(extract(epoch FROM now) / 30)::BIGINT + 1
+				    AND EXISTS (SELECT 1 FROM eligible)
 				RETURNING now
+				)
+				SELECT (SELECT now FROM consumed) AS consumed_at, EXISTS (SELECT 1 FROM eligible) AS eligible
 				""").param("userId", userId).param("factorId", factorId).param("step", step)
 				.param("activate", activate).param("expectedStatus", activate ? "pending" : "active")
-				.query((row, index) -> row.getObject("now", OffsetDateTime.class).toInstant()).optional();
+				.query((row, index) -> {
+					var time = row.getObject("consumed_at", OffsetDateTime.class);
+					if (time == null && row.getBoolean("eligible")) {
+						throw new IllegalStateException("TOTP consumption was not stored");
+					}
+					return Optional.ofNullable(time).map(OffsetDateTime::toInstant);
+				}).single();
 		if (consumedAt.isEmpty()) {
 			return Optional.empty();
 		}
@@ -78,9 +91,10 @@ public class IdentityTotpRepository {
 	}
 
 	public boolean cancel(UUID userId, UUID factorId) {
+		boolean expected = find(userId).filter(factor -> factor.factorId().equals(factorId) && !factor.active()).isPresent();
 		int changed = this.jdbc.sql("DELETE FROM iam_user_totp WHERE user_id = :userId AND factor_id = :factorId AND status = 'pending'")
 				.param("userId", userId).param("factorId", factorId).update();
-		if (changed == 1 && find(userId).isPresent()) {
+		if ((expected && changed != 1) || (changed == 1 && find(userId).isPresent())) {
 			throw new IllegalStateException("TOTP enrollment was not cancelled");
 		}
 		return changed == 1;
