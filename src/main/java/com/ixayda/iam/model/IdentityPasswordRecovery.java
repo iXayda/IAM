@@ -4,7 +4,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
-/** A committed recovery secret returned once for trusted delivery. */
+/** A one-time recovery secret for trusted delivery after its transaction commits. */
 public record IdentityPasswordRecovery(UUID userId, String token, Instant expiresAt) {
 
 	public IdentityPasswordRecovery {

@@ -54,17 +54,23 @@ public class IdentityPasswordRecoveries {
 	public IdentityPasswordRecovery issue(UUID userId, SecurityAuditContext audit) {
 		validateInvocation(userId);
 		Assert.notNull(audit, "Trusted audit context is required");
-		return this.transaction.execute(status -> {
-			if (this.users.lockById(userId).status() != IdentityUser.Status.ACTIVE) {
-				throw new IllegalStateException("Password recovery requires an active user with a password");
-			}
-			long version = this.users.passwordVersion(userId).orElseThrow(
-					() -> new IllegalStateException("Password recovery requires an active user with a password"));
-			String token = this.tokens.generate();
-			var expires = this.repository.issue(userId, this.tokens.digest(token), version);
-			this.audits.recordSuccess(Action.PASSWORD_RECOVERY_ISSUED, userId, audit);
-			return new IdentityPasswordRecovery(userId, token, expires);
-		});
+		return this.transaction.execute(status -> issueInTransaction(userId, audit));
+	}
+
+	/** The authorized management workflow owns the transaction and delivers only after commit. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	IdentityPasswordRecovery issueInTransaction(UUID userId, SecurityAuditContext audit) {
+		Assert.notNull(userId, "User id is required");
+		Assert.notNull(audit, "Trusted audit context is required");
+		if (this.users.lockById(userId).status() != IdentityUser.Status.ACTIVE) {
+			throw new IllegalStateException("Password recovery requires an active user with a password");
+		}
+		long version = this.users.passwordVersion(userId).orElseThrow(
+				() -> new IllegalStateException("Password recovery requires an active user with a password"));
+		String token = this.tokens.generate();
+		var expires = this.repository.issue(userId, this.tokens.digest(token), version);
+		this.audits.recordSuccess(Action.PASSWORD_RECOVERY_ISSUED, userId, audit);
+		return new IdentityPasswordRecovery(userId, token, expires);
 	}
 
 	public void cancel(UUID userId, SecurityAuditContext audit) {
