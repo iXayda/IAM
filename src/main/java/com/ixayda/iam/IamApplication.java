@@ -2,6 +2,8 @@ package com.ixayda.iam;
 
 import java.time.Clock;
 
+import com.ixayda.iam.cli.AdministratorCredentialRecoveryCommand;
+
 import com.ixayda.iam.cli.AdministratorBootstrapCommand;
 import com.ixayda.iam.cli.AdministratorRecoveryCommand;
 
@@ -40,6 +42,10 @@ public class IamApplication {
 		}
 		if (args.length > 0 && args[0].equals("bootstrap-admin")) {
 			AdministratorBootstrapCommand.run(IamApplication.class, args);
+			return;
+		}
+		if (args.length > 0 && args[0].equals("recover-admin-credentials")) {
+			AdministratorCredentialRecoveryCommand.run(IamApplication.class, args);
 			return;
 		}
 		if (args.length > 0 && args[0].equals("recover-admin")) {

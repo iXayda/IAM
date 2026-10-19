@@ -3,7 +3,7 @@ package com.ixayda.iam.model;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Committed deployment material for rebuilding an existing administrator's factor only. */
+/** Committed deployment material for rebuilding an existing administrator's verified credentials. */
 public record IdentityAdministratorRecovery(UUID userId, UUID recoveryId, String token, IdentityTotpEnrollment enrollment) {
 
 	public IdentityAdministratorRecovery {
