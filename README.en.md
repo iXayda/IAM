@@ -64,7 +64,7 @@ Use a valid session to read `/v3/api-docs` (JSON) or `/v3/api-docs.yaml` (YAML).
 
 ## Operations
 
-See the [operations guide](docs/operations.md) for administrator initialization and deployment maintenance.
+See the [operations guide](docs/operations.md) for administrator initialization, recovery, and deployment maintenance.
 
 ## Support and maintenance
 

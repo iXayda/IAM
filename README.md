@@ -64,7 +64,7 @@ java -jar target/iam.jar --spring.profiles.active=documentation
 
 ## 运行维护
 
-管理员初始化及部署维护说明见 [运维指南](docs/operations.md)。
+管理员初始化、恢复及部署维护说明见 [运维指南](docs/operations.md)。
 
 ## 反馈与维护
 

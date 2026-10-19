@@ -13,11 +13,13 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.ixayda.iam.IamApplication;
 import com.ixayda.iam.PostgreSqlTestConfiguration;
 import com.ixayda.iam.TotpTestSupport;
 import com.ixayda.iam.model.IdentityAdministratorAuthentication;
+import com.ixayda.iam.model.IdentityAdministratorRecovery;
 import com.ixayda.iam.model.IdentityTotpEnrollment;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.TotpAuthenticationContext;
@@ -67,6 +69,7 @@ class IdentityAdministratorAuthenticationIntegrationTests extends BrowserHttpTes
 	private static final Path KEY_FILE = keyFile();
 
 	@Autowired private IdentityAdministrators administrators;
+	@Autowired private com.ixayda.iam.service.IdentityAdministratorRecoveries administratorRecoveries;
 	@Autowired private IdentityUsers users;
 	@Autowired private IdentityUserSetups setups;
 	@Autowired private JdbcClient jdbc;
@@ -333,6 +336,51 @@ class IdentityAdministratorAuthenticationIntegrationTests extends BrowserHttpTes
 			}
 			assertThat(get(client, "/api/admin/me", session).statusCode()).isEqualTo(
 					operation.equals("membership") || operation.equals("factor") ? 403 : 401);
+		}
+	}
+
+	@Test
+	void deploymentRecoveryRevokesExistingSessionsAndRequiresNormalLoginAndNewMfa() throws Exception {
+		var factor = administrator();
+		try (var client = client()) {
+			String passwordSession = login(client, "alice");
+			String managementSession = elevate(client, login(client, "alice"), factor);
+			var audit = new SecurityAuditContext("deployment:test-operator", "deployment:admin-recovery:TEST-123", UUID.randomUUID());
+			var preparation = new AtomicReference<IdentityAdministratorRecovery>();
+			TotpTestSupport.distinctEnrollment(() -> {
+				var pending = this.administratorRecoveries.begin(factor.userId(), PASSWORD, audit).orElseThrow();
+				preparation.set(pending);
+				return pending.enrollment();
+			});
+			var pending = preparation.get();
+			assertThat(get(client, "/api/admin/me", managementSession).statusCode()).isEqualTo(200);
+			assertThat(get(client, "/api/me", passwordSession).statusCode()).isEqualTo(200);
+			String consumedCode = otp(pending.enrollment());
+			assertThat(this.administratorRecoveries.complete(factor.userId(), pending.recoveryId(), pending.token(), PASSWORD, consumedCode, audit)).isPresent();
+			assertThat(get(client, "/api/admin/me", managementSession).statusCode()).isEqualTo(401);
+			assertThat(get(client, "/api/me", passwordSession).statusCode()).isEqualTo(401);
+			String current = login(client, "alice");
+			assertThat(get(client, "/api/admin/me", current).statusCode()).isEqualTo(403);
+			String csrf = csrf(get(client, "/api/csrf", current));
+			assertThat(post(client, "/admin/mfa", current, mfaForm(consumedCode, csrf)).statusCode()).isEqualTo(400);
+			var verified = post(client, "/admin/mfa", current, mfaForm(
+					otp(pending.enrollment(), Math.floorDiv(Instant.now().getEpochSecond(), 30) + 1), csrf));
+			assertThat(verified.statusCode()).isEqualTo(204);
+			assertThat(get(client, "/api/admin/me", cookie(verified)).statusCode()).isEqualTo(200);
+		}
+	}
+
+	@Test
+	void deploymentRecoveryHasNoBrowserEndpoint() throws Exception {
+		var factor = administrator();
+		try (var client = client()) {
+			String session = elevate(client, login(client, "alice"), factor);
+			String csrf = csrf(get(client, "/api/csrf", session));
+			for (String path : List.of("/recover-admin", "/api/admin/recovery", "/api/admin/recover-admin")) {
+				assertThat(post(client, path, session, "_csrf=" + encode(csrf)).statusCode()).isEqualTo(403);
+				assertThat(get(client, path, session).statusCode()).isEqualTo(403);
+			}
+			assertThat(events("admin_recovery_started")).isZero();
 		}
 	}
 
