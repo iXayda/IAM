@@ -100,7 +100,9 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			boolean totpCancellation = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/enrollment/cancel");
 			boolean totpReplacement = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/replacement");
 			boolean totpReplacementCompletion = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/replacement/complete");
-			boolean accountChange = userProfileUpdate || totpReplacement || totpReplacementCompletion || totpEnrollment || totpConfirmation || totpCancellation || recoveryCodeIssuance || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement || recoveryCompletion;
+			boolean totpRecovery = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/recovery");
+			boolean totpRecoveryCompletion = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/recovery/complete");
+			boolean accountChange = userProfileUpdate || totpRecovery || totpRecoveryCompletion || totpReplacement || totpReplacementCompletion || totpEnrollment || totpConfirmation || totpCancellation || recoveryCodeIssuance || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement || recoveryCompletion;
 			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
@@ -134,7 +136,9 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 					|| (totpConfirmation && !Set.of("factorId", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (totpCancellation && !Set.of("factorId", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (totpReplacement && !Set.of("currentPassword", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
-					|| (totpReplacementCompletion && !Set.of("replacementId", "token", "code", "_csrf").containsAll(request.getParameterMap().keySet()))) {
+					|| (totpReplacementCompletion && !Set.of("replacementId", "token", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
+					|| (totpRecovery && !Set.of("currentPassword", "recoveryCode", "_csrf").containsAll(request.getParameterMap().keySet()))
+					|| (totpRecoveryCompletion && !Set.of("recoveryId", "token", "code", "_csrf").containsAll(request.getParameterMap().keySet()))) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}

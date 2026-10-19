@@ -53,7 +53,15 @@ public class IdentityMfaRecoveryCodeRepository {
 				.query((row, index) -> new Consumption(row.getObject("generation_id", UUID.class),
 						row.getObject("consumed_at", OffsetDateTime.class) == null ? null
 								: row.getObject("consumed_at", OffsetDateTime.class).toInstant())).optional();
-		if (result.isPresent()) {
+		if (result.isEmpty()) {
+			boolean unconsumed = this.jdbc.sql("""
+					SELECT EXISTS (SELECT 1 FROM iam_mfa_recovery_code
+					WHERE user_id = :userId AND factor_id = :factorId AND code_digest = :digest AND consumed_at IS NULL)
+					""").param("userId", userId).param("factorId", factorId).param("digest", digest)
+					.query(Boolean.class).single();
+			if (unconsumed) { throw new IllegalStateException("MFA recovery consumption was suppressed"); }
+		}
+		else {
 			if (result.orElseThrow().consumedAt() == null) {
 				throw new IllegalStateException("MFA recovery consumption was not stored");
 			}

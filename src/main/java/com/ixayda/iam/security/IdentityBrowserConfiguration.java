@@ -87,6 +87,7 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password", "/api/me/mfa/recovery-codes").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/mfa/totp/enrollment", "/api/me/mfa/totp/enrollment/confirm", "/api/me/mfa/totp/enrollment/cancel").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/mfa/totp/replacement", "/api/me/mfa/totp/replacement/complete").authenticated()
+						.requestMatchers(HttpMethod.POST, "/api/me/mfa/totp/recovery", "/api/me/mfa/totp/recovery/complete").authenticated()
 						.anyRequest().denyAll())
 				.requestCache(cache -> cache.disable())
 				.httpBasic(basic -> basic.disable())
