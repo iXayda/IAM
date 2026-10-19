@@ -7,6 +7,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import com.ixayda.iam.PostgreSqlTestConfiguration;
+import com.ixayda.iam.model.IdentityPasswordRecovery;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.service.IdentityAuthentications;
 import com.ixayda.iam.service.IdentityPasswordRecoveries;
@@ -15,7 +16,8 @@ import com.ixayda.iam.service.IdentityUsers;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -55,13 +57,14 @@ class IdentityPasswordRecoveryIntegrationTests extends BrowserHttpTestSupport {
 	@AfterEach
 	void clean() {
 		for (String table : List.of("iam_browser_session_attributes", "iam_browser_session", "iam_password_recovery",
-				"iam_password_authentication_limit", "iam_security_audit", "iam_user_setup", "iam_password", "iam_user")) {
+				"iam_password_authentication_limit", "iam_password_recovery_limit", "iam_security_audit", "iam_user_setup", "iam_password", "iam_user")) {
 			this.jdbc.sql("DELETE FROM " + table).update();
 		}
 	}
 
-	@Test
-	void recoveryRevokesRealBrowserSessionsAndRequiresNormalLoginWithTheNewPassword() throws Exception {
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void recoveryRevokesRealBrowserSessionsAndRequiresNormalLoginWithTheNewPassword(boolean http) throws Exception {
 		UUID alice = activeUser("alice");
 		activeUser("bobby");
 		try (var client = client()) {
@@ -72,7 +75,7 @@ class IdentityPasswordRecoveryIntegrationTests extends BrowserHttpTestSupport {
 			var proof = this.recoveries.issue(alice, SYSTEM);
 			// Issuance alone does not log the user out or change the current credential.
 			assertThat(get(client, "/api/me", first).statusCode()).isEqualTo(200);
-			assertThat(this.recoveries.complete(alice, proof.token(), NEW_PASSWORD, SOURCE, UUID.randomUUID())).isEqualTo(COMPLETED);
+			complete(proof, http);
 			assertThat(this.jdbc.sql("SELECT count(*) FROM iam_browser_session WHERE principal_name = :id").param("id", alice.toString())
 					.query(Long.class).single()).isZero();
 			for (String cookie : List.of(first, second)) {
@@ -89,8 +92,9 @@ class IdentityPasswordRecoveryIntegrationTests extends BrowserHttpTestSupport {
 		}
 	}
 
-	@Test
-	void oldPasswordAuthenticationCannotCreateASessionAfterRecovery() throws Exception {
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void oldPasswordAuthenticationCannotCreateASessionAfterRecovery(boolean http) throws Exception {
 		UUID alice = activeUser("alice");
 		var proof = this.recoveries.issue(alice, SYSTEM);
 		var verified = new CountDownLatch(1);
@@ -106,7 +110,7 @@ class IdentityPasswordRecoveryIntegrationTests extends BrowserHttpTestSupport {
 			var pending = executor.submit(() -> post(client, "/login", cookie(page), credentials("alice", PASSWORD, csrf(page))));
 			try {
 				assertThat(verified.await(10, TimeUnit.SECONDS)).isTrue();
-				assertThat(this.recoveries.complete(alice, proof.token(), NEW_PASSWORD, SOURCE, UUID.randomUUID())).isEqualTo(COMPLETED);
+				complete(proof, http);
 			}
 			finally { release.countDown(); }
 			var rejected = pending.get(10, TimeUnit.SECONDS);
@@ -120,8 +124,9 @@ class IdentityPasswordRecoveryIntegrationTests extends BrowserHttpTestSupport {
 		}
 	}
 
-	@Test
-	void recoveryDoesNotBypassOrExtendThePasswordLoginLimit() throws Exception {
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void recoveryDoesNotBypassOrExtendThePasswordLoginLimit(boolean http) throws Exception {
 		UUID alice = activeUser("alice");
 		var proof = this.recoveries.issue(alice, SYSTEM);
 		try (var client = client()) {
@@ -130,11 +135,23 @@ class IdentityPasswordRecoveryIntegrationTests extends BrowserHttpTestSupport {
 				assertThat(post(client, "/login", cookie(page), credentials("alice", "wrong", csrf(page))).statusCode()).isEqualTo(401);
 			}
 			var before = this.jdbc.sql("SELECT to_jsonb(t)::text FROM iam_password_authentication_limit t ORDER BY dimension").query(String.class).list();
-			assertThat(this.recoveries.complete(alice, proof.token(), NEW_PASSWORD, SOURCE, UUID.randomUUID())).isEqualTo(COMPLETED);
+			complete(proof, http);
 			assertThat(this.jdbc.sql("SELECT to_jsonb(t)::text FROM iam_password_authentication_limit t ORDER BY dimension").query(String.class).list()).isEqualTo(before);
 			assertThat(post(client, "/login", cookie(page), credentials("alice", NEW_PASSWORD, csrf(page))).statusCode()).isEqualTo(401);
 			this.jdbc.sql("UPDATE iam_password_authentication_limit SET window_started_at = clock_timestamp() - INTERVAL '1 hour'").update();
 			assertThat(get(client, "/api/me", login(client, "alice", NEW_PASSWORD)).statusCode()).isEqualTo(200);
+		}
+	}
+
+	private void complete(IdentityPasswordRecovery proof, boolean http) throws Exception {
+		if (!http) {
+			assertThat(this.recoveries.complete(proof.userId(), proof.token(), NEW_PASSWORD, SOURCE, UUID.randomUUID())).isEqualTo(COMPLETED);
+			return;
+		}
+		try (var client = client()) {
+			var csrf = get(client, "/api/csrf", null);
+			assertThat(post(client, "/api/password-recovery/complete", cookie(csrf), "userId=" + proof.userId()
+					+ "&token=" + encode(proof.token()) + "&newPassword=" + encode(NEW_PASSWORD) + "&_csrf=" + encode(csrf(csrf))).statusCode()).isEqualTo(204);
 		}
 	}
 

@@ -13,7 +13,6 @@ import com.ixayda.iam.repository.IdentityPasswordRecoveryRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -97,17 +96,24 @@ public class IdentityPasswordRecoveries {
 	public Result complete(UUID userId, String token, String newPassword, String source, UUID correlationId) {
 		validateInvocation(userId);
 		var anonymous = new SecurityAuditContext("anonymous", source, correlationId);
-		Result result = this.transaction.execute(status -> evaluate(userId, token, newPassword, anonymous, status));
+		Result result;
+		try { result = this.transaction.execute(status -> completeInTransaction(userId, token, newPassword, anonymous)); }
+		catch (InvalidProofException ex) { result = Result.INVALID_PROOF; }
 		if (result != Result.COMPLETED) {
+			Result denial = result;
 			// A late expiry rolls back the replacement first; persist denial before returning even in that case.
 			this.transaction.executeWithoutResult(status -> this.audits.recordFailure(Action.PASSWORD_RECOVERY_FAILED,
-					this.users.findById(userId).map(IdentityUser::id).orElse(null), result == Result.INVALID_PASSWORD
+					this.users.findById(userId).map(IdentityUser::id).orElse(null), denial == Result.INVALID_PASSWORD
 							? new SecurityAuditContext("user:" + userId, source, correlationId) : anonymous));
 		}
 		return result;
 	}
 
-	private Result evaluate(UUID userId, String token, String newPassword, SecurityAuditContext anonymous, TransactionStatus status) {
+	/** The caller owns the budget and transaction; ordinary denials do not write an audit here. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Result completeInTransaction(UUID userId, String token, String newPassword, SecurityAuditContext anonymous) {
+		Assert.notNull(userId, "User id is required");
+		Assert.notNull(anonymous, "Trusted recovery context is required");
 		String digest;
 		try {
 			digest = this.tokens.digest(token);
@@ -132,12 +138,12 @@ public class IdentityPasswordRecoveries {
 		}
 		this.users.replacePassword(userId, replacement, version.orElseThrow());
 		if (!this.repository.consume(userId, digest, version.orElseThrow())) {
-			status.setRollbackOnly();
-			return Result.INVALID_PROOF;
+			throw new InvalidProofException();
 		}
 		var audit = new SecurityAuditContext("user:" + userId, anonymous.source(), anonymous.correlationId());
 		this.sessions.revokeAll(userId, audit);
 		this.audits.recordSuccess(Action.PASSWORD_RECOVERY_COMPLETED, userId, audit);
+		if (!this.repository.isFreshlyConsumed(userId, digest)) { throw new InvalidProofException(); }
 		return Result.COMPLETED;
 	}
 
@@ -146,6 +152,11 @@ public class IdentityPasswordRecoveries {
 		if (TransactionSynchronizationManager.isActualTransactionActive()) {
 			throw new IllegalStateException("Password recovery requires an independent transaction");
 		}
+	}
+
+	/** A deadline crossed after mutation: roll back before recording the denial independently. */
+	static final class InvalidProofException extends IllegalArgumentException {
+		InvalidProofException() { super("Invalid password recovery credential"); }
 	}
 
 	public enum Result {
