@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/audits", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/api/me/mfa/recovery-codes", "/admin/mfa", "/api/admin/me", "/api/admin/audits", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/password-recovery/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -962,6 +962,25 @@ class IdentityBrowserIntegrationTests {
 
 			assertFormOperationContract(specification, "/api/me/password", java.util.Set.of("currentPassword", "newPassword"));
 			assertFormOperationContract(specification, "/api/me/profile", java.util.Set.of("displayName"));
+			assertFormOperationContract(specification, "/api/me/mfa/recovery-codes", java.util.Set.of("code"));
+			assertThat(specification.path("paths").path("/api/me/mfa/recovery-codes").propertyNames()).containsExactly("post");
+			var regeneration = specification.path("paths").path("/api/me/mfa/recovery-codes").path("post");
+			assertThat(regeneration.path("operationId").asText()).isEqualTo("regenerateCurrentMfaRecoveryCodes");
+			assertThat(regeneration.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityMfaRecoveryCodesResponse");
+			var codeSet = specification.path("components").path("schemas").path("IdentityMfaRecoveryCodesResponse");
+			assertThat(codeSet.path("properties").propertyNames()).containsExactlyInAnyOrder("generationId", "codes", "issuedAt");
+			assertThat(codeSet.path("required").size()).isEqualTo(3);
+			assertThat(codeSet.path("properties").path("generationId").path("format").asText()).isEqualTo("uuid");
+			assertThat(codeSet.path("properties").path("issuedAt").path("format").asText()).isEqualTo("date-time");
+			var recoveryCodes = codeSet.path("properties").path("codes");
+			assertThat(recoveryCodes.path("minItems").asInt()).isEqualTo(10);
+			assertThat(recoveryCodes.path("maxItems").asInt()).isEqualTo(10);
+			var recoveryCodePattern = Pattern.compile(recoveryCodes.path("items").path("pattern").asText());
+			assertThat(recoveryCodePattern.matcher("abcd-0123-abcd-0123-abcd-0123-abcd-0123").matches()).isTrue();
+			assertThat(recoveryCodePattern.matcher("ABCD-0123-abcd-0123-abcd-0123-abcd-0123").matches()).isFalse();
+			var issuanceCode = specification.path("components").path("schemas").path("IdentityMfaRecoveryCodeIssueRequest").path("properties").path("code");
+			assertThat(issuanceCode.path("writeOnly").asBoolean()).isTrue();
+			assertThat(issuanceCode.path("pattern").asText()).isEqualTo("^[0-9]{6}$");
 			assertFormOperationContract(specification, "/admin/mfa", java.util.Set.of("code"));
 			assertFormOperationContract(specification, "/api/admin/users", java.util.Set.of("username", "displayName", "code"));
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/disable", java.util.Set.of("code"));
