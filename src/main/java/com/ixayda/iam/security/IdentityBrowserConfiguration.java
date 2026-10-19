@@ -84,7 +84,7 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.POST, "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/audits").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
-						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password").authenticated()
+						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password", "/api/me/mfa/recovery-codes").authenticated()
 						.anyRequest().denyAll())
 				.requestCache(cache -> cache.disable())
 				.httpBasic(basic -> basic.disable())
