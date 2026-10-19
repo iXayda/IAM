@@ -918,7 +918,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(response.body()).doesNotContain(PASSWORD, "Private Display");
 			var specification = new JsonMapper().readTree(response.body());
 			assertThat(specification.path("info").path("title").asText()).isEqualTo("IAM API");
-			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete");
+			assertThat(specification.path("paths").propertyNames()).containsExactlyInAnyOrder("/api/me", "/api/csrf", "/login", "/logout", "/api/me/password", "/api/me/profile", "/admin/mfa", "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/account-setup/complete", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");
@@ -939,6 +939,8 @@ class IdentityBrowserIntegrationTests {
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/setup", java.util.Set.of("code"));
 			assertFormOperationContract(specification, "/api/admin/users/{userId}/setup/cancel", java.util.Set.of("code"));
 			assertFormOperationContract(specification, "/api/account-setup/complete", java.util.Set.of("userId", "token", "password"));
+			assertFormOperationContract(specification, "/api/admin/users/{userId}/password-recovery", java.util.Set.of("code"));
+			assertFormOperationContract(specification, "/api/admin/users/{userId}/password-recovery/cancel", java.util.Set.of("code"));
 			var completion = specification.path("paths").path("/api/account-setup/complete").path("post");
 			assertThat(completion.path("operationId").asText()).isEqualTo("completeUserSetup");
 			assertThat(completion.has("security")).isTrue();
@@ -959,7 +961,20 @@ class IdentityBrowserIntegrationTests {
 			var cancellation = specification.path("paths").path("/api/admin/users/{userId}/setup/cancel").path("post");
 			assertThat(cancellation.path("operationId").asText()).isEqualTo("cancelUserSetup");
 			assertThat(cancellation.path("responses").path("204").has("content")).isFalse();
-			for (String path : List.of("/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel")) {
+			var recovery = specification.path("paths").path("/api/admin/users/{userId}/password-recovery").path("post");
+			assertThat(recovery.path("operationId").asText()).isEqualTo("issuePasswordRecovery");
+			assertThat(recovery.path("responses").path("200").path("content").path("application/json").path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/IdentityPasswordRecoveryResponse");
+			var recoveryDelivery = specification.path("components").path("schemas").path("IdentityPasswordRecoveryResponse");
+			assertThat(recoveryDelivery.path("properties").propertyNames()).containsExactlyInAnyOrder("userId", "token", "expiresAt");
+			assertThat(recoveryDelivery.path("required").size()).isEqualTo(3);
+			assertThat(recoveryDelivery.path("properties").path("token").path("writeOnly").asBoolean()).isFalse();
+			var recoveryCommand = specification.path("components").path("schemas").path("IdentityPasswordRecoveryManagementRequest");
+			assertThat(recoveryCommand.path("properties").propertyNames()).containsExactly("code");
+			assertThat(recoveryCommand.path("properties").path("code").path("writeOnly").asBoolean()).isTrue();
+			var recoveryCancellation = specification.path("paths").path("/api/admin/users/{userId}/password-recovery/cancel").path("post");
+			assertThat(recoveryCancellation.path("operationId").asText()).isEqualTo("cancelPasswordRecovery");
+			assertThat(recoveryCancellation.path("responses").path("204").has("content")).isFalse();
+			for (String path : List.of("/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile", "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel", "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel")) {
 				var responses = specification.path("paths").path(path).path("post").path("responses");
 				for (String status : List.of("401", "403", "415")) {
 					assertThat(responses.path(status).path("content").path("application/json").path("schema").path("$ref").asText())

@@ -110,6 +110,29 @@ class IdentityPasswordRecoveriesIntegrationTests {
 	}
 
 	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void managementIssuanceRequiresATransactionAndRollsBackWithItsCaller(boolean replacing) {
+		var user = activeUser("alice");
+		var previous = replacing ? this.recoveries.issue(user.id(), SYSTEM) : null;
+		long issued = count("password_recovery_issued");
+		assertThatThrownBy(() -> this.recoveries.issueInTransaction(user.id(), SYSTEM))
+				.isInstanceOf(org.springframework.transaction.IllegalTransactionStateException.class);
+		new TransactionTemplate(this.transactions).executeWithoutResult(status -> {
+			var proof = this.recoveries.issueInTransaction(user.id(), SYSTEM);
+			assertThat(proofRow(user.id()).get("token_digest")).isEqualTo(this.tokens.digest(proof.token()));
+			status.setRollbackOnly();
+		});
+		assertThat(count("password_recovery_issued")).isEqualTo(issued);
+		if (previous == null) {
+			assertThat(this.jdbc.sql("SELECT count(*) FROM iam_password_recovery").query(Long.class).single()).isZero();
+		}
+		else {
+			assertThat(proofRow(user.id()).get("token_digest")).isEqualTo(this.tokens.digest(previous.token()));
+			assertThat(this.recoveries.complete(user.id(), previous.token(), NEW_PASSWORD, SOURCE, UUID.randomUUID())).isEqualTo(COMPLETED);
+		}
+	}
+
+	@ParameterizedTest
 	@ValueSource(ints = { 0, 125 })
 	void recoveryAtomicallyReplacesThePasswordAndRevokesAllOwnedSessionsIncludingZero(int sessionCount) {
 		var alice = activeUser("alice");

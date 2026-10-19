@@ -91,7 +91,9 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			boolean setupManagement = request.getMethod().equals("POST")
 					&& request.getServletPath().matches("/api/admin/users/[^/]+/setup(/cancel)?");
 			boolean setupCompletion = request.getMethod().equals("POST") && request.getServletPath().equals("/api/account-setup/complete");
-			boolean accountChange = userProfileUpdate || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion;
+			boolean recoveryManagement = request.getMethod().equals("POST")
+					&& request.getServletPath().matches("/api/admin/users/[^/]+/password-recovery(/cancel)?");
+			boolean accountChange = userProfileUpdate || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement;
 			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
@@ -121,7 +123,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
-			if ((administratorMfa || userStateChange || setupManagement) && !Set.of("code", "_csrf").containsAll(request.getParameterMap().keySet())) {
+			if ((administratorMfa || userStateChange || setupManagement || recoveryManagement) && !Set.of("code", "_csrf").containsAll(request.getParameterMap().keySet())) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}

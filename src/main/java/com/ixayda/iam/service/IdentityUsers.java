@@ -145,6 +145,11 @@ public class IdentityUsers {
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityUser> lockForPasswordRecoveryManagement(UUID id) {
+		return this.repository.lockById(id);
+	}
+
+	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<String> passwordHash(UUID id) {
 		return this.repository.findPasswordHash(id);
 	}
