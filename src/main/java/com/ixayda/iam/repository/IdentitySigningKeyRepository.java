@@ -20,7 +20,16 @@ public class IdentitySigningKeyRepository {
 	IdentitySigningKeyRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
 	public Lifecycle lockLifecycle() {
-		return this.jdbc.sql("SELECT initial_key_id, initialized_at FROM iam_signing_key_state WHERE singleton = 1 FOR UPDATE")
+		return lockLifecycle(false);
+	}
+
+	/** Issuance may proceed concurrently; lifecycle changes require the exclusive lock above. */
+	public Lifecycle lockForIssuance() {
+		return lockLifecycle(true);
+	}
+
+	private Lifecycle lockLifecycle(boolean shared) {
+		return this.jdbc.sql("SELECT initial_key_id, initialized_at FROM iam_signing_key_state WHERE singleton = 1 " + (shared ? "FOR SHARE" : "FOR UPDATE"))
 				.query((row, index) -> {
 					var initializedAt = row.getObject("initialized_at", OffsetDateTime.class);
 					return new Lifecycle(row.getObject("initial_key_id", UUID.class), initializedAt == null ? null : initializedAt.toInstant());

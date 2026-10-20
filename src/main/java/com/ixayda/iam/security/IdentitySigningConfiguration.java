@@ -14,6 +14,12 @@ import org.springframework.context.annotation.Lazy;
 public class IdentitySigningConfiguration {
 
 	@Bean
+	IdentityJwtEncoder identityJwtEncoder(IdentitySigningKeys keys) { return new IdentityJwtEncoder(keys); }
+
+	@Bean
+	IdentityJwkSource identityJwkSource(IdentitySigningKeys keys) { return new IdentityJwkSource(keys); }
+
+	@Bean
 	@Lazy(false)
 	@DependsOnDatabaseInitialization
 	SmartInitializingSingleton signingKeyInitializer(IdentitySigningKeys keys) {
