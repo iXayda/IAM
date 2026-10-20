@@ -4,6 +4,7 @@ import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiFunction;
 
@@ -32,11 +33,13 @@ public class IdentityAccountSessions {
 	private final IdentityBrowserSessions sessions;
 	private final IdentityBrowserSessionRepository repository;
 	private final SecurityAudits audits;
+	private final IdentitySessionRevocations revocations;
 	private final TransactionTemplate transaction;
 
 	IdentityAccountSessions(IdentityUsers users, IdentityBrowserSessions sessions, IdentityBrowserSessionRepository repository,
-			SecurityAudits audits, PlatformTransactionManager manager) {
+			SecurityAudits audits, IdentitySessionRevocations revocations, PlatformTransactionManager manager) {
 		this.users = users; this.sessions = sessions; this.repository = repository; this.audits = audits;
+		this.revocations = revocations;
 		this.transaction = new TransactionTemplate(manager); this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 	}
 
@@ -68,14 +71,27 @@ public class IdentityAccountSessions {
 		});
 	}
 
+	/** Intentional invalidation keeps the original source deadlines, but expects the next credential epoch. */
+	public Result<Void> revokeAll(IdentityBrowserContext context, Runnable persistSession) {
+		requireIndependent(context, persistSession);
+		return this.transaction.execute(tx -> {
+			var source = lockCurrent(context);
+			if (source.isEmpty()) { return new Result<>(Outcome.INVALID_SESSION, null); }
+			persistSession.run();
+			this.revocations.revokeForUser(context.userId(), new SecurityAuditContext("user:" + context.userId(), "browser:account-sessions", context.correlationId()));
+			if (!this.sessions.isWithinSessionDeadline(context.authenticatedAt(), source.orElseThrow().idleExpiresAt().toEpochMilli())
+					|| !this.users.hasCurrentPasswordVersion(context.userId(), Math.addExact(context.credentialVersion(), 1))) {
+				throw new IllegalStateException("Browser authentication expired during all-session revocation");
+			}
+			return new Result<>(Outcome.COMPLETED, null);
+		});
+	}
+
 	private <T> Result<T> execute(IdentityBrowserContext context, Runnable persistSession,
 			BiFunction<IdentityBrowserSessions.AuthorizationSession, SecurityAuditContext, Result<T>> work) {
-		Assert.notNull(context, "Browser context is required"); Assert.notNull(persistSession, "Session persistence is required");
-		if (TransactionSynchronizationManager.isActualTransactionActive()) { throw new IllegalStateException("Account sessions require an independent transaction"); }
+		requireIndependent(context, persistSession);
 		return this.transaction.execute(tx -> {
-			if (this.users.lockForStateChange(context.userId()).filter(user -> user.status() == IdentityUser.Status.ACTIVE).isEmpty()
-					|| !this.sessions.isAuthenticationCurrent(context.userId(), context.authenticatedAt(), context.credentialVersion())) { return new Result<>(Outcome.INVALID_SESSION, null); }
-			var source = this.sessions.lockForAuthorization(context.userId(), context.sessionId(), context.authenticatedAt(), context.credentialVersion());
+			var source = lockCurrent(context);
 			if (source.isEmpty()) { return new Result<>(Outcome.INVALID_SESSION, null); }
 			var result = work.apply(source.orElseThrow(), new SecurityAuditContext("user:" + context.userId(), "browser:account-sessions", context.correlationId()));
 			if (!this.sessions.isWithinSessionDeadline(context.authenticatedAt(), source.orElseThrow().idleExpiresAt().toEpochMilli())
@@ -84,6 +100,17 @@ public class IdentityAccountSessions {
 			}
 			return result;
 		});
+	}
+
+	private Optional<IdentityBrowserSessions.AuthorizationSession> lockCurrent(IdentityBrowserContext context) {
+		if (this.users.lockForStateChange(context.userId()).filter(user -> user.status() == IdentityUser.Status.ACTIVE).isEmpty()
+				|| !this.sessions.isAuthenticationCurrent(context.userId(), context.authenticatedAt(), context.credentialVersion())) { return Optional.empty(); }
+		return this.sessions.lockForAuthorization(context.userId(), context.sessionId(), context.authenticatedAt(), context.credentialVersion());
+	}
+
+	private static void requireIndependent(IdentityBrowserContext context, Runnable persistSession) {
+		Assert.notNull(context, "Browser context is required"); Assert.notNull(persistSession, "Session persistence is required");
+		if (TransactionSynchronizationManager.isActualTransactionActive()) { throw new IllegalStateException("Account sessions require an independent transaction"); }
 	}
 
 	private IdentityBrowserSessionSummary summary(IdentityBrowserSessionRepository.Listing stored) {

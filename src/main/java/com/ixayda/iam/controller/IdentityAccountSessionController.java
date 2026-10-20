@@ -103,6 +103,24 @@ public class IdentityAccountSessionController {
 		return ResponseEntity.noContent().build();
 	}
 
+	@Operation(operationId = "revokeAllCurrentSessions", summary = "撤销本人的全部会话和应用授权", description = "仅接受当前 Cookie 和同一会话 X-CSRF-TOKEN，无查询串或请求体。不受列表分页影响，结束全部 IAM 浏览器会话、未兑换授权码、已签发应用授权及刷新家族。"
+			+ "使已验证但尚未保存的旧登录证据失效；账号保持启用，密码不变，可以重新登录。提交成功后清除当前 Cookie。应用须执行在线校验；纯离线验签仍受 Token 剩余有效期约束，IAM 不直接删除应用本地会话。")
+	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true, schema = @Schema(type = "string"))
+	@ApiResponse(responseCode = "204", description = "全部下线已提交，当前 Cookie 清除", content = @Content)
+	@ApiResponse(responseCode = "403", description = "CSRF 缺失或不属于当前会话", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))
+	@PostMapping("/api/me/sessions/revoke-all")
+	public ResponseEntity<?> revokeAll(@Parameter(hidden = true) @AuthenticationPrincipal UUID userId,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		requireNoBody(request); if (request.getQueryString() != null) { throw invalid(); }
+		var context = context(userId, request); if (context == null) { return invalidSession(request, response); }
+		IdentityAccountSessions.Result<Void> result;
+		try { result = this.sessions.revokeAll(context, save(response)); }
+		catch (RuntimeException ex) { failed(request); throw ex; }
+		if (result.outcome() == IdentityAccountSessions.Outcome.INVALID_SESSION) { return invalidSession(request, response); }
+		SecurityContextHolder.clearContext(); this.logout.logout(request, response, null);
+		return ResponseEntity.noContent().build();
+	}
+
 	private static IdentityBrowserContext context(UUID userId, HttpServletRequest request) {
 		var session = request.getSession(false);
 		if (session == null || !(session.getAttribute(IdentityBrowserSessions.AUTHENTICATED_AT) instanceof Long authenticatedAt)
