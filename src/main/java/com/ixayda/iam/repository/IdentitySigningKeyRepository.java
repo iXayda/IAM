@@ -32,12 +32,12 @@ public class IdentitySigningKeyRepository {
 	}
 
 	private Lifecycle lockLifecycle(boolean shared) {
-		return this.jdbc.sql("SELECT initial_key_id, initialized_at, active_key_id, active_key_created_at, revision FROM iam_signing_key_state WHERE singleton = 1 " + (shared ? "FOR SHARE" : "FOR UPDATE"))
+		return this.jdbc.sql("SELECT initial_key_id, initialized_at, active_key_id, active_key_created_at, revision, suspension_key_id FROM iam_signing_key_state WHERE singleton = 1 " + (shared ? "FOR SHARE" : "FOR UPDATE"))
 				.query((row, index) -> {
 					var initializedAt = row.getObject("initialized_at", OffsetDateTime.class);
 					var activeAt = row.getObject("active_key_created_at", OffsetDateTime.class);
 					return new Lifecycle(row.getObject("initial_key_id", UUID.class), initializedAt == null ? null : initializedAt.toInstant(),
-							row.getObject("active_key_id", UUID.class), activeAt == null ? null : activeAt.toInstant(), row.getLong("revision"));
+							row.getObject("active_key_id", UUID.class), activeAt == null ? null : activeAt.toInstant(), row.getLong("revision"), row.getObject("suspension_key_id", UUID.class));
 				}).single();
 	}
 
@@ -59,9 +59,9 @@ public class IdentitySigningKeyRepository {
 	public boolean hasStoredKeys() { return this.jdbc.sql("SELECT EXISTS(SELECT 1 FROM iam_signing_key)").query(Boolean.class).single(); }
 
 	public List<IdentitySigningKeyMetadata> metadata() {
-		return this.jdbc.sql("SELECT id,algorithm,status,created_at,retired_at,verification_until FROM iam_signing_key ORDER BY created_at,id")
+		return this.jdbc.sql("SELECT id,algorithm,status,created_at,retired_at,verification_until,compromised_at FROM iam_signing_key ORDER BY created_at,id")
 				.query((row, index) -> new IdentitySigningKeyMetadata(row.getObject("id", UUID.class), row.getString("algorithm"), IdentitySigningKeyMetadata.Status.valueOf(row.getString("status").toUpperCase(java.util.Locale.ROOT)),
-						instant(row, "created_at"), instant(row, "retired_at"), instant(row, "verification_until"))).list();
+						instant(row, "created_at"), instant(row, "retired_at"), instant(row, "verification_until"), instant(row, "compromised_at"))).list();
 	}
 
 	public Optional<StoredKey> findStoredKey() {
@@ -88,7 +88,7 @@ public class IdentitySigningKeyRepository {
 					}
 					Instant retiredAt = instant(row, "retired_at"); Instant until = instant(row, "verification_until");
 					if (!retired.toInstant().equals(retiredAt) || !verificationUntil.toInstant().equals(until)) { throw new IllegalStateException("Signing key retention was not stored"); }
-					return new IdentitySigningKeyMetadata(id, stored.algorithm(), IdentitySigningKeyMetadata.Status.RETIRED, stored.createdAt(), retiredAt, until);
+					return new IdentitySigningKeyMetadata(id, stored.algorithm(), IdentitySigningKeyMetadata.Status.RETIRED, stored.createdAt(), retiredAt, until, null);
 				}).single();
 	}
 
@@ -102,6 +102,48 @@ public class IdentitySigningKeyRepository {
 		if (changed != 1 || !next.equals(current.activeKeyId()) || current.revision() != Math.addExact(revision, 1)) {
 			throw new IllegalStateException("Signing key activation was not stored");
 		}
+	}
+
+	/** The caller holds the exclusive lifecycle gate; private material is not needed for containment. */
+	public void compromise(UUID id, Lifecycle lifecycle) {
+		var previous = metadata().stream().filter(key -> key.id().equals(id)).findFirst().orElseThrow(() -> new IllegalArgumentException("Signing key not found"));
+		if (previous.status() == IdentitySigningKeyMetadata.Status.COMPROMISED) { throw new IllegalStateException("Signing key is already compromised"); }
+		byte[] publicKey = this.jdbc.sql("SELECT public_key FROM iam_signing_key WHERE id=:id").param("id", id).query(byte[].class).single();
+		var moment = this.jdbc.sql("SELECT clock_timestamp()").query(OffsetDateTime.class).single();
+		int changed = this.jdbc.sql("""
+				UPDATE iam_signing_key SET status='compromised',encrypted_private_key=NULL,protection_key_id=NULL,verification_until=NULL,compromised_at=:moment
+				WHERE id=:id AND status=:previous
+				""").param("id", id).param("moment", moment).param("previous", previous.status().name().toLowerCase(java.util.Locale.ROOT)).update();
+		var expected = new IdentitySigningKeyMetadata(id, previous.algorithm(), IdentitySigningKeyMetadata.Status.COMPROMISED, previous.createdAt(), previous.retiredAt(), null, moment.toInstant());
+		boolean keyMatches = metadata().stream().anyMatch(expected::equals)
+				&& this.jdbc.sql("SELECT encrypted_private_key IS NULL AND protection_key_id IS NULL AND public_key=:public FROM iam_signing_key WHERE id=:id")
+						.param("public", publicKey).param("id", id).query(Boolean.class).single();
+		if (changed != 1 || !keyMatches) { throw new IllegalStateException("Signing key compromise was not stored"); }
+		boolean active = id.equals(lifecycle.activeKeyId());
+		changed = this.jdbc.sql("""
+				UPDATE iam_signing_key_state SET revision=revision+1,
+				    active_key_id=CASE WHEN :active THEN NULL ELSE active_key_id END,
+				    active_key_created_at=CASE WHEN :active THEN NULL ELSE active_key_created_at END,
+				    suspension_key_id=CASE WHEN :active THEN :id ELSE suspension_key_id END
+				WHERE singleton=1 AND revision=:revision
+				""").param("active", active).param("id", id).param("revision", lifecycle.revision()).update();
+		var stored = lockLifecycle();
+		var expectedState = new Lifecycle(lifecycle.initialKeyId(), lifecycle.initializedAt(), active ? null : lifecycle.activeKeyId(),
+				active ? null : lifecycle.activeKeyCreatedAt(), Math.addExact(lifecycle.revision(), 1), active ? id : lifecycle.suspensionKeyId());
+		if (changed != 1 || !stored.equals(expectedState)) { throw new IllegalStateException("Signing key suspension was not stored"); }
+	}
+
+	public void recover(UUID compromised, UUID next, Lifecycle lifecycle) {
+		int changed = this.jdbc.sql("""
+				UPDATE iam_signing_key_state SET active_key_id=:next,
+				    active_key_created_at=(SELECT created_at FROM iam_signing_key WHERE id=:next AND status='active'),
+				    suspension_key_id=NULL,revision=revision+1
+				WHERE singleton=1 AND active_key_id IS NULL AND suspension_key_id=:compromised AND revision=:revision
+				""").param("next", next).param("compromised", compromised).param("revision", lifecycle.revision()).update();
+		var current = lockLifecycle();
+		if (changed != 1 || !next.equals(current.activeKeyId()) || current.suspensionKeyId() != null
+				|| !lifecycle.initialKeyId().equals(current.initialKeyId()) || !lifecycle.initializedAt().equals(current.initializedAt())
+				|| current.revision() != Math.addExact(lifecycle.revision(), 1)) { throw new IllegalStateException("Signing key recovery was not stored"); }
 	}
 
 	public void insert(UUID id, byte[] publicKey, byte[] encryptedPrivateKey, String protectionKeyId) {
@@ -142,7 +184,7 @@ public class IdentitySigningKeyRepository {
 
 	private static Instant instant(ResultSet row, String column) throws SQLException { var value = row.getObject(column, OffsetDateTime.class); return value == null ? null : value.toInstant(); }
 
-	public record Lifecycle(UUID initialKeyId, Instant initializedAt, UUID activeKeyId, Instant activeKeyCreatedAt, long revision) { }
+	public record Lifecycle(UUID initialKeyId, Instant initializedAt, UUID activeKeyId, Instant activeKeyCreatedAt, long revision, UUID suspensionKeyId) { }
 	public record PublicKey(UUID id, String algorithm, byte[] publicKey, Instant createdAt) { }
 
 	public record StoredKey(UUID id, String algorithm, byte[] publicKey, byte[] encryptedPrivateKey, String protectionKeyId, Instant createdAt) {

@@ -12,6 +12,7 @@ import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.service.IdentityApplicationRoles;
 import com.ixayda.iam.service.IdentityAuthorizationBindings;
+import com.ixayda.iam.service.IdentityAuthorizationSigningHistory;
 import com.ixayda.iam.service.IdentityAuthorizations;
 import com.ixayda.iam.service.IdentityProtocolClients;
 import com.ixayda.iam.service.IdentityRefreshTokens;
@@ -169,9 +170,10 @@ public final class IdentityRefreshTokenProvider implements AuthenticationProvide
 					|| authorization.getRefreshToken() == null || !authorization.getRefreshToken().isActive()
 					|| authorization.getToken(OidcIdToken.class) == null || !authorization.getToken(OidcIdToken.class).isActive()) { throw new IllegalStateException("Refresh result is invalid"); }
 			this.issued = authorization;
+			var withHistory = IdentityAuthorizationSigningHistory.record(authorization, this.original.authorization().authorization());
 			// Preserve immutable original scopes and token metadata; no reflective removal or synthetic client/grant type.
 			var projected = OAuth2Authorization.withRegisteredClient(this.client.registration()).id(authorization.getId()).principalName(authorization.getPrincipalName())
-					.authorizationGrantType(authorization.getAuthorizationGrantType()).authorizedScopes(authorization.getAuthorizedScopes()).attributes(values -> values.putAll(authorization.getAttributes()));
+					.authorizationGrantType(authorization.getAuthorizationGrantType()).authorizedScopes(authorization.getAuthorizedScopes()).attributes(values -> values.putAll(withHistory.getAttributes()));
 			copyToken(projected, authorization.getToken(OAuth2AuthorizationCode.class)); copyToken(projected, authorization.getAccessToken());
 			if (this.scopes.contains("offline_access")) { copyToken(projected, authorization.getRefreshToken()); }
 			// Native JwtGenerator needs the prior ID on subsequent refreshes. A removed openid scope never renews or returns that historical ID.

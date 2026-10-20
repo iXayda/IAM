@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.ixayda.iam.IdentityProtocolTestSupport;
+import com.ixayda.iam.service.IdentitySigningKeyIncidents;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -21,6 +22,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -34,6 +36,7 @@ class IdentityDiscoveryHttpIntegrationTests extends IdentityProtocolTestSupport 
 
 	private static final JsonMapper JSON = new JsonMapper();
 	@LocalServerPort private int port;
+	@Autowired private IdentitySigningKeyIncidents incidents;
 
 	@DynamicPropertySource
 	static void tls(DynamicPropertyRegistry properties) {
@@ -105,6 +108,25 @@ class IdentityDiscoveryHttpIntegrationTests extends IdentityProtocolTestSupport 
 		assertThat(verified(token.path("id_token").asText(), "JWT").getIssuer()).isEqualTo(metadata.path("issuer").asText());
 		var profile = success(send(URI.create(metadata.path("userinfo_endpoint").asText()).getPath(), "GET", null, null, Map.of("Authorization", "Bearer " + token.path("access_token").asText())));
 		assertThat(profile.path("sub").asText()).isEqualTo(this.userId.toString()); assertThat(profile.path("preferred_username").asText()).isEqualTo("alice");
+	}
+
+	@Test
+	void jwksPublishesRotationOverlapAndRemovesCompromisedKeysWhileExistingUserInfoAccessIsRevoked() throws Exception {
+		String code = code(java.util.Set.of("openid", "profile")); var issued = exchange(request(code, authenticatedClient(code)));
+		var old = this.signing; this.signing = this.keys.rotate(old.id(), AUDIT);
+		try {
+			var overlap = success(send("/oauth2/jwks", "GET", null, null, Map.of()));
+			assertThat(overlap.path("keys").valueStream().map(key -> key.path("kid").asText()).toList()).contains(old.id().toString(), this.signing.id().toString());
+			this.incidents.compromise(old.id(), AUDIT);
+			var keys = success(send("/oauth2/jwks", "GET", null, null, Map.of()));
+			assertThat(keys.path("keys").valueStream().map(key -> key.path("kid").asText()).toList()).containsExactly(this.signing.id().toString());
+			var rejected = send("/userinfo", "GET", null, null, Map.of("Authorization", "Bearer " + issued.getAccessToken().getTokenValue()));
+			assertThat(rejected.statusCode()).isEqualTo(401); assertSecurityHeaders(rejected);
+		}
+		finally {
+			// Leave one verification key for the other discovery scenarios in this shared context.
+			if (this.keys.metadata().stream().anyMatch(key -> key.id().equals(old.id()) && key.status() != com.ixayda.iam.model.IdentitySigningKeyMetadata.Status.COMPROMISED)) { this.incidents.compromise(old.id(), AUDIT); }
+		}
 	}
 
 	@ParameterizedTest

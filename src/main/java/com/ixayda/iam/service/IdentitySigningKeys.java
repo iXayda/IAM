@@ -97,6 +97,26 @@ public class IdentitySigningKeys {
 		});
 	}
 
+	/** Explicit replacement after containment; never decrypts or reactivates a compromised key. */
+	public IdentitySigningKey recover(UUID expectedCompromised, SecurityAuditContext audit) {
+		Assert.notNull(expectedCompromised, "Compromised signing key id is required"); Assert.notNull(audit, "Trusted audit context is required");
+		requireIndependentTransaction(); this.secrets.requireConfigured();
+		return this.transaction.execute(tx -> {
+			var lifecycle = this.repository.lockLifecycle();
+			if (lifecycle.initialKeyId() == null || lifecycle.activeKeyId() != null || !expectedCompromised.equals(lifecycle.suspensionKeyId())
+					|| this.repository.metadata().stream().noneMatch(key -> key.id().equals(expectedCompromised) && key.status() == IdentitySigningKeyMetadata.Status.COMPROMISED)) {
+				throw new IllegalStateException("Signing key recovery does not match a suspended lifecycle");
+			}
+			UUID next = UUID.randomUUID(); var generated = this.secrets.generate();
+			this.repository.insert(next, generated.getPublic().getEncoded(), this.secrets.encrypt(next, generated.getPrivate()), this.secrets.protectionKeyId());
+			this.repository.recover(expectedCompromised, next, lifecycle);
+			var current = loadLockedMaterial(this.repository.lockLifecycle()).key();
+			this.audits.recordTargetSuccess(Action.SIGNING_KEY_REPLACED, null, new SecurityAuditTarget(SecurityAuditTarget.Type.SIGNING_KEY, expectedCompromised), audit);
+			this.audits.recordTargetSuccess(Action.SIGNING_KEY_RECOVERED, null, new SecurityAuditTarget(SecurityAuditTarget.Type.SIGNING_KEY, next), audit);
+			return current;
+		});
+	}
+
 	/** Only trusted signing code receives private material, after the read transaction has committed. */
 	public IdentitySigningMaterial signingMaterial() {
 		requireIndependentTransaction();
@@ -125,9 +145,17 @@ public class IdentitySigningKeys {
 			if (this.repository.hasStoredKeys()) { throw new IllegalStateException("Signing initialization state is inconsistent"); }
 			return Optional.empty();
 		}
-		var current = key.orElseThrow(() -> new IllegalStateException("Initialized signing key is missing"));
-		if (!current.id().equals(lifecycle.activeKeyId()) || !current.createdAt().equals(lifecycle.activeKeyCreatedAt())) {
-			throw new IllegalStateException("Signing initialization state is inconsistent");
+		if (lifecycle.activeKeyId() == null) {
+			if (key.isPresent() || lifecycle.suspensionKeyId() == null || this.repository.metadata().stream()
+					.noneMatch(value -> value.id().equals(lifecycle.suspensionKeyId()) && value.status() == IdentitySigningKeyMetadata.Status.COMPROMISED)) {
+				throw new IllegalStateException("Signing suspension state is inconsistent");
+			}
+		}
+		else {
+			var current = key.orElseThrow(() -> new IllegalStateException("Initialized signing key is missing"));
+			if (!current.id().equals(lifecycle.activeKeyId()) || !current.createdAt().equals(lifecycle.activeKeyCreatedAt())) {
+				throw new IllegalStateException("Signing initialization state is inconsistent");
+			}
 		}
 		return this.repository.findVerificationKey(id).map(stored -> new IdentitySigningKey(stored.id(), stored.algorithm(),
 				this.secrets.readPublicKey(stored.publicKey()), stored.createdAt()));
