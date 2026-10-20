@@ -11,11 +11,15 @@ import java.util.stream.Stream;
 
 import com.ixayda.iam.model.IdentityResource;
 import com.ixayda.iam.model.IdentityResourcePage;
+import com.ixayda.iam.model.IdentityResourceRole;
+import com.ixayda.iam.model.IdentityResourceRolePage;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.IdentityUserPage;
 import com.ixayda.iam.model.SecurityAuditPage;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityResourceManagement;
+import com.ixayda.iam.service.IdentityResourceRoleManagement;
+import com.ixayda.iam.service.IdentityResourceRoles;
 import com.ixayda.iam.service.IdentityResources;
 import com.ixayda.iam.service.IdentityUserCreations;
 import com.ixayda.iam.service.IdentityUserProfileManagement;
@@ -107,6 +111,12 @@ class IdentityQueryControllerTests {
 				when(service.findById(ID)).thenReturn(Optional.of(new IdentityResource(ID, "urn:example:orders", "Orders", IdentityResource.Status.ACTIVE, 1, Instant.EPOCH, Instant.EPOCH)));
 				yield endpoint(new IdentityResourceController(service, management, administrators), service, management, administrators);
 			}
+			case RESOURCE_ROLES, RESOURCE_ROLE -> {
+				var service = mock(IdentityResourceRoles.class); var management = mock(IdentityResourceRoleManagement.class);
+				when(service.search(eq(ID), isNull(), eq(20), isNull())).thenReturn(new IdentityResourceRolePage(List.of(), null));
+				when(service.findById(ID)).thenReturn(Optional.of(new IdentityResourceRole(ID, ID, "reader", "Reader", IdentityResourceRole.Status.ACTIVE, 1, Instant.EPOCH, Instant.EPOCH)));
+				yield endpoint(new IdentityResourceRoleController(service, management, administrators), service, management, administrators);
+			}
 			case USERS, USER -> {
 				var service = mock(IdentityUsers.class); var creations = mock(IdentityUserCreations.class);
 				var profiles = mock(IdentityUserProfileManagement.class); var states = mock(IdentityUserStateChanges.class);
@@ -131,6 +141,8 @@ class IdentityQueryControllerTests {
 	private enum Route {
 		RESOURCES("/api/admin/resources", "Invalid resource request"),
 		RESOURCE("/api/admin/resources/" + ID, "Invalid resource request"),
+		RESOURCE_ROLES("/api/admin/resources/" + ID + "/roles", "Invalid resource role request"),
+		RESOURCE_ROLE("/api/admin/resource-roles/" + ID, "Invalid resource role request"),
 		USERS("/api/admin/users", "Invalid user request"),
 		USER("/api/admin/users/" + ID, "Invalid user request"),
 		AUDITS("/api/admin/audits", "Invalid audit query");
