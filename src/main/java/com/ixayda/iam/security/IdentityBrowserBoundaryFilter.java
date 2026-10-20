@@ -84,6 +84,9 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			boolean passwordChange = request.getServletPath().equals("/api/me/password");
 			boolean profileChange = request.getServletPath().equals("/api/me/profile");
 			boolean administratorMfa = request.getServletPath().equals("/admin/mfa");
+			boolean resourceCreation = request.getMethod().equals("POST") && request.getServletPath().equals("/api/admin/resources");
+			boolean resourceName = request.getMethod().equals("POST") && request.getServletPath().matches("/api/admin/resources/[^/]+/name");
+			boolean resourceState = request.getMethod().equals("POST") && request.getServletPath().matches("/api/admin/resources/[^/]+/(disable|enable)");
 			boolean userCreation = request.getMethod().equals("POST") && request.getServletPath().equals("/api/admin/users");
 			boolean userProfileUpdate = request.getMethod().equals("POST") && request.getServletPath().matches("/api/admin/users/[^/]+/profile");
 			boolean userStateChange = request.getMethod().equals("POST")
@@ -102,7 +105,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			boolean totpReplacementCompletion = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/replacement/complete");
 			boolean totpRecovery = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/recovery");
 			boolean totpRecoveryCompletion = request.getMethod().equals("POST") && request.getServletPath().equals("/api/me/mfa/totp/recovery/complete");
-			boolean accountChange = userProfileUpdate || totpRecovery || totpRecoveryCompletion || totpReplacement || totpReplacementCompletion || totpEnrollment || totpConfirmation || totpCancellation || recoveryCodeIssuance || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement || recoveryCompletion;
+			boolean accountChange = userProfileUpdate || resourceCreation || resourceName || resourceState || totpRecovery || totpRecoveryCompletion || totpReplacement || totpReplacementCompletion || totpEnrollment || totpConfirmation || totpCancellation || recoveryCodeIssuance || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement || recoveryCompletion;
 			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
@@ -143,6 +146,12 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				return;
 			}
 			if ((administratorMfa || userStateChange || setupManagement || recoveryManagement || recoveryCodeIssuance) && !Set.of("code", "_csrf").containsAll(request.getParameterMap().keySet())) {
+				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				return;
+			}
+			if ((resourceCreation && !Set.of("audience", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
+					|| (resourceName && !Set.of("version", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
+					|| (resourceState && !Set.of("version", "code", "_csrf").containsAll(request.getParameterMap().keySet()))) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}

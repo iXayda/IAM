@@ -1,5 +1,7 @@
 package com.ixayda.iam.controller;
 
+import com.ixayda.iam.model.IdentityAdministratorContext;
+
 import com.ixayda.iam.service.IdentityUserProfileManagement;
 
 import com.ixayda.iam.dto.IdentityUserProfileUpdateRequest;
@@ -219,9 +221,10 @@ public class IdentityUserManagementController {
 		Object stored = session.getAttribute(IdentityAdministratorSessions.AUTHENTICATION);
 		var management = stored instanceof IdentityAdministratorAuthentication evidence ? evidence : null;
 		var authentication = new TotpAuthenticationContext("browser:admin-user-profile", InetAddress.getByName(request.getRemoteAddr()), correlationId);
+		var context = new IdentityAdministratorContext(actorId, session.getId(), version, authenticatedAt, management, authentication);
 		IdentityUserProfileManagement.Status result;
 		try {
-			result = this.profiles.updateDisplayName(actorId, session.getId(), version, authenticatedAt, management, targetId, command.displayName(), command.code(), authentication, () -> {
+			result = this.profiles.updateDisplayName(context, targetId, command.displayName(), command.code(), () -> {
 				try { response.flushBuffer(); }
 				catch (IOException ex) { throw new UncheckedIOException(ex); }
 			});
