@@ -53,6 +53,7 @@ class IdentitySigningKeysIntegrationTests {
 	private static final Path OTHER_KEY_FILE = keyFile();
 
 	@Autowired private IdentitySigningKeys keys;
+	@Autowired private IdentitySigningKeyIncidents incidents;
 	@Autowired private IdentitySigningKeyRepository repository;
 	@Autowired private SecurityAudits audits;
 	@Autowired private JdbcClient jdbc;
@@ -142,8 +143,9 @@ class IdentitySigningKeysIntegrationTests {
 		});
 	}
 
-	@Test
-	void rollingBackASavepointDiscardsMaterialWhoseLifecycleLockWasReleased() {
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void rollingBackASavepointDiscardsMaterialWhoseLifecycleLockWasReleased(boolean compromise) {
 		var original = this.keys.initialize().orElseThrow();
 		var outer = new TransactionTemplate(this.transactions); var nested = new TransactionTemplate(this.transactions);
 		nested.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_NESTED);
@@ -153,11 +155,13 @@ class IdentitySigningKeysIntegrationTests {
 					var material = this.keys.lockForIssuance(); savepoint.setRollbackOnly(); return material;
 				});
 				var mutation = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+					if (compromise) { this.incidents.compromise(original.id(), rotationAudit()); return null; }
 					return this.keys.rotate(original.id(), rotationAudit());
 				}, worker);
 				// PostgreSQL releases locks acquired after the rolled-back savepoint, while the outer transaction continues.
 				var replacement = mutation.orTimeout(10, TimeUnit.SECONDS).join();
-				{
+				if (compromise) { assertThatIllegalStateException().isThrownBy(this.keys::lockForIssuance); }
+				else {
 					var current = this.keys.lockForIssuance(); assertThat(current).isNotSameAs(abandoned);
 					assertThat(current.key()).isEqualTo(replacement); assertThat(this.keys.lockForIssuance()).isSameAs(current);
 					var independent = new TransactionTemplate(this.transactions);

@@ -10,6 +10,7 @@ import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.service.IdentityApplicationRoles;
 import com.ixayda.iam.service.IdentityAuthorizationBindings;
+import com.ixayda.iam.service.IdentityAuthorizationSigningHistory;
 import com.ixayda.iam.service.IdentityAuthorizations;
 import com.ixayda.iam.service.IdentityAuthorizationSessions;
 import com.ixayda.iam.service.IdentityProtocolClients;
@@ -166,6 +167,7 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 					|| authorization.getToken(OidcIdToken.class) == null || !authorization.getToken(OidcIdToken.class).isActive()
 					|| this.binding.scopes().contains("offline_access") != (authorization.getRefreshToken() != null)
 					|| authorization.getRefreshToken() != null && !authorization.getRefreshToken().isActive()) { throw new IllegalStateException("Exchange result is invalid"); }
+			authorization = IdentityAuthorizationSigningHistory.record(authorization, this.original.authorization());
 			this.saved = authorization.getRefreshToken() == null ? IdentityAuthorizationCodeProvider.this.authorizations.save(authorization, this.original.version())
 					: IdentityAuthorizationCodeProvider.this.refresh.initialize(authorization, this.original.version(), this.binding);
 		}

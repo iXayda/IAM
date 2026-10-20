@@ -70,6 +70,13 @@ public class IdentityAuthorizationBindingRepository {
 
 	public record Listing(UUID id, Instant issuedAt, String clientName, String resourceName) { }
 
+	/** A maintenance incident holds the exclusive signing lifecycle gate before this unpaginated inventory. */
+	public List<UUID> findAllUserIds() {
+		return this.jdbc.sql("SELECT DISTINCT user_id FROM iam_authorization_binding ORDER BY user_id").query(UUID.class).list();
+	}
+
+	public List<UUID> findAllIds() { return selectIds("true", Map.of()); }
+
 	/** Parent locks held by the mutation serialize issuance; selectors deliberately have no pagination limit. */
 	public List<UUID> findIdsForUser(UUID userId) { return selectIds("b.user_id=:user", Map.of("user", userId)); }
 	public List<UUID> findIdsForClient(UUID clientId) { return selectIds("b.client_id=:client", Map.of("client", clientId.toString())); }
