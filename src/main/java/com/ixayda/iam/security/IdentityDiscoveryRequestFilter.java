@@ -63,6 +63,8 @@ final class IdentityDiscoveryRequestFilter extends OncePerRequestFilter {
 		claims.put("token_endpoint", base + settings.getTokenEndpoint());
 		claims.put("jwks_uri", base + settings.getJwkSetEndpoint());
 		claims.put("token_endpoint_auth_methods_supported", List.of("client_secret_basic"));
+		claims.put("introspection_endpoint", base + settings.getTokenIntrospectionEndpoint());
+		claims.put("introspection_endpoint_auth_methods_supported", List.of("client_secret_basic"));
 		claims.put("response_types_supported", List.of("code"));
 		claims.put("response_modes_supported", List.of("query"));
 		claims.put("grant_types_supported", List.of("authorization_code", "refresh_token"));

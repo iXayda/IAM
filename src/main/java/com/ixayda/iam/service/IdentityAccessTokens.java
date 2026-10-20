@@ -94,6 +94,7 @@ public class IdentityAccessTokens {
 		}
 		else if (!original.scopes().equals(scopes) || original.scopes().contains("offline_access")) { throw new IllegalStateException("Access token is missing its refresh bounds"); }
 		var projected = new IdentityAccessToken(original.id(), access.orElseThrow(), scopes, actual.getIssuedAt(), actual.getExpiresAt());
+		// All online uses stop at the signed NumericDate, even when native storage retains microseconds.
 		var expiry = projected.expiresAt().truncatedTo(ChronoUnit.SECONDS);
 		if (!this.bindings.isWithinLifetime(projected.issuedAt(), expiry)) { return Optional.empty(); }
 		T accepted = validation.apply(new Context(projected, key.orElseThrow()));
