@@ -7,6 +7,7 @@ import java.util.Map;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.headers.Header;
+import io.swagger.v3.oas.models.media.ArraySchema;
 import io.swagger.v3.oas.models.media.ComposedSchema;
 import io.swagger.v3.oas.models.media.Content;
 import io.swagger.v3.oas.models.media.IntegerSchema;
@@ -41,7 +42,31 @@ class IdentityProtocolOpenApiConfiguration {
 					.addProperty("error", new StringSchema().description("OAuth 错误标识，不包含请求值或内部异常详情"))
 					.required(List.of("error")).additionalProperties(false));
 			openApi.path(IdentityProtocolResponses.TOKEN_ENDPOINT, new PathItem().post(token()));
+			openApi.path(IdentityProtocolResponses.JWK_SET_ENDPOINT, new PathItem().get(publicKeys()));
 		};
+	}
+
+	private static Operation publicKeys() {
+		var key = new ObjectSchema().addProperty("kty", new StringSchema()._enum(List.of("RSA")))
+				.addProperty("kid", new StringSchema().format("uuid").description("持久签名密钥标识"))
+				.addProperty("use", new StringSchema()._enum(List.of("sig")))
+				.addProperty("alg", new StringSchema()._enum(List.of("RS256")))
+				.addProperty("n", new StringSchema().description("RSA 公钥模数，Base64url 编码"))
+				.addProperty("e", new StringSchema().description("RSA 公钥指数，Base64url 编码"))
+				.required(List.of("kty", "kid", "use", "alg", "n", "e")).additionalProperties(false);
+		return new Operation().operationId("getPublicSigningKeys").summary("查询 Token 签名公钥").tags(List.of("protocol"))
+				.security(List.of()).description("公开 HTTPS GET 入口，无需 IAM Cookie 或客户端凭据，不读取或更新浏览器会话。"
+						+ "返回持久签名身份的 RSA 公钥，不包含私钥或对称秘密；不接受查询串及请求体。"
+						+ "公钥不能代替 issuer、audience、算法、用途、期限和在线授权状态校验。"
+						+ "响应禁止缓存；资源侧任何缓存须符合其明确接受的密钥更新与撤销窗口。公钥存储不可用时返回 503，不生成临时替代密钥。")
+				.responses(new ApiResponses()
+						.addApiResponse("200", new ApiResponse().description("JWK Set，仅包含公开验证材料").content(new Content().addMediaType("application/json",
+								new MediaType().schema(new ObjectSchema().addProperty("keys", new ArraySchema().items(key).minItems(1)).required(List.of("keys")).additionalProperties(false)))))
+						.addApiResponse("400", error("invalid_request：不接受查询串或请求体"))
+						.addApiResponse("405", error("仅支持 GET，返回 Allow: GET").addHeaderObject("Allow", new Header().schema(new StringSchema()._enum(List.of("GET")))))
+						.addApiResponse("413", error("invalid_request：请求体超过 8 KiB"))
+						.addApiResponse("429", error("temporarily_unavailable：共享入口限流").addHeaderObject("Retry-After", new Header().schema(new IntegerSchema().minimum(BigDecimal.ONE))))
+						.addApiResponse("503", error("server_error：公钥状态缺失、损坏或存储不可用")));
 	}
 
 	private static Operation token() {

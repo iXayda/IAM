@@ -257,7 +257,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 
 	private static void reject(HttpServletRequest request, HttpServletResponse response, IdentityBrowserResponses.Error error) throws IOException {
 		headers(response);
-		if (IdentityProtocolResponses.TOKEN_ENDPOINT.equals(request.getServletPath())) {
+		if (Set.of(IdentityProtocolResponses.TOKEN_ENDPOINT, IdentityProtocolResponses.JWK_SET_ENDPOINT).contains(request.getServletPath())) {
 			int status = switch (error) {
 				case PAYLOAD_TOO_LARGE -> 413;
 				case UNSUPPORTED_MEDIA_TYPE -> 415;
@@ -312,7 +312,11 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 		public PrintWriter getWriter() {
 			if (this.writer == null) {
 				setCharacterEncoding(StandardCharsets.UTF_8.name());
-				this.writer = new PrintWriter(new OutputStreamWriter(this.output, StandardCharsets.UTF_8));
+				this.writer = new PrintWriter(new OutputStreamWriter(this.output, StandardCharsets.UTF_8)) {
+					// Native protocol writers close after serialization. Publication still belongs to
+					// the outer boundary, after every session or grant transaction has committed.
+					@Override public void close() { flush(); }
+				};
 			}
 			return this.writer;
 		}

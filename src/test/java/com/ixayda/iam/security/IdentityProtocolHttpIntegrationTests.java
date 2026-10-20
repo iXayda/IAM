@@ -311,8 +311,106 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 	}
 
 	@Test
+	void publicJwkSetContainsOnlyThePersistentRsaPublicIdentityAndVerifiesIssuedHttpTokens() throws Exception {
+		String code = code(Set.of("openid")); var issued = success(token(codeBody(code)));
+		var response = publicKeys(Map.of());
+		var set = com.nimbusds.jose.jwk.JWKSet.parse(response.body());
+		assertThat(set.getKeys()).hasSize(1); var key = set.getKeys().getFirst();
+		assertThat(key.toJSONObject()).containsOnlyKeys("kty", "kid", "use", "alg", "n", "e");
+		assertThat(key.isPrivate()).isFalse(); assertThat(key.getKeyID()).isEqualTo(this.signing.id().toString());
+		assertThat(key.getAlgorithm().getName()).isEqualTo("RS256"); assertThat(key.getKeyUse().identifier()).isEqualTo("sig");
+		var rsa = key.toRSAKey().toRSAPublicKey(); assertThat(rsa).isEqualTo(this.signing.publicKey()); assertThat(rsa.getModulus().bitLength()).isEqualTo(3072);
+		for (String field : List.of("access_token", "id_token")) {
+			var jwt = com.nimbusds.jwt.SignedJWT.parse(issued.path(field).asText());
+			assertThat(jwt.getHeader().getKeyID()).isEqualTo(key.getKeyID()); assertThat(jwt.verify(new com.nimbusds.jose.crypto.RSASSAVerifier(rsa))).isTrue();
+		}
+		assertThat(publicKeys(Map.of()).body()).isEqualTo(response.body());
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "valid-cookie", "invalid-cookie", "basic", "bearer", "forwarding" })
+	void publicKeysNeverReadOrChangeBrowserStateOrDependOnAuthenticationHeaders(String transport) throws Exception {
+		var sessions = sessionSnapshot(); var grants = protocolSnapshot();
+		Map<String, String> headers = switch (transport) {
+			case "valid-cookie" -> Map.of("Cookie", "__Host-IAMSESSION=" + this.sessionId);
+			case "invalid-cookie" -> Map.of("Cookie", "__Host-IAMSESSION=invalid-private-session");
+			case "basic" -> Map.of("Authorization", basic());
+			case "bearer" -> Map.of("Authorization", "Bearer private-business-token");
+			default -> Map.of("Forwarded", "proto=http;host=attacker.example", "X-Forwarded-Host", "attacker.example");
+		};
+		assertThat(publicKeys(headers).body()).isEqualTo(publicKeys(Map.of()).body());
+		assertThat(sessionSnapshot()).isEqualTo(sessions); assertThat(protocolSnapshot()).isEqualTo(grants);
+		assertThat(tokenAudits()).isEmpty();
+	}
+
+	@Test
+	void publicKeyPublicationDoesNotQueryOrDecryptEncryptedPrivateMaterial() throws Exception {
+		String expected = publicKeys(Map.of()).body();
+		byte[] encrypted = this.jdbc.sql("SELECT encrypted_private_key FROM iam_signing_key").query(byte[].class).single();
+		this.jdbc.sql("UPDATE iam_signing_key SET encrypted_private_key=set_byte(encrypted_private_key,10,get_byte(encrypted_private_key,10) # 1)").update();
+		try { assertThat(publicKeys(Map.of()).body()).isEqualTo(expected); }
+		finally { this.jdbc.sql("UPDATE iam_signing_key SET encrypted_private_key=:original").param("original", encrypted).update(); }
+	}
+
+	@Test
+	void aBrowserSessionStoreOutageCannotBlockAnIndependentPublicKeyRead() throws Exception {
+		String expected = publicKeys(Map.of()).body();
+		this.jdbc.sql("ALTER TABLE iam_browser_session RENAME TO isolated_public_key_browser_session").update();
+		try { assertThat(publicKeys(Map.of("Cookie", "__Host-IAMSESSION=" + this.sessionId)).body()).isEqualTo(expected); }
+		finally { this.jdbc.sql("ALTER TABLE isolated_public_key_browser_session RENAME TO iam_browser_session").update(); }
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "unavailable", "empty", "malformed" })
+	void unavailableOrInconsistentPublicKeyStateCannotPublishAnEmptyOrTemporarySet(String fault) throws Exception {
+		String expected = publicKeys(Map.of()).body();
+		byte[] original = this.jdbc.sql("SELECT public_key FROM iam_signing_key").query(byte[].class).single();
+		if (fault.equals("malformed")) { this.jdbc.sql("UPDATE iam_signing_key SET public_key=:value").param("value", new byte[] { 1 }).update(); }
+		else {
+			this.jdbc.sql("ALTER TABLE iam_signing_key RENAME TO isolated_public_key").update();
+			if (fault.equals("empty")) { this.jdbc.sql("CREATE TABLE iam_signing_key (LIKE isolated_public_key INCLUDING ALL)").update(); }
+		}
+		try { error(send("/oauth2/jwks", "GET", null, null, "", Map.of("Cookie", "__Host-IAMSESSION=" + this.sessionId)), 503, "server_error"); }
+		finally {
+			if (fault.equals("malformed")) { this.jdbc.sql("UPDATE iam_signing_key SET public_key=:value").param("value", original).update(); }
+			else {
+				if (fault.equals("empty")) { this.jdbc.sql("DROP TABLE iam_signing_key").update(); }
+				this.jdbc.sql("ALTER TABLE isolated_public_key RENAME TO iam_signing_key").update();
+			}
+		}
+		assertThat(publicKeys(Map.of()).body()).isEqualTo(expected); assertThat(tokenAudits()).isEmpty();
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE" })
+	void publicKeyPublicationOnlyAllowsGetAndDoesNotRedirectOrUseBrowserCsrf(String method) throws Exception {
+		var response = send("/oauth2/jwks", method, null, null, "", Map.of("Cookie", "__Host-IAMSESSION=" + this.sessionId));
+		assertThat(response.statusCode()).isEqualTo(405); assertThat(response.headers().firstValue("Allow")).contains("GET");
+		assertThat(response.headers().firstValue("Location")).isEmpty(); assertThat(response.headers().allValues("Set-Cookie")).isEmpty();
+		assertSecurityHeaders(response);
+		if (!method.equals("HEAD")) { error(response, 405, "invalid_request"); }
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "query", "body" })
+	void publicKeyReadsDoNotAcceptQueryOrBodyParameters(String location) throws Exception {
+		String suffix = location.equals("query") ? "?kid=private-requested-key" : "";
+		String body = location.equals("body") ? "kid=private-requested-key" : "";
+		error(send("/oauth2/jwks" + suffix, "GET", "application/x-www-form-urlencoded", null, body, Map.of()), 400, "invalid_request");
+		assertThat(tokenAudits()).isEmpty();
+	}
+
+	private HttpResponse<String> publicKeys(Map<String, String> headers) throws Exception {
+		var response = send("/oauth2/jwks", "GET", null, null, "", headers);
+		assertThat(response.statusCode()).as(response.body()).isEqualTo(200); assertSecurityHeaders(response);
+		assertThat(response.headers().firstValue("Content-Type").orElseThrow()).startsWith("application/json");
+		assertThat(response.headers().allValues("Set-Cookie")).isEmpty(); assertThat(response.headers().firstValue("Location")).isEmpty();
+		return response;
+	}
+
+	@Test
 	void unsupportedProtocolEndpointsAreNotPublishedByTheNativeConfigurer() throws Exception {
-		for (String path : List.of("/.well-known/openid-configuration", "/.well-known/oauth-authorization-server", "/oauth2/jwks", "/oauth2/authorize",
+		for (String path : List.of("/.well-known/openid-configuration", "/.well-known/oauth-authorization-server", "/oauth2/authorize",
 				"/oauth2/introspect", "/oauth2/revoke", "/userinfo", "/connect/register", "/oauth2/device_authorization")) {
 			var response = send(path, "GET", null, basic(), "", Map.of());
 			assertThat(response.statusCode()).as(path).isIn(401, 403); assertThat(response.headers().firstValue("Location")).isEmpty();
@@ -335,6 +433,12 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 					.isEqualTo("#/components/schemas/IdentityProtocolError");
 		}
 		assertThat(document.path("paths").path(ENDPOINT).has("get")).isFalse();
+		var keys = document.path("paths").path("/oauth2/jwks").path("get");
+		assertThat(keys.path("operationId").asText()).isEqualTo("getPublicSigningKeys");
+		assertThat(keys.has("security")).isTrue(); assertThat(keys.path("security").isEmpty()).isTrue();
+		assertThat(document.path("paths").path("/oauth2/jwks").has("post")).isFalse();
+		assertThat(keys.path("responses").path("200").path("content").path("application/json").path("schema").path("properties").path("keys").path("items").path("properties").properties())
+				.extracting(Map.Entry::getKey).containsExactlyInAnyOrder("kty", "kid", "use", "alg", "n", "e");
 		assertThat(document.path("info").path("description").asText()).doesNotContain("当前未提供", "随协议实现交付");
 	}
 

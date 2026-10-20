@@ -166,8 +166,8 @@ class IdentityBrowserBoundaryFilterTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(ints = { 0, 1, 2, 3, 4, 5, 6 })
-	void everyRedirectAndFlushVariantCanBeWithdrawnOnCommitFailure(int variant) throws Exception {
+	@ValueSource(ints = { 0, 1, 2, 3, 4, 5, 6, 7, 8 })
+	void everyOutputAndRedirectVariantCanBeWithdrawnOnCommitFailure(int variant) throws Exception {
 		var filter = new IdentityBrowserBoundaryFilter(mock(IdentityBrowserSessions.class), 100, 8, headers());
 		var actual = new MockHttpServletResponse();
 		filter.doFilter(request(), actual, (req, res) -> {
@@ -182,6 +182,8 @@ class IdentityBrowserBoundaryFilterTests {
 				case 4 -> response.flushBuffer();
 				case 5 -> response.getWriter().flush();
 				case 6 -> response.getOutputStream().flush();
+				case 7 -> response.getWriter().close();
+				case 8 -> response.getOutputStream().close();
 				default -> throw new AssertionError();
 			}
 			assertThat(actual.isCommitted()).isFalse();
@@ -191,6 +193,23 @@ class IdentityBrowserBoundaryFilterTests {
 		assertThat(actual.getHeaders("Set-Cookie")).isEmpty();
 		assertThat(actual.getHeader("Location")).isNull();
 		assertThat(actual.getContentAsString()).contains("\"code\":\"SERVICE_UNAVAILABLE\"");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "writer", "stream" })
+	void closingNativeOutputDefersItsCompleteResponseUntilTheChainReturns(String output) throws Exception {
+		var filter = new IdentityBrowserBoundaryFilter(mock(IdentityBrowserSessions.class), 100, 8, headers());
+		var actual = new MockHttpServletResponse();
+		filter.doFilter(request(), actual, (req, res) -> {
+			if (output.equals("writer")) {
+				try (var writer = res.getWriter()) { writer.write("public signing keys"); }
+			}
+			else {
+				try (var stream = res.getOutputStream()) { stream.write("public signing keys".getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+			}
+			assertThat(actual.isCommitted()).isFalse(); assertThat(actual.getContentAsByteArray()).isEmpty();
+		});
+		assertThat(actual.getStatus()).isEqualTo(200); assertThat(actual.getContentAsString()).isEqualTo("public signing keys");
 	}
 
 	@ParameterizedTest
@@ -243,7 +262,7 @@ class IdentityBrowserBoundaryFilterTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "stream", "writer" })
+	@ValueSource(strings = { "stream", "writer", "writer-close" })
 	void downstreamCannotPublishSuccessAfterCatchingAndResettingAnOverflow(String output) throws Exception {
 		var filter = new IdentityBrowserBoundaryFilter(mock(IdentityBrowserSessions.class), 100, 8, headers());
 		var actual = new MockHttpServletResponse();
@@ -254,7 +273,8 @@ class IdentityBrowserBoundaryFilterTests {
 			}
 			else {
 				res.getWriter().write("x".repeat(131_073));
-				res.getWriter().flush();
+				if (output.equals("writer-close")) { res.getWriter().close(); }
+				else { res.getWriter().flush(); }
 				assertThat(res.getWriter().checkError()).isTrue();
 			}
 			res.reset();
