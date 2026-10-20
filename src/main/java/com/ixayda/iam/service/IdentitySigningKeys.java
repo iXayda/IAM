@@ -81,6 +81,25 @@ public class IdentitySigningKeys {
 		return loadLockedMaterial(this.repository.lockForIssuance());
 	}
 
+	/** Acquire first for online use; validation selects public columns and never decrypts signing material. */
+	public Optional<IdentitySigningKey> lockForValidation(UUID id) {
+		if (id == null) { throw new IllegalArgumentException("Signing key id is required"); }
+		if (!TransactionSynchronizationManager.isActualTransactionActive() || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+			throw new IllegalStateException("Online validation requires an active write transaction");
+		}
+		var lifecycle = this.repository.lockForIssuance();
+		var key = findPublicKey();
+		if (lifecycle.initialKeyId() == null) {
+			if (key.isPresent()) { throw new IllegalStateException("Signing initialization state is inconsistent"); }
+			return Optional.empty();
+		}
+		var current = key.orElseThrow(() -> new IllegalStateException("Initialized signing key is missing"));
+		if (!current.id().equals(lifecycle.initialKeyId()) || !current.createdAt().equals(lifecycle.initializedAt())) {
+			throw new IllegalStateException("Signing initialization state is inconsistent");
+		}
+		return current.id().equals(id) ? key : Optional.empty();
+	}
+
 	private IdentitySigningMaterial loadLockedMaterial(IdentitySigningKeyRepository.Lifecycle lifecycle) {
 		var stored = this.repository.findStoredKey().orElseThrow(() -> new IllegalStateException("Signing key is not initialized"));
 		requireConsistentState(lifecycle, stored);

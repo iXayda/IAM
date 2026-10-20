@@ -11,9 +11,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import com.ixayda.iam.model.IdentityRefreshFamily;
+import com.ixayda.iam.IdentityProtocolTestSupport;
 import com.ixayda.iam.model.IdentityAuthorizationBinding;
 import com.ixayda.iam.model.IdentityAuthorizationSession;
+import com.ixayda.iam.model.IdentityRefreshFamily;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,6 @@ import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
@@ -429,16 +429,7 @@ class IdentityRefreshTokenProviderIntegrationTests extends IdentityProtocolTestS
 		var request = new OAuth2RefreshTokenAuthenticationToken(token, client, scopes, Map.of());
 		request.setDetails(new IdentityRefreshTokenProvider.RequestEvidence(UUID.randomUUID())); return request;
 	}
-	private OAuth2ClientAuthenticationToken refreshClient(UUID id, String secret) {
-		var readOnly = new OAuth2AuthorizationService() {
-			@Override public void save(OAuth2Authorization authorization) { throw new AssertionError("Client proof cannot save grants"); }
-			@Override public void remove(OAuth2Authorization authorization) { throw new AssertionError("Client proof cannot remove grants"); }
-			@Override public OAuth2Authorization findById(String value) { throw new AssertionError("Client proof cannot enumerate grants"); }
-			@Override public OAuth2Authorization findByToken(String value, OAuth2TokenType type) { throw new AssertionError("Refresh client proof does not look up a grant"); }
-		};
-		return (OAuth2ClientAuthenticationToken) new IdentityClientAuthenticationProvider(this.protocol, readOnly).authenticate(
-				new OAuth2ClientAuthenticationToken(id.toString(), ClientAuthenticationMethod.CLIENT_SECRET_BASIC, secret, Map.of("grant_type", "refresh_token")));
-	}
+
 	private OAuth2AccessTokenAuthenticationToken rotate(OAuth2RefreshTokenAuthenticationToken request) { return (OAuth2AccessTokenAuthenticationToken) this.refreshProvider.authenticate(request); }
 	private OAuth2AuthenticationException refreshRejection(OAuth2RefreshTokenAuthenticationToken request, String code) {
 		var exception = catchThrowableOfType(OAuth2AuthenticationException.class, () -> this.refreshProvider.authenticate(request));

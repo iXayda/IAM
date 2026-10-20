@@ -77,6 +77,11 @@ public class IdentityAuthorizationBindingRepository {
 		return this.jdbc.sql("SELECT clock_timestamp() < :expiry").param("expiry", timestamp(expiry)).query(Boolean.class).single();
 	}
 
+	public boolean isWithinLifetime(Instant issued, Instant expiry) {
+		return this.jdbc.sql("SELECT :issued <= clock_timestamp() AND clock_timestamp() < :expiry")
+				.param("issued", timestamp(issued)).param("expiry", timestamp(expiry)).query(Boolean.class).single();
+	}
+
 	private static Instant time(ResultSet row, String column) throws SQLException { return row.getObject(column, OffsetDateTime.class).toInstant(); }
 	private static OffsetDateTime timestamp(Instant time) { return OffsetDateTime.ofInstant(time, ZoneOffset.UTC); }
 	private static void requireOne(int count) { if (count != 1) { throw new IllegalStateException("Authorization binding was not stored"); } }
