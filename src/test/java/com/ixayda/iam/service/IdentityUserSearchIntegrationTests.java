@@ -34,6 +34,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import static com.ixayda.iam.PostgreSqlMigrationTestSupport.copyRows;
 import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -277,7 +278,7 @@ class IdentityUserSearchIntegrationTests {
 			try (var connection = DriverManager.getConnection(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())) {
 				connection.setSchema(schema);
 				var previous = JdbcClient.create(new SingleConnectionDataSource(connection, true));
-				for (String table : TABLES) { previous.sql("INSERT INTO " + table + " SELECT * FROM public." + table).update(); }
+				for (String table : TABLES) { copyRows(previous, table); }
 				var before = snapshot(previous);
 				flyway(schema, "10").migrate();
 				assertThat(snapshot(previous)).isEqualTo(before);

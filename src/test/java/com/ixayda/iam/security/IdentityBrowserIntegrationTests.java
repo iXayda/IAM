@@ -948,11 +948,14 @@ class IdentityBrowserIntegrationTests {
 			}
 			assertThat(auditParameters).containsExactlyInAnyOrder("from", "until", "action", "outcome", "actor", "source", "targetUserId", "correlationId", "pageSize", "cursor");
 			assertThat(specification.path("components").path("schemas").path("SecurityAuditPageResponse").path("properties").propertyNames()).containsExactlyInAnyOrder("items", "nextCursor");
-			assertThat(specification.path("components").path("schemas").path("SecurityAuditEntryResponse").path("properties").propertyNames()).containsExactlyInAnyOrder("id", "action", "outcome", "targetUserId", "actor", "source", "correlationId", "recordedAt");
+			assertThat(specification.path("components").path("schemas").path("SecurityAuditEntryResponse").path("properties").propertyNames()).containsExactlyInAnyOrder("id", "action", "outcome", "targetUserId", "actor", "source", "correlationId", "recordedAt", "targetType", "targetId");
 			var auditTarget = specification.path("components").path("schemas").path("SecurityAuditEntryResponse").path("properties").path("targetUserId");
+			var objectTarget = specification.path("components").path("schemas").path("SecurityAuditEntryResponse").path("properties").path("targetId");
+			var objectType = specification.path("components").path("schemas").path("SecurityAuditEntryResponse").path("properties").path("targetType");
+			assertThat(objectType.path("description").asText()).contains("RESOURCE");
 			var auditContinuation = specification.path("components").path("schemas").path("SecurityAuditPageResponse").path("properties").path("nextCursor");
 			assertThat(specification.path("openapi").asText()).startsWith("3.1.");
-			for (var field : List.of(auditTarget, auditContinuation)) {
+			for (var field : List.of(auditTarget, auditContinuation, objectTarget, objectType)) {
 				var types = field.path("type");
 				assertThat(types.isArray()).isTrue();
 				assertThat(types.size()).isEqualTo(2);
