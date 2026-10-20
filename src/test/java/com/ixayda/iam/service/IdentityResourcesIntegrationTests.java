@@ -48,7 +48,7 @@ class IdentityResourcesIntegrationTests {
 
 	@BeforeEach
 	void clean() {
-		this.jdbc.sql("TRUNCATE iam_resource, iam_security_audit").update();
+		this.jdbc.sql("TRUNCATE iam_resource, iam_security_audit CASCADE").update();
 	}
 
 	@AfterEach
@@ -265,7 +265,7 @@ class IdentityResourcesIntegrationTests {
 						.param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("user", user).update();
 				var before = old.sql("SELECT to_jsonb(a)::text FROM iam_security_audit a").query(String.class).single();
 				var flyway = Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())
-						.schemas(schema).defaultSchema(schema).load();
+						.schemas(schema).defaultSchema(schema).target("22").load();
 				assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
 				assertThat(old.sql("SELECT (to_jsonb(a) - 'target_type' - 'target_id')::text FROM iam_security_audit a").query(String.class).single()).isEqualTo(before);
 				assertThat(old.sql("SELECT count(*) FROM iam_security_audit WHERE target_type IS NOT NULL OR target_id IS NOT NULL").query(Long.class).single()).isZero();

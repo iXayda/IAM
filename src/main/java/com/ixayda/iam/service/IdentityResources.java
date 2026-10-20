@@ -1,6 +1,5 @@
 package com.ixayda.iam.service;
 
-import java.text.Normalizer;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
@@ -15,6 +14,7 @@ import com.ixayda.iam.repository.IdentityResourceRepository;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.util.Assert;
 
 /** Internal resource operations; the trusted caller authorizes access and supplies audit attribution. */
@@ -98,23 +98,14 @@ public class IdentityResources {
 	}
 
 	static String normalizeDisplayName(String value) {
-		if (value == null || value.length() > 65_536) { throw new IllegalArgumentException("Resource display name is invalid"); }
-		for (int i = 0; i < value.length(); i++) {
-			char character = value.charAt(i);
-			if (Character.isHighSurrogate(character)) {
-				if (++i >= value.length() || !Character.isLowSurrogate(value.charAt(i))) {
-					throw new IllegalArgumentException("Resource display name is invalid");
-				}
-			}
-			else if (Character.isLowSurrogate(character)) { throw new IllegalArgumentException("Resource display name is invalid"); }
-		}
-		String normalized = Normalizer.normalize(value, Normalizer.Form.NFC);
-		int length = normalized.codePointCount(0, normalized.length());
-		if (length < 1 || length > 128 || normalized.codePoints().anyMatch(Character::isISOControl)
-				|| normalized.codePoints().allMatch(cp -> Character.isWhitespace(cp) || Character.isSpaceChar(cp))) {
-			throw new IllegalArgumentException("Resource display name is invalid");
-		}
-		return normalized;
+		return IdentityDisplayNames.normalize(value, "Resource display name is invalid");
+	}
+
+	/** Parent lock used before role and authorization rows. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityResource> lockById(UUID id) {
+		Assert.notNull(id, "Resource id is required");
+		return this.repository.lockById(id);
 	}
 
 }
