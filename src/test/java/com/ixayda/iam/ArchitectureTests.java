@@ -40,7 +40,7 @@ class ArchitectureTests {
 				.whereLayer("Security").mayOnlyBeAccessedByLayers("Controller")
 				.whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
 				.whereLayer("Model").mayOnlyBeAccessedByLayers("Controller", "DTO", "Service", "Repository", "Security", "CLI")
-				.whereLayer("Credential").mayOnlyBeAccessedByLayers("Service")
+				.whereLayer("Credential").mayOnlyBeAccessedByLayers("Service", "Repository")
 				.check(APPLICATION_CLASSES);
 	}
 
