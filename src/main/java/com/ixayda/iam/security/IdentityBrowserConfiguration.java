@@ -79,6 +79,8 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.POST, "/login", "/logout").permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/account-setup/complete", "/api/password-recovery/complete").permitAll()
 						.requestMatchers(HttpMethod.POST, "/admin/mfa").access(administrator)
+						.requestMatchers(HttpMethod.GET, "/api/admin/users/{userId}/resources/{resourceId}/roles").access(management)
+						.requestMatchers(HttpMethod.POST, "/api/admin/users/{userId}/roles/{roleId}/grant", "/api/admin/users/{userId}/roles/{roleId}/revoke").access(management)
 						.requestMatchers(HttpMethod.POST, "/api/admin/resources/{resourceId}/roles", "/api/admin/resource-roles/{roleId}/name", "/api/admin/resource-roles/{roleId}/disable", "/api/admin/resource-roles/{roleId}/enable").access(management)
 						.requestMatchers(HttpMethod.POST, "/api/admin/resources", "/api/admin/resources/{resourceId}/name", "/api/admin/resources/{resourceId}/disable", "/api/admin/resources/{resourceId}/enable").access(management)
 						.requestMatchers(HttpMethod.POST, "/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile").access(management)

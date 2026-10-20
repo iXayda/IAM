@@ -15,6 +15,7 @@ import com.ixayda.iam.model.IdentityResourceRole;
 import com.ixayda.iam.model.IdentityResourceRolePage;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.IdentityUserPage;
+import com.ixayda.iam.model.IdentityUserRolePage;
 import com.ixayda.iam.model.SecurityAuditPage;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityResourceManagement;
@@ -23,6 +24,8 @@ import com.ixayda.iam.service.IdentityResourceRoles;
 import com.ixayda.iam.service.IdentityResources;
 import com.ixayda.iam.service.IdentityUserCreations;
 import com.ixayda.iam.service.IdentityUserProfileManagement;
+import com.ixayda.iam.service.IdentityUserRoleManagement;
+import com.ixayda.iam.service.IdentityUserRoles;
 import com.ixayda.iam.service.IdentityUserStateChanges;
 import com.ixayda.iam.service.IdentityUsers;
 import com.ixayda.iam.service.SecurityAudits;
@@ -124,6 +127,11 @@ class IdentityQueryControllerTests {
 				when(service.findById(ID)).thenReturn(Optional.of(new IdentityUser(ID, "alice", "Alice", IdentityUser.Status.ACTIVE, Instant.EPOCH)));
 				yield endpoint(new IdentityUserManagementController(service, creations, profiles, states, administrators), service, creations, profiles, states, administrators);
 			}
+			case USER_ROLES -> {
+				var service = mock(IdentityUserRoles.class); var management = mock(IdentityUserRoleManagement.class);
+				when(service.search(eq(ID), eq(ID), eq(20), isNull())).thenReturn(new IdentityUserRolePage(List.of(), 0, null));
+				yield endpoint(new IdentityUserRoleController(service, management, administrators), service, management, administrators);
+			}
 			case AUDITS -> {
 				var service = mock(SecurityAudits.class);
 				when(service.search(any(), eq(20), isNull())).thenReturn(new SecurityAuditPage(List.of(), null));
@@ -145,6 +153,7 @@ class IdentityQueryControllerTests {
 		RESOURCE_ROLE("/api/admin/resource-roles/" + ID, "Invalid resource role request"),
 		USERS("/api/admin/users", "Invalid user request"),
 		USER("/api/admin/users/" + ID, "Invalid user request"),
+		USER_ROLES("/api/admin/users/" + ID + "/resources/" + ID + "/roles", "Invalid user role request"),
 		AUDITS("/api/admin/audits", "Invalid audit query");
 
 		private final String path;
