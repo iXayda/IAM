@@ -12,6 +12,7 @@ import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMe
 final class IdentityProtocolResponses {
 
 	static final String TOKEN_ENDPOINT = "/oauth2/token";
+	static final String JWK_SET_ENDPOINT = "/oauth2/jwks";
 
 	private IdentityProtocolResponses() { }
 

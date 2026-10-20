@@ -32,11 +32,12 @@ import org.springframework.security.oauth2.server.authorization.web.authenticati
 import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2RefreshTokenAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.NullSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.transaction.PlatformTransactionManager;
 
-/** Fixed-issuer native back-channel; browser authentication remains in its own security chain. */
+/** Fixed-issuer protocol entrypoints; browser authentication remains in its own security chain. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnProperty(name = "iam.protocol.issuer")
@@ -56,6 +57,20 @@ public class IdentityProtocolConfiguration {
 			authorizations.requireConfigured();
 			keys.initialize().orElseThrow(() -> new IllegalStateException("Protocol HTTP requires a configured signing key"));
 		};
+	}
+
+	@Bean
+	@Order(0)
+	SecurityFilterChain publicKeySecurity(HttpSecurity http, IdentityJwkSource source) throws Exception {
+		// The public native read terminates before any browser context or session strategy.
+		http.securityMatcher(PathPatternRequestMatcher.withDefaults().matcher(IdentityProtocolResponses.JWK_SET_ENDPOINT))
+				.securityContext(context -> context.securityContextRepository(new NullSecurityContextRepository()))
+				.sessionManagement(session -> session.disable()).requestCache(cache -> cache.disable())
+				.httpBasic(basic -> basic.disable()).csrf(csrf -> csrf.disable())
+				.authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+				.headers(headers -> headers.disable())
+				.addFilterBefore(new IdentityJwkRequestFilter(source), SecurityContextHolderFilter.class);
+		return http.build();
 	}
 
 	@Bean
