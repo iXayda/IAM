@@ -11,12 +11,14 @@ public class IdentityReadiness {
 	private final IdentitySigningKeys keys;
 	private final IdentityAuthorizations authorizations;
 	private final SecurityAudits audits;
+	private final IdentityRestores restores;
 
-	IdentityReadiness(IdentitySigningKeys keys, IdentityAuthorizations authorizations, SecurityAudits audits) {
-		this.keys = keys; this.authorizations = authorizations; this.audits = audits;
+	IdentityReadiness(IdentitySigningKeys keys, IdentityAuthorizations authorizations, SecurityAudits audits, IdentityRestores restores) {
+		this.keys = keys; this.authorizations = authorizations; this.audits = audits; this.restores = restores;
 	}
 
 	public void requireReady() {
+		this.restores.requireAvailable();
 		if (!this.audits.isAvailable()) { throw new IllegalStateException("Mandatory audit storage is unavailable"); }
 		this.authorizations.requireConfigured();
 		this.keys.signingMaterial();

@@ -7,6 +7,7 @@ import com.ixayda.iam.cli.AdministratorRecoveryCommand;
 import com.ixayda.iam.cli.DatabaseMaintenanceCommand;
 import com.ixayda.iam.cli.SigningKeyRotationCommand;
 import com.ixayda.iam.cli.SigningKeyIncidentCommand;
+import com.ixayda.iam.cli.RestoreQuarantineCommand;
 
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
@@ -30,6 +31,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class IamApplication {
 
 	public static void main(String[] args) {
+		if (args.length > 0 && args[0].equals("quarantine-restore")) {
+			RestoreQuarantineCommand.run(IamApplication.class, args);
+			return;
+		}
 		if (args.length > 0 && (args[0].equals("migrate") || args[0].equals("initialize-signing-key")
 				|| args[0].equals("preview-protocol-cleanup") || args[0].equals("cleanup-protocol-state"))) {
 			DatabaseMaintenanceCommand.run(IamApplication.class, args);

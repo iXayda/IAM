@@ -27,19 +27,19 @@ public class IdentityAdministratorRepository {
 	}
 
 	public Lifecycle lockLifecycle() {
-		return this.jdbc.sql("SELECT completed_at, revision, candidate_user_id FROM iam_admin_bootstrap WHERE singleton = 1 FOR UPDATE")
+		return this.jdbc.sql("SELECT completed_at, revision, candidate_user_id, restore_closed FROM iam_admin_bootstrap WHERE singleton = 1 FOR UPDATE")
 				.query((row, index) -> new Lifecycle(row.getObject("completed_at", OffsetDateTime.class) != null,
-						row.getLong("revision"), row.getObject("candidate_user_id", UUID.class))).single();
+						row.getLong("revision"), row.getObject("candidate_user_id", UUID.class), row.getBoolean("restore_closed"))).single();
 	}
 
 	public void reserveCandidate(UUID userId, long revision) {
 		long next = Math.addExact(revision, 1);
 		requireOne(this.jdbc.sql("""
 				UPDATE iam_admin_bootstrap SET candidate_user_id = :id, revision = :next
-				WHERE singleton = 1 AND completed_at IS NULL AND candidate_user_id IS NULL AND revision = :revision
+				WHERE singleton = 1 AND completed_at IS NULL AND NOT restore_closed AND candidate_user_id IS NULL AND revision = :revision
 				""").param("id", userId).param("next", next).param("revision", revision).update());
 		var stored = lockLifecycle();
-		if (stored.completed() || stored.revision() != next || !userId.equals(stored.candidateUserId())) {
+		if (stored.closed() || stored.revision() != next || !userId.equals(stored.candidateUserId())) {
 			throw new IllegalStateException("Administrator candidate was not stored");
 		}
 	}
@@ -69,7 +69,7 @@ public class IdentityAdministratorRepository {
 	public void completeBootstrap(UUID userId, long revision) {
 		requireOne(this.jdbc.sql("""
 				UPDATE iam_admin_bootstrap SET completed_at = clock_timestamp(), initial_user_id = :id, revision = :next
-				WHERE singleton = 1 AND completed_at IS NULL AND revision = :revision
+				WHERE singleton = 1 AND completed_at IS NULL AND NOT restore_closed AND revision = :revision
 				    AND (candidate_user_id IS NULL OR candidate_user_id = :id)
 				""").param("id", userId).param("revision", revision).param("next", Math.addExact(revision, 1)).update());
 		Instant completedAt = this.jdbc.sql("SELECT completed_at FROM iam_admin_bootstrap WHERE singleton = 1 AND initial_user_id = :id AND revision = :next")
@@ -96,6 +96,8 @@ public class IdentityAdministratorRepository {
 		if (changed != 1) { throw new IllegalStateException("Administrator lifecycle mutation was not stored"); }
 	}
 
-	public record Lifecycle(boolean completed, long revision, UUID candidateUserId) { }
+	public record Lifecycle(boolean completed, long revision, UUID candidateUserId, boolean restoreClosed) {
+		public boolean closed() { return completed || restoreClosed; }
+	}
 
 }

@@ -11,6 +11,7 @@ import com.ixayda.iam.service.IdentityProtocolClients;
 import com.ixayda.iam.service.IdentityRefreshTokens;
 import com.ixayda.iam.service.IdentityResourceCredentials;
 import com.ixayda.iam.service.IdentitySigningKeys;
+import com.ixayda.iam.service.IdentityRestores;
 import com.ixayda.iam.service.IdentityUsers;
 import com.ixayda.iam.service.SecurityAudits;
 
@@ -55,8 +56,9 @@ public class IdentityProtocolConfiguration {
 	@Bean
 	@Lazy(false)
 	@DependsOnDatabaseInitialization
-	SmartInitializingSingleton protocolInitializer(IdentityAuthorizations authorizations, IdentitySigningKeys keys) {
+	SmartInitializingSingleton protocolInitializer(IdentityAuthorizations authorizations, IdentitySigningKeys keys, IdentityRestores restores) {
 		return () -> {
+			restores.requireAvailable();
 			authorizations.requireConfigured();
 			keys.initialize().orElseThrow(() -> new IllegalStateException("Protocol HTTP requires a configured signing key"));
 		};

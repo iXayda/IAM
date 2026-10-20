@@ -177,6 +177,8 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 					"DELETE FROM iam_signing_key_state", "INSERT INTO iam_signing_key_state(singleton) VALUES (1)",
 					"INSERT INTO iam_administrator(user_id) VALUES (gen_random_uuid())", "DELETE FROM iam_administrator",
 					"UPDATE iam_admin_bootstrap SET completed_at=completed_at", "UPDATE iam_admin_bootstrap SET candidate_user_id=candidate_user_id",
+					"UPDATE iam_admin_bootstrap SET restore_closed=false", "UPDATE iam_restore_state SET current_restore_id=NULL",
+					"DELETE FROM iam_restore", "TRUNCATE iam_restore", "UPDATE iam_restore SET archive_sha256=archive_sha256",
 					"SELECT * FROM iam_administrator_recovery", "SELECT * FROM flyway_schema_history",
 					"CREATE TABLE runtime_ddl(id int)", "CREATE TEMP TABLE runtime_temp(id int)", "CREATE SCHEMA runtime_schema",
 					"ALTER TABLE iam_user DISABLE TRIGGER ALL", "SET ROLE " + this.owner)) {
@@ -198,7 +200,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "column-audit", "public-audit", "signing-state", "bootstrap", "owner", "membership" })
+	@ValueSource(strings = { "column-audit", "public-audit", "signing-state", "bootstrap", "restore-state", "restore-evidence", "owner", "membership" })
 	void runtimeProfileRejectsMaintenanceCredentialsAndPrivilegeDriftBeforeListening(String fault) throws Exception {
 		runCommand("migrate"); runCommand("initialize-signing-key"); applyGrants("public");
 		switch (fault) {
@@ -206,6 +208,8 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 			case "public-audit" -> this.maintenance.sql("GRANT DELETE ON iam_security_audit TO PUBLIC").update();
 			case "signing-state" -> this.maintenance.sql("GRANT UPDATE(active_key_id) ON iam_signing_key_state TO " + this.runtime).update();
 			case "bootstrap" -> this.maintenance.sql("GRANT UPDATE(completed_at) ON iam_admin_bootstrap TO " + this.runtime).update();
+			case "restore-state" -> this.maintenance.sql("GRANT UPDATE(current_restore_id) ON iam_restore_state TO " + this.runtime).update();
+			case "restore-evidence" -> this.maintenance.sql("GRANT DELETE ON iam_restore TO PUBLIC").update();
 			case "membership" -> adminSql("GRANT " + this.owner + " TO " + this.runtime + " WITH INHERIT FALSE, SET TRUE");
 		}
 		Runnable attempt = () -> assertThatThrownBy(() -> { try (var ignored = start(true)) { fail("Unsafe identity must prevent startup"); } })

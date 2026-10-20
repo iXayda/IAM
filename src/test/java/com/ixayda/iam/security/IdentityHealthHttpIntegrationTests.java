@@ -99,6 +99,22 @@ class IdentityHealthHttpIntegrationTests extends BrowserHttpTestSupport {
 	}
 
 	@Test
+	void persistedRestoreIsolationWithdrawsReadinessWithoutChangingLivenessOrWritingAuditEvents() throws Exception {
+		UUID id = UUID.randomUUID();
+		this.jdbc.sql("INSERT INTO iam_restore(id,archive_sha256,database_name,snapshot_audit_count) VALUES(:id,:checksum,current_database(),0)")
+				.param("id", id).param("checksum", "a".repeat(64)).update();
+		this.jdbc.sql("UPDATE iam_restore_state SET current_restore_id=:id").param("id", id).update();
+		try {
+			long before = count("iam_security_audit"); probe("/readyz", 503, "DOWN"); probe("/livez", 200, "UP");
+			assertThat(count("iam_security_audit")).isEqualTo(before);
+		}
+		finally {
+			this.jdbc.sql("TRUNCATE iam_restore_state,iam_restore").update(); this.jdbc.sql("INSERT INTO iam_restore_state(singleton) VALUES(1)").update();
+		}
+		probe("/readyz", 200, "UP");
+	}
+
+	@Test
 	void corruptedPrivateMaterialIsNotReadyEvenWhileTheProcessRemainsLive() throws Exception {
 		byte[] original = this.jdbc.sql("SELECT encrypted_private_key FROM iam_signing_key WHERE status='active'").query(byte[].class).single();
 		this.jdbc.sql("UPDATE iam_signing_key SET encrypted_private_key=set_byte(encrypted_private_key,40,get_byte(encrypted_private_key,40) # 1) WHERE status='active'").update();

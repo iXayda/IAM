@@ -68,7 +68,7 @@ public class IdentityAdministrators {
 		requireIndependentTransaction();
 		return this.transaction.execute(status -> {
 			var lifecycle = this.repository.lockLifecycle();
-			if (lifecycle.completed() || this.repository.hasAdministrators()) {
+			if (lifecycle.closed() || this.repository.hasAdministrators()) {
 				throw new IllegalStateException("Administrator initialization is closed");
 			}
 			return Optional.ofNullable(lifecycle.candidateUserId());
@@ -84,7 +84,7 @@ public class IdentityAdministrators {
 			// A newly inserted, uncommitted user is owned by this transaction before the lifecycle is locked.
 			var user = this.users.create(username, displayName, audit);
 			var lifecycle = this.repository.lockLifecycle();
-			if (lifecycle.completed() || lifecycle.candidateUserId() != null || this.repository.hasAdministrators()) {
+			if (lifecycle.closed() || lifecycle.candidateUserId() != null || this.repository.hasAdministrators()) {
 				throw new IllegalStateException("Administrator candidate preparation is closed");
 			}
 			var proof = this.setups.issue(user.id(), audit);
@@ -171,7 +171,7 @@ public class IdentityAdministrators {
 	}
 
 	private boolean isOpenFor(IdentityAdministratorRepository.Lifecycle lifecycle, UUID userId) {
-		return !lifecycle.completed() && !this.repository.hasAdministrators()
+		return !lifecycle.closed() && !this.repository.hasAdministrators()
 				&& (lifecycle.candidateUserId() == null || userId.equals(lifecycle.candidateUserId()));
 	}
 
