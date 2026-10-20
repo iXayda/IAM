@@ -94,6 +94,8 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
 						.requestMatchers(HttpMethod.GET, "/api/me/authorizations").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/authorizations/{authorizationId}/revoke").authenticated()
+						.requestMatchers(HttpMethod.GET, "/api/me/sessions").authenticated()
+						.requestMatchers(HttpMethod.POST, "/api/me/sessions/{sessionId}/revoke").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password", "/api/me/mfa/recovery-codes").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/mfa/totp/enrollment", "/api/me/mfa/totp/enrollment/confirm", "/api/me/mfa/totp/enrollment/cancel").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/mfa/totp/replacement", "/api/me/mfa/totp/replacement/complete").authenticated()
