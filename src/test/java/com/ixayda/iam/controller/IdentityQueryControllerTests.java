@@ -6,9 +6,13 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
+import com.ixayda.iam.model.IdentityClient;
+import com.ixayda.iam.model.IdentityClientConfiguration;
+import com.ixayda.iam.model.IdentityClientPage;
 import com.ixayda.iam.model.IdentityResource;
 import com.ixayda.iam.model.IdentityResourcePage;
 import com.ixayda.iam.model.IdentityResourceRole;
@@ -18,6 +22,8 @@ import com.ixayda.iam.model.IdentityUserPage;
 import com.ixayda.iam.model.IdentityUserRolePage;
 import com.ixayda.iam.model.SecurityAuditPage;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
+import com.ixayda.iam.service.IdentityClientManagement;
+import com.ixayda.iam.service.IdentityClients;
 import com.ixayda.iam.service.IdentityResourceManagement;
 import com.ixayda.iam.service.IdentityResourceRoleManagement;
 import com.ixayda.iam.service.IdentityResourceRoles;
@@ -114,6 +120,13 @@ class IdentityQueryControllerTests {
 				when(service.findById(ID)).thenReturn(Optional.of(new IdentityResource(ID, "urn:example:orders", "Orders", IdentityResource.Status.ACTIVE, 1, Instant.EPOCH, Instant.EPOCH)));
 				yield endpoint(new IdentityResourceController(service, management, administrators), service, management, administrators);
 			}
+			case CLIENTS, CLIENT -> {
+				var service = mock(IdentityClients.class); var management = mock(IdentityClientManagement.class);
+				when(service.search(isNull(), eq(20), isNull())).thenReturn(new IdentityClientPage(List.of(), null));
+				var configuration = new IdentityClientConfiguration("Orders app", ID, List.of("https://application.example/callback"), Set.of("openid"), Set.of());
+				when(service.findById(ID)).thenReturn(Optional.of(new IdentityClient(ID, configuration, IdentityClient.Status.ACTIVE, 1, Instant.EPOCH, Instant.EPOCH, Instant.EPOCH)));
+				yield endpoint(new IdentityClientController(service, management, administrators), service, management, administrators);
+			}
 			case RESOURCE_ROLES, RESOURCE_ROLE -> {
 				var service = mock(IdentityResourceRoles.class); var management = mock(IdentityResourceRoleManagement.class);
 				when(service.search(eq(ID), isNull(), eq(20), isNull())).thenReturn(new IdentityResourceRolePage(List.of(), null));
@@ -149,6 +162,8 @@ class IdentityQueryControllerTests {
 	private enum Route {
 		RESOURCES("/api/admin/resources", "Invalid resource request"),
 		RESOURCE("/api/admin/resources/" + ID, "Invalid resource request"),
+		CLIENTS("/api/admin/clients", "Invalid client request"),
+		CLIENT("/api/admin/clients/" + ID, "Invalid client request"),
 		RESOURCE_ROLES("/api/admin/resources/" + ID + "/roles", "Invalid resource role request"),
 		RESOURCE_ROLE("/api/admin/resource-roles/" + ID, "Invalid resource role request"),
 		USERS("/api/admin/users", "Invalid user request"),

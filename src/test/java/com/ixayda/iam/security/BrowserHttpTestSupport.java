@@ -77,6 +77,8 @@ public abstract class BrowserHttpTestSupport {
 		return new JsonRequest(new JsonMapper().writeValueAsString(Map.of("username", username, "password", password)), csrf);
 	}
 
+	protected static JsonRequest json(String body, String csrfToken) { return new JsonRequest(body, csrfToken); }
+
 	protected record JsonRequest(String body, String csrfToken) { }
 
 	protected HttpResponse<String> post(HttpClient client, String path, String cookie, JsonRequest request) throws Exception {

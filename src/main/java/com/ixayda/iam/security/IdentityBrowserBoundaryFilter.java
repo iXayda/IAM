@@ -76,7 +76,9 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(response, IdentityBrowserResponses.Error.PAYLOAD_TOO_LARGE);
 				return;
 			}
-			if (request.getMethod().equals("POST") && request.getServletPath().equals("/login")
+			boolean clientChange = request.getMethod().equals("POST") && (request.getServletPath().equals("/api/admin/clients")
+					|| request.getServletPath().matches("/api/admin/clients/[^/]+/(configuration|disable|enable|secret/rotate)"));
+			if (request.getMethod().equals("POST") && (request.getServletPath().equals("/login") || clientChange)
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/json"))) {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
@@ -115,7 +117,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
 			}
-			if (accountChange && request.getQueryString() != null) {
+			if ((accountChange || clientChange) && request.getQueryString() != null) {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
@@ -178,7 +180,10 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
-			var deferred = new DeferredResponse(response, 131_072);
+			int responseLimit = request.getMethod().equals("GET")
+					&& Set.of("/v3/api-docs", "/v3/api-docs.yaml").contains(request.getServletPath())
+					? 2_097_152 : 131_072;
+			var deferred = new DeferredResponse(response, responseLimit);
 			stage = IdentityBrowserDiagnostics.Stage.REQUEST_PROCESSING;
 			chain.doFilter(request, deferred);
 			headers(response);
@@ -259,10 +264,12 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 
 		private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 		private final int limit;
+		private boolean overflowed;
 		private final ServletOutputStream output = new ServletOutputStream() {
 			@Override
 			public void write(int value) throws IOException {
 				if (buffer.size() >= limit) {
+					overflowed = true;
 					throw new IOException("Browser response exceeds its bound");
 				}
 				buffer.write(value);
@@ -271,6 +278,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			public void write(byte[] values, int offset, int length) throws IOException {
 				Objects.checkFromIndexSize(offset, length, values.length);
 				if (length > limit - buffer.size()) {
+					overflowed = true;
 					throw new IOException("Browser response exceeds its bound");
 				}
 				buffer.write(values, offset, length);
@@ -341,7 +349,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 
 		void publish() throws IOException {
 			flushBuffer();
-			if (this.writer != null && this.writer.checkError()) {
+			if (this.overflowed || (this.writer != null && this.writer.checkError())) {
 				throw new IOException("Browser response could not be buffered");
 			}
 			var response = (HttpServletResponse) getResponse();
