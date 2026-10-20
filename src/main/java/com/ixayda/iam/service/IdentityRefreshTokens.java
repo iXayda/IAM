@@ -3,6 +3,7 @@ package com.ixayda.iam.service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeSet;
 
 import com.ixayda.iam.credential.AuthorizationSecrets;
@@ -12,6 +13,7 @@ import com.ixayda.iam.model.IdentityRefreshHistory;
 import com.ixayda.iam.repository.IdentityRefreshTokenRepository;
 
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
 import org.springframework.stereotype.Service;
@@ -39,6 +41,51 @@ public class IdentityRefreshTokens {
 		catch (IllegalArgumentException ex) { return Optional.empty(); }
 		return this.repository.findHistory(digest);
 	}
+
+	/** The caller binds the authenticated client before locking this family or deciding replay. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public Optional<Context> lockForUse(IdentityAuthorizations.Snapshot previous, String token) {
+		var id = java.util.UUID.fromString(previous.authorization().getId());
+		var locked = this.authorizations.lockForUse(id).orElseThrow(() -> new IllegalStateException("Authorization is missing"));
+		if (locked.version() != previous.version()) { throw new IllegalStateException("Authorization version is stale"); }
+		var family = this.repository.lockFamily(id).map(value -> verify(locked.authorization(), value))
+				.orElseThrow(() -> new IllegalStateException("Refresh family is missing"));
+		return this.repository.lockHistory(this.secrets.refreshDigest(token)).filter(history -> history.authorizationId().equals(id))
+				.map(history -> new Context(locked, family, history));
+	}
+
+	/** A single successor, its parent's spent seal and the protected family advance in the caller's audited transaction. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public IdentityAuthorizations.Snapshot rotate(Context previous, OAuth2Authorization authorization, OAuth2RefreshToken successor, Set<String> scopes) {
+		var locked = this.authorizations.lockForUse(previous.family().authorizationId()).orElseThrow(() -> new IllegalStateException("Authorization is missing"));
+		var current = this.repository.lockFamily(previous.family().authorizationId()).map(value -> verify(locked.authorization(), value)).orElseThrow();
+		var parent = this.repository.lockHistory(previous.requested().digest()).orElseThrow();
+		var original = this.bindings.findByAuthorization(locked.authorization()).orElseThrow();
+		if (locked.version() != previous.authorization().version() || !current.equals(previous.family()) || !parent.equals(previous.requested())
+				|| current.status() != IdentityRefreshFamily.Status.ACTIVE || parent.consumedAt() != null || !parent.digest().equals(current.currentDigest())
+				|| this.bindings.findByAuthorization(authorization).filter(original::equals).isEmpty()
+				|| !encode(current).equals(authorization.getAttribute(FAMILY)) || scopes.isEmpty() || !current.scopes().containsAll(scopes)
+				|| successor.getIssuedAt().isBefore(current.updatedAt()) || !successor.getIssuedAt().isBefore(parent.expiresAt())
+				|| successor.getExpiresAt().isAfter(current.absoluteExpiresAt()) || successor.getExpiresAt().isAfter(successor.getIssuedAt().plus(7, ChronoUnit.DAYS))
+				|| authorization.getAccessToken() == null || !authorization.getAccessToken().isActive() || !authorization.getAccessToken().getToken().getScopes().equals(scopes)
+				|| scopes.contains("offline_access") != (authorization.getRefreshToken() != null)
+				|| authorization.getRefreshToken() != null && (!authorization.getRefreshToken().isActive() || !authorization.getRefreshToken().getToken().equals(successor))) {
+			throw new IllegalStateException("Refresh successor is invalid");
+		}
+		String digest = this.secrets.refreshDigest(successor.getTokenValue());
+		if (digest.equals(parent.digest())) { throw new IllegalStateException("Refresh successor repeats its parent"); }
+		var next = new IdentityRefreshFamily(current.authorizationId(), Math.addExact(current.version(), 1), Math.addExact(current.generation(), 1), digest, scopes,
+				current.startedAt(), successor.getIssuedAt(), successor.getExpiresAt(), current.absoluteExpiresAt(),
+				scopes.contains("offline_access") ? IdentityRefreshFamily.Status.ACTIVE : IdentityRefreshFamily.Status.CLOSED);
+		this.repository.consumeHistory(new IdentityRefreshHistory(parent.authorizationId(), parent.digest(), parent.generation(), parent.parentDigest(), parent.issuedAt(), parent.expiresAt(), successor.getIssuedAt()));
+		this.repository.insertHistory(new IdentityRefreshHistory(current.authorizationId(), digest, next.generation(), parent.digest(), successor.getIssuedAt(), successor.getExpiresAt(), null));
+		var saved = this.authorizations.save(OAuth2Authorization.from(authorization).attribute(FAMILY, encode(next)).build(), locked.version());
+		this.repository.updateFamily(next, current.version());
+		if (findByAuthorization(saved.authorization()).filter(next::equals).isEmpty()) { throw new IllegalStateException("Refresh successor was not stored"); }
+		return saved;
+	}
+
+	public record Context(IdentityAuthorizations.Snapshot authorization, IdentityRefreshFamily family, IdentityRefreshHistory requested) { }
 
 	/** The workflow already holds native authorization and all earlier locks; initial metadata is saved atomically with native tokens. */
 	@Transactional(propagation = Propagation.MANDATORY)

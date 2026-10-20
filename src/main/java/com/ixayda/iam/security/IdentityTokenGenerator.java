@@ -9,6 +9,7 @@ import com.ixayda.iam.model.IdentityAuthorizationBinding;
 import com.ixayda.iam.service.IdentityProtocolClients;
 
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
@@ -42,7 +43,8 @@ final class IdentityTokenGenerator implements OAuth2TokenGenerator<OAuth2Token> 
 			throw new IllegalStateException("Token context does not match its authorization");
 		}
 		if (!OAuth2TokenType.REFRESH_TOKEN.equals(context.getTokenType())) { return this.jwt.generate(context); }
-		if (!context.getAuthorizedScopes().contains("offline_access")) { return null; }
+		// The native refresh provider requires a successor even when scope reduction closes the family; the adapter withholds it.
+		if (!context.getAuthorizedScopes().contains("offline_access") && !AuthorizationGrantType.REFRESH_TOKEN.equals(context.getAuthorizationGrantType())) { return null; }
 		var generated = this.refresh.generate(context);
 		if (generated == null) { return null; }
 		Instant issued = generated.getIssuedAt().truncatedTo(ChronoUnit.MICROS);
