@@ -1,6 +1,7 @@
 package com.ixayda.iam.service;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -93,6 +94,27 @@ public class IdentityBrowserSessions {
 
 	boolean isWithinSessionDeadline(long authenticatedAt, long idleExpiry) {
 		return withinAbsoluteLifetime(authenticatedAt) && this.repository.isBeforeExpiry(idleExpiry);
+	}
+
+	/** The caller holds the subject and catalog locks; supplied facts must exactly match authoritative storage. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<AuthorizationSession> lockForAuthorization(UUID userId, String sessionId, long authenticatedAt, long credentialVersion) {
+		if (sessionId == null || !sessionId.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+				|| credentialVersion < 1 || !withinAbsoluteLifetime(authenticatedAt) || !this.repository.lock(sessionId)) { return Optional.empty(); }
+		var stored = this.repository.authorizationSession(sessionId, userId);
+		if (stored.isEmpty()) { return Optional.empty(); }
+		var current = stored.orElseThrow();
+		// Compare known primitive encodings; do not deserialize arbitrary session objects into protocol state.
+		if (!Arrays.equals(current.authenticatedAt(), SerializationUtils.serialize(authenticatedAt))
+				|| !Arrays.equals(current.credentialVersion(), SerializationUtils.serialize(credentialVersion))
+				|| !isWithinSessionDeadline(authenticatedAt, current.idleExpiry())) { return Optional.empty(); }
+		return Optional.of(new AuthorizationSession(current.id(), Instant.ofEpochMilli(authenticatedAt),
+				Instant.ofEpochMilli(current.idleExpiry()), Instant.ofEpochMilli(authenticatedAt).plus(this.absoluteTimeout)));
+	}
+
+	record AuthorizationSession(UUID id, Instant authenticatedAt, Instant idleExpiresAt, Instant absoluteExpiresAt) {
+		@Override
+		public String toString() { return "AuthorizationSession[REDACTED]"; }
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
