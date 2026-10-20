@@ -7,6 +7,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -46,6 +48,25 @@ public class IdentityAuthorizationBindingRepository {
 				first.credentialVersion(), first.clientVersion(), first.resourceVersion(), first.assignmentVersion(), roles);
 		return Optional.of(new IdentityAuthorizationBinding(id, new IdentityAuthorizationSession(access, first.browserSessionId(), first.authenticatedAt(),
 				first.idleExpiresAt(), first.absoluteExpiresAt()), first.scopes(), first.issuedAt(), first.codeExpiresAt()));
+	}
+
+	/** Parent locks held by the mutation serialize issuance; selectors deliberately have no pagination limit. */
+	public List<UUID> findIdsForUser(UUID userId) { return selectIds("b.user_id=:user", Map.of("user", userId)); }
+	public List<UUID> findIdsForClient(UUID clientId) { return selectIds("b.client_id=:client", Map.of("client", clientId.toString())); }
+	public List<UUID> findIdsForResource(UUID resourceId) { return selectIds("b.resource_id=:resource", Map.of("resource", resourceId)); }
+	public List<UUID> findIdsForUserResource(UUID userId, UUID resourceId) { return selectIds("b.user_id=:user AND b.resource_id=:resource", Map.of("user", userId, "resource", resourceId)); }
+	public List<UUID> findIdsForRole(UUID roleId) {
+		return selectIds("EXISTS (SELECT 1 FROM iam_authorization_binding_role r WHERE r.authorization_id=b.authorization_id AND r.role_id=:role)"
+				+ " OR EXISTS (SELECT 1 FROM iam_user_role a WHERE a.user_id=b.user_id AND a.resource_id=b.resource_id AND a.role_id=:role)", Map.of("role", roleId));
+	}
+
+	public boolean isWritableReadCommittedTransaction() {
+		return this.jdbc.sql("SELECT current_setting('transaction_isolation')='read committed' AND current_setting('transaction_read_only')='off'").query(Boolean.class).single();
+	}
+
+	private List<UUID> selectIds(String predicate, Map<String, ?> parameters) {
+		return this.jdbc.sql("SELECT b.authorization_id FROM iam_authorization_binding b WHERE " + predicate + " ORDER BY b.authorization_id")
+				.params(parameters).query((row, index) -> UUID.fromString(row.getString(1))).list();
 	}
 
 	public void insert(IdentityAuthorizationBinding binding) {

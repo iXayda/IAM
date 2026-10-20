@@ -99,6 +99,7 @@ public final class IdentityRefreshTokenProvider implements AuthenticationProvide
 		if (access.filter(original.session().access()::equals).isEmpty()) { throw failure("invalid_grant"); }
 		var locked = this.authorizations.lockForUse(original.id()).orElseThrow(() -> failure("invalid_grant"));
 		if (this.bindings.findByAuthorization(locked.authorization()).filter(original::equals).isEmpty()) { throw failure("invalid_grant"); }
+		if (IdentityAuthorizations.isRevoked(locked.authorization())) { throw failure("invalid_grant"); }
 		var context = this.refresh.lockForUse(locked, request.getRefreshToken()).orElseThrow(() -> failure("invalid_grant"));
 		if (context.requested().consumedAt() != null) {
 			this.refresh.quarantine(locked);

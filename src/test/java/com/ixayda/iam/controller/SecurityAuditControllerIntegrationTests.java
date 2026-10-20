@@ -131,6 +131,28 @@ class SecurityAuditControllerIntegrationTests extends BrowserHttpTestSupport {
 	}
 
 	@Test
+	void revocationAuditQueriesRetainBothTheAffectedUserAndTheTypedApplicationGrant() throws Exception {
+		var factor = administrator();
+		UUID userId = this.users.findByUsername("alice").orElseThrow().id(), authorizationId = UUID.randomUUID();
+		this.jdbc.sql("""
+				INSERT INTO iam_security_audit(id,action,outcome,target_user_id,actor,source,correlation_id,target_type,target_id)
+				VALUES (:id,'authorization_revoked','success',:user,:actor,:source,:correlation,'authorization',:authorization)
+				""").param("id", UUID.randomUUID()).param("user", userId).param("actor", SYSTEM.actor()).param("source", SOURCE)
+				.param("correlation", UUID.randomUUID()).param("authorization", authorizationId).update();
+		try (var client = client()) {
+			String session = elevate(client, login(client, "alice"), factor);
+			var result = get(client, PATH + "?action=AUTHORIZATION_REVOKED&targetUserId=" + userId, session);
+			assertThat(result.statusCode()).isEqualTo(200);
+			List<Map<String, Object>> items = JsonPath.read(result.body(), "$.items");
+			assertThat(items).singleElement().satisfies(item -> assertThat(item)
+					.containsEntry("action", "AUTHORIZATION_REVOKED").containsEntry("targetUserId", userId.toString())
+					.containsEntry("targetType", "AUTHORIZATION").containsEntry("targetId", authorizationId.toString()));
+			assertThat(result.body()).doesNotContain(PASSWORD, factor.secret(), "alice");
+			assertSecurityHeaders(result);
+		}
+	}
+
+	@Test
 	void defaultAndMaximumPagesAreBoundedAndEmptyOrLastPagesHaveNoContinuation() throws Exception {
 		var factor = administrator();
 		for (int i = 1; i <= 102; i++) { seed(new UUID(0, i), RECORDED); }

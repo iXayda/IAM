@@ -78,6 +78,7 @@ public class IdentityAccessTokens {
 		if (current.isEmpty()) { return Optional.empty(); }
 		var authorization = current.orElseThrow().authorization();
 		if (this.bindings.findByAuthorization(authorization).filter(original::equals).isEmpty()) { return Optional.empty(); }
+		if (IdentityAuthorizations.isRevoked(authorization)) { return Optional.empty(); }
 		var bearer = authorization.getAccessToken();
 		if (bearer == null || !bearer.isActive() || !bearer.getToken().getTokenValue().equals(token)) { return Optional.empty(); }
 		var code = authorization.getToken(OAuth2AuthorizationCode.class);

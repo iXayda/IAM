@@ -103,6 +103,7 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 		var locked = this.authorizations.lockForUse(original.id()).orElseThrow(() -> failure("invalid_grant"));
 		if (this.bindings.findByAuthorization(locked.authorization()).filter(original::equals).isEmpty()) { throw failure("invalid_grant"); }
 		if (!this.bindings.matchesExchangeProof(locked.authorization(), request.getCode(), request.getRedirectUri(), verifier)) { throw failure("invalid_grant"); }
+		if (IdentityAuthorizations.isRevoked(locked.authorization())) { throw failure("invalid_grant"); }
 		var code = locked.authorization().getToken(OAuth2AuthorizationCode.class);
 		if (code.isInvalidated()) {
 			this.refresh.quarantine(locked);
