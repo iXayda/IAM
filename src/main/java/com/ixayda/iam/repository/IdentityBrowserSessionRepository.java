@@ -41,6 +41,20 @@ public class IdentityBrowserSessionRepository {
 				""").param("id", id).param("principal", userId.toString()).query(Long.class).optional();
 	}
 
+	/** Read only after locking the session; a fresh statement observes any change committed during the wait. */
+	public Optional<AuthorizationSession> authorizationSession(String id, UUID userId) {
+		return this.jdbc.sql("""
+				SELECT s.primary_id,s.expiry_time,
+				    (SELECT a.attribute_bytes FROM iam_browser_session_attributes a
+				        WHERE a.session_primary_id=s.primary_id AND a.attribute_name='iam.authenticatedAt') AS authenticated_at,
+				    (SELECT a.attribute_bytes FROM iam_browser_session_attributes a
+				        WHERE a.session_primary_id=s.primary_id AND a.attribute_name='iam.credentialVersion') AS credential_version
+				FROM iam_browser_session s WHERE s.session_id=:id AND s.principal_name=:principal
+				""").param("id", id).param("principal", userId.toString())
+				.query((row, index) -> new AuthorizationSession(UUID.fromString(row.getString("primary_id")), row.getLong("expiry_time"),
+						row.getBytes("authenticated_at"), row.getBytes("credential_version"))).optional();
+	}
+
 	public boolean isBeforeExpiry(long expiryTime) {
 		return this.jdbc.sql("SELECT :expiry > extract(epoch FROM clock_timestamp()) * 1000")
 				.param("expiry", expiryTime).query(Boolean.class).single();
@@ -82,6 +96,11 @@ public class IdentityBrowserSessionRepository {
 		if (remaining != 0) {
 			throw new IllegalStateException("Browser sessions were not revoked");
 		}
+	}
+
+	public record AuthorizationSession(UUID id, long idleExpiry, byte[] authenticatedAt, byte[] credentialVersion) {
+		@Override
+		public String toString() { return "AuthorizationSession[REDACTED]"; }
 	}
 
 }
