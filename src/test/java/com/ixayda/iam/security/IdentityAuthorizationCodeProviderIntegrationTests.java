@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.ixayda.iam.PostgreSqlTestConfiguration;
 import com.ixayda.iam.model.IdentityClientConfiguration;
+import com.ixayda.iam.model.IdentityRefreshFamily;
 import com.ixayda.iam.model.IdentitySigningKey;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.service.IdentityApplicationRoles;
@@ -27,6 +28,7 @@ import com.ixayda.iam.service.IdentityAuthorizationSessions;
 import com.ixayda.iam.service.IdentityBrowserSessions;
 import com.ixayda.iam.service.IdentityClients;
 import com.ixayda.iam.service.IdentityProtocolClients;
+import com.ixayda.iam.service.IdentityRefreshTokens;
 import com.ixayda.iam.service.IdentityResources;
 import com.ixayda.iam.service.IdentityResourceRoles;
 import com.ixayda.iam.service.IdentitySigningKeys;
@@ -98,6 +100,7 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 	@Autowired private IdentityAuthorizations authorizations;
 	@Autowired private IdentityAuthorizationBindings bindings;
 	@Autowired private IdentityProtocolClients protocol;
+	@Autowired private IdentityRefreshTokens refresh;
 	@Autowired private IdentityClients clients;
 	@Autowired private IdentityUsers users;
 	@Autowired private IdentityUserSetups setups;
@@ -144,14 +147,14 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 		this.authenticatedAt = System.currentTimeMillis() - 2000;
 		this.sessionId = browserSession(this.userId, this.authenticatedAt);
 		this.requests = new IdentityAuthorizationRequestProvider(this.protocol, this.sessions, this.bindings, this.audits, this.transactions);
-		this.provider = new IdentityAuthorizationCodeProvider(this.applications, this.sessions, this.authorizations, this.bindings, this.keys, this.audits, this.transactions);
+		this.provider = new IdentityAuthorizationCodeProvider(this.applications, this.sessions, this.authorizations, this.bindings, this.refresh, this.keys, this.audits, this.transactions);
 		serverContext("https://iam.example");
 	}
 
 	@AfterEach
 	void removeFaultsAndReferences() {
 		AuthorizationServerContextHolder.resetContext();
-		for (String table : List.of("oauth2_authorization", "iam_authorization_record", "iam_authorization_token_index", "iam_security_audit")) {
+		for (String table : List.of("oauth2_authorization", "iam_authorization_record", "iam_authorization_token_index", "iam_security_audit", "iam_refresh_family", "iam_refresh_history")) {
 			this.jdbc.sql("DROP TRIGGER IF EXISTS exchange_test_fault ON " + table).update();
 		}
 		this.jdbc.sql("DROP FUNCTION IF EXISTS exchange_test_fault()").update();
@@ -185,6 +188,17 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 		assertThat(id.getJWTID()).isNotEqualTo(access.getJWTID()); assertThat(id.getClaims()).doesNotContainKeys("roles", "scope", "sid");
 		assertThat(Duration.between(result.getRefreshToken().getIssuedAt(), result.getRefreshToken().getExpiresAt())).isEqualTo(Duration.ofDays(7));
 		assertThat(java.util.Base64.getUrlDecoder().decode(result.getRefreshToken().getTokenValue())).hasSize(96);
+		var family = this.refresh.findByAuthorization(stored.authorization()).orElseThrow();
+		var history = this.refresh.findByToken(result.getRefreshToken().getTokenValue()).orElseThrow();
+		assertThat(family.authorizationId().toString()).isEqualTo(stored.authorization().getId());
+		assertThat(family.version()).isEqualTo(1); assertThat(family.generation()).isZero(); assertThat(family.status()).isEqualTo(IdentityRefreshFamily.Status.ACTIVE);
+		assertThat(family.currentDigest()).isEqualTo(history.digest()); assertThat(history.generation()).isZero(); assertThat(history.parentDigest()).isNull(); assertThat(history.consumedAt()).isNull();
+		assertThat(family.scopes()).containsExactlyInAnyOrder("openid", "profile", "offline_access");
+		assertThat(family.startedAt()).isEqualTo(result.getRefreshToken().getIssuedAt()); assertThat(family.idleExpiresAt()).isEqualTo(result.getRefreshToken().getExpiresAt());
+		assertThat(family.absoluteExpiresAt()).isEqualTo(this.bindings.findByAuthorization(stored.authorization()).orElseThrow().issuedAt().plus(30, ChronoUnit.DAYS));
+		assertThat(history.digest()).isNotEqualTo(this.jdbc.sql("SELECT digest FROM iam_authorization_token_index WHERE token_type='refresh_token'").query(String.class).single());
+		assertThat(this.refresh.findByToken(code)).isEmpty();
+		assertThat(this.jdbc.sql("SELECT * FROM iam_refresh_history").query().singleRow().toString()).doesNotContain(result.getRefreshToken().getTokenValue(), this.secret, VERIFIER);
 		assertThat(result.getPrincipal()).isInstanceOfSatisfying(OAuth2ClientAuthenticationToken.class, client -> {
 			assertThat(client.getCredentials()).isNull(); assertThat(client.getDetails()).isNull();
 		});
@@ -209,6 +223,9 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 		String code = code(Set.of("openid", "profile"));
 		var result = exchange(request(code, authenticatedClient(code)));
 		assertThat(result.getRefreshToken()).isNull(); assertThat(stored(code).authorization().getRefreshToken()).isNull();
+		assertThat(this.refresh.findByAuthorization(stored(code).authorization())).isEmpty();
+		assertThat(this.jdbc.sql("SELECT count(*) FROM iam_refresh_family").query(Long.class).single()).isZero();
+		assertThat(this.jdbc.sql("SELECT count(*) FROM iam_refresh_history").query(Long.class).single()).isZero();
 		assertThat(verified(result.getAccessToken().getTokenValue(), "at+jwt").getStringClaim("scope")).isEqualTo("openid profile");
 	}
 
@@ -311,6 +328,9 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 		if (source.equals("expired-source")) { this.jdbc.sql("UPDATE iam_browser_session SET expiry_time=0 WHERE session_id=:id").param("id", this.sessionId).update(); }
 		rejection(request, "invalid_grant");
 		assertRevoked(code); assertThat(stored(code).version()).isEqualTo(3);
+		assertThat(this.refresh.findByAuthorization(stored(code).authorization())).get().satisfies(family -> {
+			assertThat(family.status()).isEqualTo(IdentityRefreshFamily.Status.QUARANTINED); assertThat(family.version()).isEqualTo(2); assertThat(family.generation()).isZero();
+		});
 		assertThat(tokenAudits()).extracting(event -> event.get("action")).containsExactly("tokens_issued", "authorization_code_replayed");
 		assertThat(tokenAudits().getLast().get("outcome")).isEqualTo("failure");
 	}
@@ -353,7 +373,7 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "native-suppressed", "native-altered", "revision-suppressed", "index-suppressed", "audit-suppressed", "deferred", "audit-unavailable" })
+	@ValueSource(strings = { "native-suppressed", "native-altered", "revision-suppressed", "index-suppressed", "audit-suppressed", "deferred", "audit-unavailable", "family-suppressed", "family-altered", "history-suppressed", "history-altered", "family-deferred" })
 	void partialWritesMandatoryAuditAndCommitFailuresDoNotPublishTokensOrConsumeTheCode(String failure) {
 		String code = code(Set.of("openid", "offline_access")); var request = request(code, authenticatedClient(code));
 		switch (failure) {
@@ -363,6 +383,11 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 			case "index-suppressed" -> fault("iam_authorization_token_index", "BEFORE INSERT", "IF NEW.token_type='access_token' THEN RETURN NULL; END IF; RETURN NEW;", false);
 			case "audit-suppressed" -> fault("iam_security_audit", "BEFORE INSERT", "IF NEW.action='tokens_issued' THEN RETURN NULL; END IF; RETURN NEW;", false);
 			case "audit-unavailable" -> fault("iam_security_audit", "BEFORE INSERT", "RAISE EXCEPTION 'isolated exchange audit fault';", false);
+			case "family-suppressed" -> fault("iam_refresh_family", "BEFORE INSERT", "RETURN NULL;", false);
+			case "family-altered" -> fault("iam_refresh_family", "BEFORE INSERT", "NEW.version=NEW.version+1; RETURN NEW;", false);
+			case "history-suppressed" -> fault("iam_refresh_history", "BEFORE INSERT", "RETURN NULL;", false);
+			case "history-altered" -> fault("iam_refresh_history", "BEFORE INSERT", "NEW.expires_at=NEW.expires_at-INTERVAL '1 second'; RETURN NEW;", false);
+			case "family-deferred" -> fault("iam_refresh_family", "AFTER INSERT", "RAISE EXCEPTION 'isolated exchange commit fault';", true);
 			default -> fault("oauth2_authorization", "AFTER UPDATE", "RAISE EXCEPTION 'isolated exchange commit fault';", true);
 		}
 		rejection(request, "server_error"); assertUnconsumed(code);
@@ -375,6 +400,9 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 		fault("iam_security_audit", "BEFORE INSERT", "IF NEW.action='authorization_code_replayed' THEN RETURN NULL; END IF; RETURN NEW;", false);
 		rejection(request, "server_error");
 		assertThat(stored(code).version()).isEqualTo(2); assertThat(stored(code).authorization().getAccessToken().isActive()).isTrue();
+		assertThat(this.refresh.findByAuthorization(stored(code).authorization())).get().satisfies(family -> {
+			assertThat(family.status()).isEqualTo(IdentityRefreshFamily.Status.ACTIVE); assertThat(family.version()).isEqualTo(1);
+		});
 		this.jdbc.sql("DROP TRIGGER exchange_test_fault ON iam_security_audit").update();
 		rejection(request, "invalid_grant"); assertRevoked(code);
 	}
@@ -442,6 +470,85 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 		assertThatThrownBy(() -> repeatable.execute(tx -> this.authorizations.lockForUse(UUID.fromString(stored(code).authorization().getId())))).isInstanceOf(IllegalStateException.class);
 	}
 
+	@ParameterizedTest
+	@ValueSource(strings = { "status", "scope", "idle-expiry" })
+	void queryableFamilyChangesCannotReplaceItsEncryptedNativeBounds(String changed) {
+		String code = code(Set.of("openid", "profile", "offline_access")); exchange(request(code, authenticatedClient(code)));
+		var authorization = stored(code).authorization();
+		this.jdbc.sql("ALTER TABLE iam_refresh_family DISABLE TRIGGER iam_refresh_family_protection").update();
+		try {
+			switch (changed) {
+				case "status" -> this.jdbc.sql("UPDATE iam_refresh_family SET version=version+1,status='quarantined'").update();
+				case "scope" -> this.jdbc.sql("UPDATE iam_refresh_family SET version=version+1,scopes='offline_access,openid'").update();
+				default -> this.jdbc.sql("UPDATE iam_refresh_family SET version=version+1,idle_expires_at=idle_expires_at-INTERVAL '1 second'").update();
+			}
+			assertThatIllegalStateException().isThrownBy(() -> this.refresh.findByAuthorization(authorization)).withMessage("Refresh family does not match protected state");
+		}
+		finally { this.jdbc.sql("ALTER TABLE iam_refresh_family ENABLE TRIGGER iam_refresh_family_protection").update(); }
+	}
+
+	@Test
+	void aSpentHistoryTimestampWithoutAValidSealCannotChangeTheMeaningOfATokenLookup() {
+		String code = code(Set.of("openid", "offline_access")); var result = exchange(request(code, authenticatedClient(code)));
+		this.jdbc.sql("UPDATE iam_refresh_history SET consumed_at=clock_timestamp(),seal=:seal").param("seal", "0".repeat(64)).update();
+		assertThatIllegalStateException().isThrownBy(() -> this.refresh.findByToken(result.getRefreshToken().getTokenValue()))
+				.withMessage("Refresh history does not match protected state");
+		assertThatIllegalStateException().isThrownBy(() -> this.refresh.findByAuthorization(stored(code).authorization()))
+				.withMessage("Refresh history does not match protected state");
+	}
+
+	@Test
+	void anEncryptedNativeRecordCannotOmitItsExistingFamilyMetadata() {
+		String code = code(Set.of("openid", "offline_access")); var request = request(code, authenticatedClient(code)); exchange(request);
+		var current = stored(code);
+		var altered = this.authorizations.save(OAuth2Authorization.from(current.authorization()).attributes(attributes -> attributes.remove("iam.refreshFamily")).build(), current.version());
+		assertThatIllegalStateException().isThrownBy(() -> this.refresh.findByAuthorization(altered.authorization())).withMessage("Refresh family does not match protected state");
+		rejection(request, "server_error"); assertThat(stored(code).version()).isEqualTo(altered.version());
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "family", "history" })
+	void refreshReplayEvidenceCannotBeDeletedBeforeItsAbsoluteDetectionWindow(String table) {
+		String code = code(Set.of("openid", "offline_access")); exchange(request(code, authenticatedClient(code)));
+		assertThatThrownBy(() -> this.jdbc.sql("DELETE FROM iam_refresh_" + table).update()).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+		assertThat(this.refresh.findByAuthorization(stored(code).authorization())).isPresent();
+	}
+
+	@Test
+	void databaseConstraintsRejectSkippedGenerationsUnspentParentsAndMultipleSuccessors() {
+		String code = code(Set.of("openid", "offline_access")); exchange(request(code, authenticatedClient(code)));
+		var family = this.refresh.findByAuthorization(stored(code).authorization()).orElseThrow();
+		assertThatThrownBy(() -> insertUntrustedChild(family, "1".repeat(64), 1)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+		this.jdbc.sql("UPDATE iam_refresh_history SET consumed_at=clock_timestamp(),seal=:seal").param("seal", "0".repeat(64)).update();
+		assertThatThrownBy(() -> insertUntrustedChild(family, "2".repeat(64), 2)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+		assertThat(insertUntrustedChild(family, "1".repeat(64), 1)).isEqualTo(1);
+		assertThatThrownBy(() -> insertUntrustedChild(family, "3".repeat(64), 1)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "suppressed", "altered", "deferred" })
+	void aFamilyQuarantineWriteFailureCannotCommitPartialNativeRevocation(String failure) {
+		String code = code(Set.of("openid", "offline_access")); var request = request(code, authenticatedClient(code)); exchange(request);
+		switch (failure) {
+			case "suppressed" -> fault("iam_refresh_family", "BEFORE UPDATE", "RETURN NULL;", false);
+			case "altered" -> fault("iam_refresh_family", "BEFORE UPDATE", "NEW.updated_at=NEW.updated_at+INTERVAL '1 millisecond'; RETURN NEW;", false);
+			default -> fault("iam_refresh_family", "AFTER UPDATE", "RAISE EXCEPTION 'isolated exchange commit fault';", true);
+		}
+		rejection(request, "server_error");
+		assertThat(stored(code).version()).isEqualTo(2); assertThat(stored(code).authorization().getAccessToken().isActive()).isTrue();
+		assertThat(this.refresh.findByAuthorization(stored(code).authorization())).get().satisfies(family -> {
+			assertThat(family.status()).isEqualTo(IdentityRefreshFamily.Status.ACTIVE); assertThat(family.version()).isEqualTo(1);
+		});
+	}
+
+	@Test
+	void codeReplayWithoutAnOfflineGrantStillRevokesAccessAndIdTokens() {
+		String code = code(Set.of("openid")); var request = request(code, authenticatedClient(code)); exchange(request);
+		rejection(request, "invalid_grant");
+		assertThat(stored(code).authorization().getAccessToken().isInvalidated()).isTrue(); assertThat(stored(code).authorization().getToken(OidcIdToken.class).isInvalidated()).isTrue();
+		assertThat(this.refresh.findByAuthorization(stored(code).authorization())).isEmpty();
+	}
+
 	private String concurrentExchange(OAuth2AuthorizationCodeAuthenticationToken request, CountDownLatch start) {
 		awaitLatch(start); serverContext("https://iam.example");
 		try { exchange(request); return "success"; }
@@ -495,6 +602,8 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 		var stored = stored(code); assertThat(stored.version()).isEqualTo(1);
 		assertThat(stored.authorization().getToken(OAuth2AuthorizationCode.class).isInvalidated()).isFalse();
 		assertThat(stored.authorization().getAccessToken()).isNull(); assertThat(stored.authorization().getRefreshToken()).isNull(); assertThat(stored.authorization().getToken(OidcIdToken.class)).isNull();
+		assertThat(this.jdbc.sql("SELECT count(*) FROM iam_refresh_family").query(Long.class).single()).isZero();
+		assertThat(this.jdbc.sql("SELECT count(*) FROM iam_refresh_history").query(Long.class).single()).isZero();
 	}
 	private void assertRevoked(String code) {
 		var stored = stored(code).authorization(); assertThat(stored.getAccessToken().isInvalidated()).isTrue();
@@ -518,6 +627,12 @@ class IdentityAuthorizationCodeProviderIntegrationTests {
 	private void sessionAttribute(String name, long value) {
 		this.jdbc.sql("UPDATE iam_browser_session_attributes SET attribute_bytes=:value WHERE attribute_name=:name AND session_primary_id=(SELECT primary_id FROM iam_browser_session WHERE session_id=:id)")
 				.param("value", SerializationUtils.serialize(value)).param("name", name).param("id", this.sessionId).update();
+	}
+	private int insertUntrustedChild(IdentityRefreshFamily family, String digest, long generation) {
+		return this.jdbc.sql("""
+				INSERT INTO iam_refresh_history(digest,authorization_id,generation,parent_digest,issued_at,expires_at,seal)
+				SELECT :digest,authorization_id,:generation,current_digest,clock_timestamp(),idle_expires_at,:seal FROM iam_refresh_family WHERE authorization_id=:id
+				""").param("digest", digest).param("generation", generation).param("seal", "f".repeat(64)).param("id", family.authorizationId().toString()).update();
 	}
 	private List<Map<String, Object>> tokenAudits() { return this.jdbc.sql("SELECT * FROM iam_security_audit WHERE action IN ('tokens_issued','authorization_code_replayed','token_request_rejected') ORDER BY recorded_at,id").query().listOfRows(); }
 	private void fault(String table, String timing, String body, boolean deferred) {

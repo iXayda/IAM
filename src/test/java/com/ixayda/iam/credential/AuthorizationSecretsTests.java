@@ -53,6 +53,32 @@ class AuthorizationSecretsTests {
 		assertThat(new AuthorizationSecrets(lookupChanged.toString()).digest(value)).isNotEqualTo(secrets.digest(value));
 	}
 
+	@Test
+	void refreshDigestsAndHistorySealsUseDistinctPurposesAndSurviveKeyReload() throws Exception {
+		Path path = key(64); var secrets = new AuthorizationSecrets(path.toString()); var reloaded = new AuthorizationSecrets(path.toString());
+		String value = "refresh-proof-original-value";
+		String digest = secrets.refreshDigest(value); String seal = secrets.refreshHistorySeal(value);
+		assertThat(digest).matches("[0-9a-f]{64}").isEqualTo(reloaded.refreshDigest(value)).isNotEqualTo(secrets.digest(value)).isNotEqualTo(seal);
+		assertThat(secrets.verifiesRefreshHistory(value, seal)).isTrue(); assertThat(reloaded.verifiesRefreshHistory(value, seal)).isTrue();
+		assertThat(secrets.verifiesRefreshHistory(value + "changed", seal)).isFalse();
+		assertThat(secrets.verifiesRefreshHistory(value, digest)).isFalse(); assertThat(secrets.verifiesRefreshHistory(value, null)).isFalse();
+		assertThat(secrets.verifiesRefreshHistory(value, "invalid-seal")).isFalse();
+		assertThat(new AuthorizationSecrets(key(64).toString()).verifiesRefreshHistory(value, seal)).isFalse();
+		assertThat(digest + seal).doesNotContain(value);
+	}
+
+	@Test
+	void refreshProtectionCannotOperateWithMissingKeysOrUnboundedInputs() throws Exception {
+		var absent = new AuthorizationSecrets("");
+		assertThatThrownBy(() -> absent.refreshDigest("token")).isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(() -> absent.refreshHistorySeal("history")).isInstanceOf(IllegalStateException.class);
+		var secrets = new AuthorizationSecrets(key(64).toString());
+		assertThatThrownBy(() -> secrets.refreshDigest("x".repeat(16_385))).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> secrets.refreshHistorySeal("x".repeat(4097))).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> secrets.refreshDigest("\ud800")).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> secrets.refreshHistorySeal("\ud800")).isInstanceOf(IllegalArgumentException.class);
+	}
+
 	@ParameterizedTest
 	@ValueSource(ints = { 0, 32, 63, 65, 1024 })
 	void filesMustContainBothCompleteIndependentKeys(int bytes) throws Exception {

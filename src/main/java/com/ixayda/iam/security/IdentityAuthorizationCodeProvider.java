@@ -13,6 +13,7 @@ import com.ixayda.iam.service.IdentityAuthorizationBindings;
 import com.ixayda.iam.service.IdentityAuthorizations;
 import com.ixayda.iam.service.IdentityAuthorizationSessions;
 import com.ixayda.iam.service.IdentityProtocolClients;
+import com.ixayda.iam.service.IdentityRefreshTokens;
 import com.ixayda.iam.service.IdentitySigningKeys;
 import com.ixayda.iam.service.SecurityAudits;
 
@@ -45,17 +46,20 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 	private final IdentityAuthorizationSessions sessions;
 	private final IdentityAuthorizations authorizations;
 	private final IdentityAuthorizationBindings bindings;
+	private final IdentityRefreshTokens refresh;
 	private final IdentityJwtEncoder encoder;
 	private final SecurityAudits audits;
 	private final TransactionTemplate transaction;
 
 	public IdentityAuthorizationCodeProvider(IdentityApplicationRoles applications, IdentityAuthorizationSessions sessions,
-			IdentityAuthorizations authorizations, IdentityAuthorizationBindings bindings, IdentitySigningKeys keys,
+			IdentityAuthorizations authorizations, IdentityAuthorizationBindings bindings, IdentityRefreshTokens refresh, IdentitySigningKeys keys,
 			SecurityAudits audits, PlatformTransactionManager manager) {
 		Assert.notNull(applications, "Application projection is required"); Assert.notNull(sessions, "Source sessions are required");
 		Assert.notNull(authorizations, "Protected authorizations are required"); Assert.notNull(bindings, "Original bounds are required");
+		Assert.notNull(refresh, "Refresh families are required");
 		Assert.notNull(keys, "Signing keys are required"); Assert.notNull(audits, "Audits are required"); Assert.notNull(manager, "Transactions are required");
 		this.applications = applications; this.sessions = sessions; this.authorizations = authorizations; this.bindings = bindings;
+		this.refresh = refresh;
 		this.encoder = new IdentityJwtEncoder(keys); this.audits = audits;
 		this.transaction = new TransactionTemplate(manager);
 		this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -100,7 +104,7 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 		if (!this.bindings.matchesExchangeProof(locked.authorization(), request.getCode(), request.getRedirectUri(), verifier)) { throw failure("invalid_grant"); }
 		var code = locked.authorization().getToken(OAuth2AuthorizationCode.class);
 		if (code.isInvalidated()) {
-			this.authorizations.save(invalidate(locked.authorization()), locked.version());
+			this.refresh.quarantine(locked);
 			this.audits.recordFailure(Action.AUTHORIZATION_CODE_REPLAYED, original.session().access().userId(), audit);
 			return new Decision(null, true);
 		}
@@ -159,15 +163,6 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 		return issuer;
 	}
 
-	private static OAuth2Authorization invalidate(OAuth2Authorization authorization) {
-		var revoked = OAuth2Authorization.from(authorization);
-		var code = authorization.getToken(OAuth2AuthorizationCode.class); if (code != null) { revoked.invalidate(code.getToken()); }
-		if (authorization.getAccessToken() != null) { revoked.invalidate(authorization.getAccessToken().getToken()); }
-		if (authorization.getRefreshToken() != null) { revoked.invalidate(authorization.getRefreshToken().getToken()); }
-		var id = authorization.getToken(OidcIdToken.class); if (id != null) { revoked.invalidate(id.getToken()); }
-		return revoked.build();
-	}
-
 	private OAuth2AuthenticationException rejected(String code, UUID subject, SecurityAuditContext audit) {
 		try { this.transaction.executeWithoutResult(status -> this.audits.recordFailure(Action.TOKEN_REQUEST_REJECTED, subject, audit)); }
 		catch (RuntimeException ex) { return failure("server_error"); }
@@ -200,7 +195,8 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 					|| authorization.getToken(OidcIdToken.class) == null || !authorization.getToken(OidcIdToken.class).isActive()
 					|| this.binding.scopes().contains("offline_access") != (authorization.getRefreshToken() != null)
 					|| authorization.getRefreshToken() != null && !authorization.getRefreshToken().isActive()) { throw new IllegalStateException("Exchange result is invalid"); }
-			this.saved = IdentityAuthorizationCodeProvider.this.authorizations.save(authorization, this.original.version());
+			this.saved = authorization.getRefreshToken() == null ? IdentityAuthorizationCodeProvider.this.authorizations.save(authorization, this.original.version())
+					: IdentityAuthorizationCodeProvider.this.refresh.initialize(authorization, this.original.version(), this.binding);
 		}
 		void requireResult(OAuth2AccessTokenAuthenticationToken response) {
 			if (response == null || this.saved == null || !this.saved.authorization().getAccessToken().getToken().equals(response.getAccessToken())
