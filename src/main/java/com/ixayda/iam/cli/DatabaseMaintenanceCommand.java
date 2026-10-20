@@ -2,6 +2,7 @@ package com.ixayda.iam.cli;
 
 import com.ixayda.iam.service.IdentitySigningKeys;
 import com.ixayda.iam.service.IdentityAuthorizationProtection;
+import com.ixayda.iam.service.IdentityProtocolCleanup;
 
 import org.flywaydb.core.Flyway;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -13,8 +14,8 @@ public final class DatabaseMaintenanceCommand {
 	private DatabaseMaintenanceCommand() { }
 
 	public static void run(Class<?> application, String[] args) {
-		if (args.length != 1 || !("migrate".equals(args[0]) || "initialize-signing-key".equals(args[0]) || "initialize-authorization-key".equals(args[0]))) {
-			throw new IllegalArgumentException("Database maintenance accepts migrate, initialize-signing-key, initialize-authorization-key without arguments");
+		if (args.length != 1 || !("migrate".equals(args[0]) || "initialize-signing-key".equals(args[0]) || "initialize-authorization-key".equals(args[0]) || "preview-protocol-cleanup".equals(args[0]) || "cleanup-protocol-state".equals(args[0]))) {
+			throw new IllegalArgumentException("Database maintenance accepts migrate, initialize-signing-key, initialize-authorization-key, preview-protocol-cleanup or cleanup-protocol-state without arguments");
 		}
 		try (var context = MaintenanceApplication.start(application, args[0])) {
 			execute(context, args[0]);
@@ -37,6 +38,14 @@ public final class DatabaseMaintenanceCommand {
 		else if ("initialize-authorization-key".equals(command)) {
 			var keyId = context.getBean(IdentityAuthorizationProtection.class).initializeForInstallation();
 			System.out.println("Authorization key ready: " + keyId);
+		}
+		else if ("preview-protocol-cleanup".equals(command) || "cleanup-protocol-state".equals(command)) {
+			var environment = context.getEnvironment();
+			var limits = new IdentityProtocolCleanup.Limits(environment.getProperty("iam.protocol-cleanup.batch-size", Integer.class, 100),
+					environment.getProperty("iam.protocol-cleanup.maximum", Integer.class, 1000), environment.getProperty("iam.protocol-cleanup.seconds", Integer.class, 30));
+			var cleanup = context.getBean(IdentityProtocolCleanup.class);
+			var counts = "preview-protocol-cleanup".equals(command) ? cleanup.preview(limits) : cleanup.cleanUp(limits);
+			System.out.printf("%s: authorizations=%d interactions=%d%n", command, counts.authorizations(), counts.interactions());
 		}
 		else { throw new IllegalArgumentException("Unknown database maintenance command"); }
 	}

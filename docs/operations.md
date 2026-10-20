@@ -116,6 +116,27 @@ java -jar target/iam.jar rotate-signing-key
 
 两个命令均使用本指南的 `java -jar` 入口及受控交互终端。保护文件本身也失陷时，先按事件范围隔离受影响历史材料并更换文件，不仅处理当前密钥。
 
+## 清理过期协议状态
+
+用数据库所有者连接操作已迁移的数据库，先预览再清理：
+
+```bash
+java -jar target/iam.jar preview-protocol-cleanup
+java -jar target/iam.jar cleanup-protocol-state
+```
+
+两个命令固定关闭自动迁移，不删除安全审计。只清理越过授权码、Token、刷新家族的最后有效时间及额外 330 秒保留窗口的授权，以及已过期交互；父 Refresh Token 已消费不代表家族可删除。
+
+| 配置属性 | 默认值 | 范围 |
+| --- | --- | --- |
+| `iam.protocol-cleanup.batch-size` | 100 | 1–100 |
+| `iam.protocol-cleanup.maximum` | 1000 | 批大小至 10000 |
+| `iam.protocol-cleanup.seconds` | 30 | 1–300 秒 |
+
+需要调整时通过 JVM 系统属性在 `-jar` 前传入，例如 `java -Diam.protocol-cleanup.maximum=200 -jar target/iam.jar preview-protocol-cleanup`。
+
+预览对授权和交互分别限额，不代表全库总数。清理对两类合计限额，跳过繁忙授权，各批独立提交；某批失败回滚该批，之前已提交批次保留。检查结果后可按维护计划再次运行，不通过直接删表绕开重放保护。
+
 ## 授权保护密钥登记
 
 授权保护文件的 64 字节同时决定加密和查询密钥。首次安装时，在迁移完成后、启动 Web 前，由数据库维护身份执行 `initialize-authorization-key`，将文件指纹登记到数据库。首次登记要求尚无授权和交互数据；已有未登记数据时直接拒绝，不提供接管或转换流程。重复执行只接受已登记的同一指纹。运行身份只有读取权限，启动检查均核对此指纹；所有实例使用同一份持久文件。

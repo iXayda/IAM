@@ -40,7 +40,7 @@ public class IamApplication {
 		}
 		if (args.length > 0 && !args[0].startsWith("--")) {
 			switch (args[0]) {
-				case "migrate", "initialize-signing-key", "initialize-authorization-key" ->
+				case "migrate", "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state" ->
 						DatabaseMaintenanceCommand.run(IamApplication.class, args);
 				case "bootstrap-admin" -> AdministratorBootstrapCommand.run(IamApplication.class, args);
 				case "recover-admin-credentials" -> AdministratorCredentialRecoveryCommand.run(IamApplication.class, args);

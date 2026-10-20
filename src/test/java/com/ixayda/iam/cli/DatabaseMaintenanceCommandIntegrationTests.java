@@ -184,7 +184,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key", "bootstrap-admin", "recover-admin", "recover-admin-credentials", "rotate-signing-key", "compromise-signing-key", "recover-signing-key" })
+	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state", "bootstrap-admin", "recover-admin", "recover-admin-credentials", "rotate-signing-key", "compromise-signing-key", "recover-signing-key" })
 	void everyMaintenanceStartupRefusesAnEmptySchemaWithMigrationExplicitlyEnabled(String command) {
 		withSystemProperties(installationProperties(), () -> withSystemProperties(Map.of("spring.flyway.enabled", "true"), () ->
 				assertThatThrownBy(() -> { try (var ignored = MaintenanceApplication.start(IamApplication.class, command)) { fail("Empty schema must be rejected"); } })
@@ -202,13 +202,13 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "migrate", "initialize-signing-key", "initialize-authorization-key" })
+	@ValueSource(strings = { "migrate", "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state" })
 	void maintenanceDispatchRejectsAdditionalArguments(String command) {
 		assertThatIllegalArgumentException().isThrownBy(() -> IamApplication.main(new String[] { command, "--server.port=0" }));
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key" })
+	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state" })
 	void maintenanceRequiresAMigratedSchemaAndNeverRunsFlyway(String command) {
 		withSystemProperties(Map.of("spring.flyway.enabled", "true"), () -> assertThatThrownBy(() -> runCommand(command)).isInstanceOf(RuntimeException.class));
 		assertThat(this.maintenance.sql("SELECT count(*) FROM pg_tables WHERE schemaname='public'").query(Long.class).single()).isZero();
@@ -216,7 +216,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key" })
+	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state" })
 	void maintenanceRejectsPendingMigrationsWithoutChangingSchemaOrSecurityState(String command) {
 		runCommand("migrate");
 		this.maintenance.sql("DELETE FROM flyway_schema_history WHERE installed_rank=(SELECT max(installed_rank) FROM flyway_schema_history)").update();
@@ -276,7 +276,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key" })
+	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state" })
 	void maintenanceRejectsFutureSchemaEvenWhenFlywayIgnoresFutureMigrations(String command) {
 		runCommand("migrate");
 		this.maintenance.sql("""
@@ -315,6 +315,24 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 		withSystemProperties(Map.of("spring.datasource.hikari.connection-init-sql", "SET search_path TO public,prefix"), () -> {
 			try (var ignored = start(true)) { assertThat(this.startedServers).hasValue(1); }
 		});
+	}
+
+	@Test
+	void protocolCleanupCommandsAreOfflineRepeatableAndRejectRestrictedRuntimeCredentials() throws Exception {
+		runCommand("migrate"); var before = this.maintenance.sql("SELECT row_to_json(t)::text FROM iam_admin_bootstrap t").query(String.class).list();
+		runCommand("preview-protocol-cleanup"); runCommand("cleanup-protocol-state"); runCommand("cleanup-protocol-state");
+		assertThat(this.maintenance.sql("SELECT row_to_json(t)::text FROM iam_admin_bootstrap t").query(String.class).list()).isEqualTo(before);
+		assertThat(this.startedServers).hasValue(0); assertThat(count("iam_security_audit")).isZero();
+		applyGrants("public");
+		for (String command : List.of("preview-protocol-cleanup", "cleanup-protocol-state")) {
+			var restricted = installationProperties(); restricted.put("spring.datasource.username", this.runtime); restricted.put("spring.flyway.enabled", "false");
+			withSystemProperties(restricted, () ->
+					assertThatIllegalStateException().isThrownBy(() -> IamApplication.main(new String[] { command })).withMessageContaining("database owner"));
+		}
+		withSystemProperties(Map.of("iam.protocol-cleanup.seconds", "0"), () ->
+				assertThatIllegalArgumentException().isThrownBy(() -> runCommand("cleanup-protocol-state")));
+		withSystemProperties(Map.of("spring.main.web-application-type", "servlet"), () ->
+				assertThatIllegalStateException().isThrownBy(() -> runCommand("cleanup-protocol-state")).withMessageContaining("non-Web"));
 	}
 
 	@Test
