@@ -43,6 +43,8 @@ public final class AuthorizationSecrets {
 		finally { if (bytes != null) { Arrays.fill(bytes, (byte) 0); } }
 	}
 
+	public String keyId() { requireConfigured(); return this.keyId; }
+
 	/** Authenticated terminal projections permit historical grants to be skipped without reading native credentials. */
 	public String revocationSeal(UUID id, UUID userId, UUID clientId, long version) {
 		if (id == null || userId == null || clientId == null || version < 1) { throw new IllegalArgumentException("Revocation identity is invalid"); }

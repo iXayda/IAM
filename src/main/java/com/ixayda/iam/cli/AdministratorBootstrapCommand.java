@@ -11,10 +11,6 @@ import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.TotpAuthenticationContext;
 import com.ixayda.iam.service.IdentityAdministrators;
 
-import org.springframework.boot.WebApplicationType;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.web.context.WebApplicationContext;
-
 /** Explicit local deployment command; credentials are read without echo and never accepted as arguments. */
 public final class AdministratorBootstrapCommand {
 
@@ -24,12 +20,7 @@ public final class AdministratorBootstrapCommand {
 		if (args.length != 1 || !"bootstrap-admin".equals(args[0])) { throw new IllegalArgumentException("bootstrap-admin accepts no command arguments"); }
 		Console console = System.console();
 		if (console == null) { throw new IllegalStateException("Administrator initialization requires an interactive terminal"); }
-		try (var context = new SpringApplicationBuilder(application).web(WebApplicationType.NONE)
-				.initializers(candidate -> {
-					if (candidate instanceof WebApplicationContext) {
-						throw new IllegalStateException("Administrator initialization requires a non-Web application");
-					}
-				}).run()) {
+		try (var context = MaintenanceApplication.start(application, args[0])) {
 			execute(console, context.getBean(IdentityAdministrators.class));
 		}
 	}

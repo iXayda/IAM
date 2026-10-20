@@ -7,10 +7,6 @@ import java.util.UUID;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.service.IdentitySigningKeys;
 
-import org.springframework.boot.WebApplicationType;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.web.context.WebApplicationContext;
-
 /** Maintenance entry point; uses a protected local terminal and maintenance database credentials. */
 public final class SigningKeyRotationCommand {
 
@@ -20,9 +16,7 @@ public final class SigningKeyRotationCommand {
 		if (args.length != 1 || !"rotate-signing-key".equals(args[0])) { throw new IllegalArgumentException("rotate-signing-key accepts no command arguments"); }
 		Console console = System.console();
 		if (console == null) { throw new IllegalStateException("Signing key rotation requires an interactive terminal"); }
-		try (var context = new SpringApplicationBuilder(application).web(WebApplicationType.NONE).initializers(candidate -> {
-			if (candidate instanceof WebApplicationContext) { throw new IllegalStateException("Signing key rotation requires a non-Web application"); }
-		}).run()) {
+		try (var context = MaintenanceApplication.start(application, args[0])) {
 			execute(console, context.getBean(IdentitySigningKeys.class));
 		}
 	}

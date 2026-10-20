@@ -18,7 +18,7 @@
 
 - 每次提交聚焦一个可审阅的行为，实施、对应测试和必要说明一起交付。
 - API 契约变化时，同步更新受影响的控制器、DTO、OpenAPI 和测试；Spring Security 提供的端点也需维护其独立描述，并核对请求编码、CSRF、错误和权限语义。
-- 数据结构修改新增 Flyway 迁移，不改写已交付迁移。
+- 数据结构修改新增 Flyway 迁移，不改写已交付迁移；表和数据库访问变化时检查显式运行授权清单。
 - 业务变更与必要成功审计保持事务原子性，按受影响的行为和风险选择拒绝、重放、并发及故障回滚检查。
 - 沿用现有分层和命名：控制器及安全适配器调用服务，仓储负责持久化，模型不依赖 Spring 或数据库 API。[ArchitectureTests](src/test/java/com/ixayda/iam/ArchitectureTests.java)约束允许的依赖及循环。
 - README 保持简洁、稳定的使用入口；详细操作和设计写入 [文档](docs/README.md)，用户可见变更整理到 [CHANGELOG.md](CHANGELOG.md)。

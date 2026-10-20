@@ -175,6 +175,7 @@ class IdentitySigningStartupIntegrationTests {
 
 	private ConfigurableApplicationContext start(WebApplicationType type, String keyFile, ApplicationListener<WebServerInitializedEvent> listener, boolean lazyInitialization) {
 		var builder = new SpringApplicationBuilder(IamApplication.class).web(type).lazyInitialization(lazyInitialization).properties(Map.ofEntries(
+				Map.entry("iam.database.restricted-runtime", false),
 				Map.entry("spring.datasource.url", this.postgres.getJdbcUrl()), Map.entry("spring.datasource.username", this.postgres.getUsername()),
 				Map.entry("spring.datasource.password", this.postgres.getPassword()), Map.entry("spring.datasource.hikari.schema", this.schema),
 				Map.entry("spring.flyway.schemas", this.schema), Map.entry("spring.flyway.default-schema", this.schema),

@@ -80,6 +80,7 @@ class IdentityProtocolStartupIntegrationTests {
 
 	@Test
 	void validConfigurationStartsProtocolAndInvalidWebSettingsDoNotBlockOfflineAdministration() {
+		initializeProtection();
 		var started = new AtomicInteger();
 		try (var application = start(WebApplicationType.SERVLET, "https://iam.example", this.signing.toString(), this.authorization.toString(), true, started)) {
 			assertThat(application.getBean("protocolSecurity")).isNotNull(); assertThat(started).hasValue(1);
@@ -106,10 +107,17 @@ class IdentityProtocolStartupIntegrationTests {
 
 	@Test
 	void sameOriginIdentityFrontendActivatesTheBoundAuthorizationWorkflow() {
+		initializeProtection();
 		var started = new AtomicInteger();
 		try (var application = start(WebApplicationType.SERVLET, "https://iam.example", this.signing.toString(), this.authorization.toString(), true, started,
 				"https://iam.example:443/identity/authorize")) {
 			assertThat(application.getBean(IdentityAuthorizationEndpoint.class)).isNotNull(); assertThat(started).hasValue(1);
+		}
+	}
+
+	private void initializeProtection() {
+		try (var installation = start(WebApplicationType.NONE, "invalid-web-issuer", this.signing.toString(), this.authorization.toString(), false, new AtomicInteger())) {
+			installation.getBean(com.ixayda.iam.service.IdentityAuthorizationProtection.class).initializeForInstallation();
 		}
 	}
 
@@ -122,6 +130,7 @@ class IdentityProtocolStartupIntegrationTests {
 			boolean lazy, AtomicInteger started, String frontend) {
 		ApplicationListener<WebServerInitializedEvent> listener = event -> started.incrementAndGet();
 		var properties = new java.util.HashMap<String, Object>(Map.ofEntries(
+				Map.entry("iam.database.restricted-runtime", false),
 				Map.entry("spring.datasource.url", this.postgres.getJdbcUrl()), Map.entry("spring.datasource.username", this.postgres.getUsername()),
 				Map.entry("spring.datasource.password", this.postgres.getPassword()), Map.entry("spring.datasource.hikari.schema", this.schema),
 				Map.entry("spring.flyway.schemas", this.schema), Map.entry("spring.flyway.default-schema", this.schema),

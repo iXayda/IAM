@@ -23,7 +23,6 @@ import com.ixayda.iam.repository.IdentityAdministratorRecoveryRepository;
 import com.ixayda.iam.repository.IdentityAdministratorRepository;
 import com.ixayda.iam.repository.IdentityTotpRepository;
 
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -155,9 +154,11 @@ public class IdentityAdministratorRecoveries {
 		});
 	}
 
-	@Scheduled(fixedDelayString = "${iam.administrator-recovery.cleanup-ms:60000}", initialDelayString = "${iam.administrator-recovery.cleanup-ms:60000}")
 	public void cleanUpExpiredRecoveries() {
-		this.transaction.executeWithoutResult(status -> this.repository.cleanUpExpired());
+		this.transaction.executeWithoutResult(status -> {
+			this.repository.requireDatabaseOwner();
+			this.repository.cleanUpExpired();
+		});
 	}
 
 	private Optional<PasswordAuthenticationResult> authenticate(UUID userId, String password, SecurityAuditContext audit) {

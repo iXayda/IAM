@@ -15,7 +15,7 @@ class IamApplicationArgumentsTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "--server.port=0,unknown", "bootstrap-admin,unknown", "--server.port=0,--,unknown" })
+	@ValueSource(strings = { "--server.port=0,migrate", "--server.port=0,unknown", "migrate,unknown", "--server.port=0,--,unknown" })
 	void rejectsMisplacedPositionalArgumentsBeforeApplicationStartup(String arguments) {
 		assertThatIllegalArgumentException().isThrownBy(() -> IamApplication.main(arguments.split(",")))
 				.withMessageContaining("positional");

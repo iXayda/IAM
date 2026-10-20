@@ -390,6 +390,7 @@ class IdentityAdministratorAuthenticationIntegrationTests extends BrowserHttpTes
 		try (var client = client()) {
 			String session = elevate(client, login(client, "alice"), factor);
 			try (var fresh = new SpringApplicationBuilder(IamApplication.class).web(WebApplicationType.SERVLET).run(
+					"--iam.database.restricted-runtime=false",
 					"--server.port=0", "--server.ssl.enabled=true", "--server.ssl.key-store=" + KEY_STORE.toUri(),
 					"--server.ssl.key-store-password=test-store-password", "--iam.totp.key-file=" + KEY_FILE,
 					"--spring.datasource.url=" + this.postgres.getJdbcUrl(), "--spring.datasource.username=" + this.postgres.getUsername(),

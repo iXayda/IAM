@@ -1,9 +1,12 @@
 package com.ixayda.iam;
 
+import java.util.Map;
+
 import com.ixayda.iam.cli.AdministratorCredentialRecoveryCommand;
 
 import com.ixayda.iam.cli.AdministratorBootstrapCommand;
 import com.ixayda.iam.cli.AdministratorRecoveryCommand;
+import com.ixayda.iam.cli.DatabaseMaintenanceCommand;
 import com.ixayda.iam.cli.SigningKeyRotationCommand;
 import com.ixayda.iam.cli.SigningKeyIncidentCommand;
 
@@ -16,6 +19,7 @@ import io.swagger.v3.oas.annotations.security.SecurityScheme;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.core.env.MapPropertySource;
 
 @SpringBootApplication
 @OpenAPIDefinition(info = @Info(title = "IAM API", version = "0.1.0",
@@ -34,28 +38,25 @@ public class IamApplication {
 				throw new IllegalArgumentException("Unexpected positional argument: maintenance commands must appear first and accept no arguments");
 			}
 		}
-		if (args.length > 0 && args[0].equals("bootstrap-admin")) {
-			AdministratorBootstrapCommand.run(IamApplication.class, args);
+		if (args.length > 0 && !args[0].startsWith("--")) {
+			switch (args[0]) {
+				case "migrate", "initialize-signing-key", "initialize-authorization-key" ->
+						DatabaseMaintenanceCommand.run(IamApplication.class, args);
+				case "bootstrap-admin" -> AdministratorBootstrapCommand.run(IamApplication.class, args);
+				case "recover-admin-credentials" -> AdministratorCredentialRecoveryCommand.run(IamApplication.class, args);
+				case "recover-admin" -> AdministratorRecoveryCommand.run(IamApplication.class, args);
+				case "rotate-signing-key" -> SigningKeyRotationCommand.run(IamApplication.class, args);
+				case "compromise-signing-key", "recover-signing-key" -> SigningKeyIncidentCommand.run(IamApplication.class, args);
+				default -> throw new IllegalArgumentException("Unknown maintenance command");
+			}
 			return;
 		}
-		if (args.length > 0 && args[0].equals("recover-admin-credentials")) {
-			AdministratorCredentialRecoveryCommand.run(IamApplication.class, args);
-			return;
-		}
-		if (args.length > 0 && args[0].equals("recover-admin")) {
-			AdministratorRecoveryCommand.run(IamApplication.class, args);
-			return;
-		}
-		if (args.length > 0 && args[0].equals("rotate-signing-key")) {
-			SigningKeyRotationCommand.run(IamApplication.class, args);
-			return;
-		}
-		if (args.length > 0 && (args[0].equals("compromise-signing-key") || args[0].equals("recover-signing-key"))) {
-			SigningKeyIncidentCommand.run(IamApplication.class, args);
-			return;
-		}
-		if (args.length > 0 && !args[0].startsWith("--")) { throw new IllegalArgumentException("Unknown maintenance command"); }
-		SpringApplication.run(IamApplication.class, args);
+		var web = new SpringApplication(IamApplication.class);
+		// Apply after configuration loading and before Flyway or any Web startup callbacks.
+		web.addInitializers(context -> context.getEnvironment().getPropertySources().addFirst(
+				new MapPropertySource("iamWebDatabasePolicy", Map.of(
+						"spring.flyway.enabled", false, "iam.database.restricted-runtime", true))));
+		web.run(args);
 	}
 
 }

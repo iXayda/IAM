@@ -9,10 +9,6 @@ import com.ixayda.iam.model.MfaRecoveryCodeSet;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.service.IdentityAdministratorCredentialRecoveries;
 
-import org.springframework.boot.WebApplicationType;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.web.context.WebApplicationContext;
-
 /** Controlled offline credential recovery after external identity verification and independent approval. */
 public final class AdministratorCredentialRecoveryCommand {
 
@@ -24,12 +20,7 @@ public final class AdministratorCredentialRecoveryCommand {
 		}
 		Console console = System.console();
 		if (console == null) { throw new IllegalStateException("Administrator recovery requires an interactive terminal"); }
-		try (var context = new SpringApplicationBuilder(application).web(WebApplicationType.NONE)
-				.initializers(candidate -> {
-					if (candidate instanceof WebApplicationContext) {
-						throw new IllegalStateException("Administrator recovery requires a non-Web application");
-					}
-				}).run()) {
+		try (var context = MaintenanceApplication.start(application, args[0])) {
 			var recoveries = context.getBean(IdentityAdministratorCredentialRecoveries.class);
 			recoveries.cleanUpExpiredRecoveries();
 			execute(console, recoveries);

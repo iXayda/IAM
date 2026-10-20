@@ -797,7 +797,7 @@ class IdentityBrowserIntegrationTests {
 		try (var client = client()) {
 			String session = login(client);
 			try (var restarted = new SpringApplicationBuilder(com.ixayda.iam.IamApplication.class)
-					.properties(Map.of("spring.datasource.url", this.postgres.getJdbcUrl(), "spring.datasource.username", this.postgres.getUsername(),
+					.properties(Map.of("iam.database.restricted-runtime", false, "spring.datasource.url", this.postgres.getJdbcUrl(), "spring.datasource.username", this.postgres.getUsername(),
 							"spring.datasource.password", this.postgres.getPassword(), "server.port", "0", "server.ssl.enabled", "true",
 							"server.ssl.key-store", KEY_STORE.toUri().toString(), "server.ssl.key-store-password", "test-store-password",
 							"spring.main.banner-mode", "off")).run()) {
@@ -921,7 +921,7 @@ class IdentityBrowserIntegrationTests {
 		activeUser("alice");
 		try (var client = client(); var application = new SpringApplicationBuilder(com.ixayda.iam.IamApplication.class)
 				.profiles("documentation")
-				.properties(Map.of("spring.datasource.url", this.postgres.getJdbcUrl(), "spring.datasource.username", this.postgres.getUsername(),
+				.properties(Map.of("iam.database.restricted-runtime", false, "spring.datasource.url", this.postgres.getJdbcUrl(), "spring.datasource.username", this.postgres.getUsername(),
 						"spring.datasource.password", this.postgres.getPassword(), "server.port", "0", "server.ssl.enabled", "true",
 						"server.ssl.key-store", KEY_STORE.toUri().toString(), "server.ssl.key-store-password", "test-store-password",
 						"spring.main.banner-mode", "off")).run()) {

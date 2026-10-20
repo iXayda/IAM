@@ -9,10 +9,6 @@ import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.service.IdentitySigningKeyIncidents;
 import com.ixayda.iam.service.IdentitySigningKeys;
 
-import org.springframework.boot.WebApplicationType;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.web.context.WebApplicationContext;
-
 /** Explicit maintenance containment and replacement; no key material is accepted or displayed. */
 public final class SigningKeyIncidentCommand {
 
@@ -24,9 +20,7 @@ public final class SigningKeyIncidentCommand {
 		}
 		Console console = System.console();
 		if (console == null) { throw new IllegalStateException("Signing key incident commands require an interactive terminal"); }
-		try (var context = new SpringApplicationBuilder(application).web(WebApplicationType.NONE).initializers(candidate -> {
-			if (candidate instanceof WebApplicationContext) { throw new IllegalStateException("Signing key incident commands require a non-Web application"); }
-		}).run()) {
+		try (var context = MaintenanceApplication.start(application, args[0])) {
 			execute(console, context.getBean(IdentitySigningKeys.class), context.getBean(IdentitySigningKeyIncidents.class), args[0].equals("recover-signing-key"));
 		}
 	}

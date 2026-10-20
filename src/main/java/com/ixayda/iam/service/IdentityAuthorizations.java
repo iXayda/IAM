@@ -33,11 +33,12 @@ public class IdentityAuthorizations {
 
 	private final IdentityAuthorizationRepository repository;
 	private final AuthorizationSecrets secrets;
+	private final IdentityAuthorizationProtection protection;
 
-	IdentityAuthorizations(IdentityAuthorizationRepository repository, AuthorizationSecrets secrets) { this.repository = repository; this.secrets = secrets; }
+	IdentityAuthorizations(IdentityAuthorizationRepository repository, AuthorizationSecrets secrets, IdentityAuthorizationProtection protection) { this.repository = repository; this.secrets = secrets; this.protection = protection; }
 
 	/** Protocol HTTP startup checks protection configuration before admitting requests. */
-	public void requireConfigured() { this.secrets.requireConfigured(); }
+	public void requireConfigured() { this.secrets.requireConfigured(); this.protection.requireCurrent(); }
 
 	public Optional<Snapshot> findById(UUID id) {
 		Assert.notNull(id, "Authorization id is required");

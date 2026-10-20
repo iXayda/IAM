@@ -889,6 +889,7 @@ class IdentityTotpRecoveryControllerIntegrationTests extends BrowserHttpTestSupp
 			String body = startBody(PASSWORD, oldCodes.codes().getFirst(), csrf(get(client, "/api/csrf", session)));
 			var snapshot = snapshot(userId);
 			try (var application = new SpringApplicationBuilder(IamApplication.class).properties(Map.of(
+					"iam.database.restricted-runtime", false,
 					"spring.datasource.url", this.postgres.getJdbcUrl(), "spring.datasource.username", this.postgres.getUsername(),
 					"spring.datasource.password", this.postgres.getPassword(), "server.port", "0", "server.ssl.enabled", "true",
 					"server.ssl.key-store", KEY_STORE.toUri().toString(), "server.ssl.key-store-password", "test-store-password",
