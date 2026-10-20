@@ -100,7 +100,7 @@ Use a valid session to read `/v3/api-docs` (JSON) or `/v3/api-docs.yaml` (YAML).
 
 The main HTTPS port exposes unauthenticated `GET /livez` and `GET /readyz` endpoints that return only the overall status. Liveness checks the process; readiness checks the database, required auditing, authorization protection configuration, and signing material. Unavailable checks return 503. See the [operations guide](docs/operations.md) for troubleshooting, administrator recovery, and key maintenance.
 
-Back up the database together with the matching signing, TOTP, and authorization protection files. Stop the service before restoring into a new empty database, quarantine the old security state, and keep the service stopped pending further verification. Never reconnect an old snapshot directly to the Web service. See the [backup and recovery guide](docs/backup-recovery.md).
+Back up the database together with its matching signing, TOTP, and authorization protection files. To recover, stop the service and restore into a new, empty database. Quarantine security state, verify the administrator again, and complete controlled release before reopening access. Do not reconnect an old snapshot directly to the web service. See the [backup and recovery guide](docs/backup-recovery.md).
 
 ## Support and maintenance
 

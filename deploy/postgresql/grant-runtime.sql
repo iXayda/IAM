@@ -85,7 +85,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
 TO :"runtime_role";
 GRANT SELECT, INSERT ON iam_authorization_binding, iam_authorization_binding_role TO :"runtime_role";
 GRANT SELECT, INSERT ON iam_security_audit TO :"runtime_role";
-GRANT SELECT ON iam_restore_administrator, iam_restore, iam_restore_state, iam_administrator, iam_admin_bootstrap, iam_signing_key, iam_signing_key_state TO :"runtime_role";
+GRANT SELECT ON iam_restore_release, iam_restore_administrator, iam_restore, iam_restore_state, iam_administrator, iam_admin_bootstrap, iam_signing_key, iam_signing_key_state TO :"runtime_role";
 -- PostgreSQL row locks require UPDATE on at least one column, even without a mutation.
 GRANT UPDATE (singleton) ON iam_signing_key_state TO :"runtime_role";
 -- Last-administrator protection genuinely advances this revision during Web operations.

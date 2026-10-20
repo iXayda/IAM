@@ -31,7 +31,13 @@ public class IdentityRestoreRepository {
 	public String databaseName() { return this.jdbc.sql("SELECT current_database()").query(String.class).single(); }
 
 	public boolean isAvailable() {
-		return this.jdbc.sql("SELECT current_restore_id IS NULL FROM iam_restore_state WHERE singleton=1").query(Boolean.class).single();
+		return this.jdbc.sql("""
+				SELECT s.current_restore_id IS NULL OR EXISTS (
+				    SELECT 1 FROM iam_restore_release l JOIN iam_restore_administrator a ON a.restore_id=l.restore_id
+				    WHERE l.restore_id=s.current_restore_id AND l.user_id=a.user_id AND l.factor_id=a.factor_id
+				        AND a.completed_at IS NOT NULL AND l.released_at>=a.completed_at)
+				FROM iam_restore_state s WHERE s.singleton=1
+				""").query(Boolean.class).single();
 	}
 
 	public void requireOfflineOwner(String expectedDatabase) {
@@ -47,7 +53,7 @@ public class IdentityRestoreRepository {
 
 	public void lockForQuarantine() {
 		this.jdbc.sql("SELECT set_config('lock_timeout','5s',true)").query(String.class).single();
-		this.jdbc.sql("LOCK TABLE iam_restore_state, iam_restore, iam_restore_administrator, iam_signing_key_state, iam_signing_key, iam_user, iam_admin_bootstrap, "
+		this.jdbc.sql("LOCK TABLE iam_restore_state, iam_restore, iam_restore_administrator, iam_restore_release, iam_signing_key_state, iam_signing_key, iam_user, iam_admin_bootstrap, "
 				+ "iam_resource, iam_resource_role, iam_user_resource_role_revision, iam_client, oauth2_registered_client, iam_resource_credential, "
 				+ "iam_security_audit, " + String.join(", ", INVALIDATED_TABLES) + " IN ACCESS EXCLUSIVE MODE").update();
 	}
@@ -118,9 +124,40 @@ public class IdentityRestoreRepository {
 				""").update());
 	}
 
-	public void activateQuarantine(UUID id) {
-		requireOne(this.jdbc.sql("UPDATE iam_restore_state SET current_restore_id=:id WHERE singleton=1 AND current_restore_id IS NULL").param("id", id).update());
+	public void activateQuarantine(UUID id, UUID previous) {
+		requireOne(this.jdbc.sql("UPDATE iam_restore_state SET current_restore_id=:id WHERE singleton=1 AND current_restore_id IS NOT DISTINCT FROM CAST(:previous AS uuid)")
+				.param("id", id).param("previous", previous).update());
 		if (!current().map(value -> value.id().equals(id)).orElse(false)) { throw new IllegalStateException("Restore quarantine was not stored"); }
+	}
+
+	/** No restored application or other subject is admitted by the release of this one newly established identity. */
+	public void verifyReleaseConditions(UUID userId, UUID factorId, UUID signingKeyId) {
+		for (String table : INVALIDATED_TABLES) {
+			if (!List.of("iam_password", "iam_user_setup", "iam_user_totp", "iam_mfa_recovery_code", "iam_administrator").contains(table)
+					&& this.jdbc.sql("SELECT EXISTS (SELECT 1 FROM " + table + ")").query(Boolean.class).single()) {
+				throw new IllegalStateException("Restored application or pending credential state remains");
+			}
+		}
+		boolean contained = this.jdbc.sql("""
+				SELECT EXISTS (SELECT 1 FROM iam_administrator a JOIN iam_user u ON u.id=a.user_id
+				    JOIN iam_password p ON p.user_id=u.id JOIN iam_user_totp t ON t.user_id=u.id
+				    WHERE u.id=:user AND u.status='active' AND t.status='active' AND t.factor_id=:factor)
+				    AND NOT EXISTS (SELECT 1 FROM iam_administrator WHERE user_id<>:user)
+				    AND NOT EXISTS (SELECT 1 FROM iam_user WHERE id<>:user AND status<>'disabled')
+				    AND NOT EXISTS (SELECT 1 FROM iam_password WHERE user_id<>:user)
+				    AND NOT EXISTS (SELECT 1 FROM iam_user_totp WHERE user_id<>:user)
+				    AND NOT EXISTS (SELECT 1 FROM iam_mfa_recovery_code WHERE user_id<>:user)
+				    AND NOT EXISTS (SELECT 1 FROM iam_user_setup WHERE user_id<>:user OR status<>'consumed')
+				    AND NOT EXISTS (SELECT 1 FROM iam_resource WHERE status<>'disabled')
+				    AND NOT EXISTS (SELECT 1 FROM iam_resource_role WHERE status<>'disabled')
+				    AND NOT EXISTS (SELECT 1 FROM iam_client WHERE status<>'disabled')
+				    AND NOT EXISTS (SELECT 1 FROM iam_resource_credential WHERE status<>'disabled')
+				    AND NOT EXISTS (SELECT 1 FROM oauth2_registered_client WHERE redirect_uris IS DISTINCT FROM :redirect
+				        OR post_logout_redirect_uris IS NOT NULL OR scopes<>'openid' OR authorization_grant_types<>'authorization_code')
+				    AND EXISTS (SELECT 1 FROM iam_signing_key WHERE id=:key AND status='active')
+				    AND NOT EXISTS (SELECT 1 FROM iam_signing_key WHERE id<>:key AND status<>'compromised')
+				""").param("user", userId).param("factor", factorId).param("key", signingKeyId).param("redirect", DISABLED_REDIRECT).query(Boolean.class).single();
+		if (!contained) { throw new IllegalStateException("Restore release conditions are incomplete"); }
 	}
 
 	public void verifyQuarantine() {

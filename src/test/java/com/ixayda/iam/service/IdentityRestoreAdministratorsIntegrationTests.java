@@ -58,7 +58,7 @@ class IdentityRestoreAdministratorsIntegrationTests extends IdentityRestoreTestS
 		}
 		this.jdbc.sql("DROP FUNCTION IF EXISTS restore_admin_test_fault()").update();
 		this.jdbc.sql("ALTER TABLE iam_security_audit DROP CONSTRAINT IF EXISTS restore_admin_audit_fault").update();
-		this.jdbc.sql("TRUNCATE iam_restore_administrator,iam_restore_state,iam_restore,iam_signing_key_state,iam_signing_key").update();
+		this.jdbc.sql("TRUNCATE iam_restore_release,iam_restore_administrator,iam_restore_state,iam_restore,iam_signing_key_state,iam_signing_key").update();
 		this.jdbc.sql("INSERT INTO iam_restore_state(singleton) VALUES(1)").update(); this.jdbc.sql("INSERT INTO iam_signing_key_state(singleton) VALUES(1)").update();
 	}
 

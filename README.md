@@ -100,7 +100,7 @@ java -jar target/iam.jar --spring.profiles.active=runtime,documentation
 
 主 HTTPS 端口提供无需登录的 `GET /livez` 和 `GET /readyz`，仅返回总体状态。前者检查进程，后者检查数据库、必要审计、授权保护配置与签发材料；不可用返回 503。故障定位、管理员恢复及密钥维护见 [运维指南](docs/operations.md)。
 
-数据库与匹配的签名、TOTP 和授权保护文件需协同备份。恢复时先停服，在全新空库中还原并隔离旧安全状态，保持停服等待后续核验；不能将旧快照直接接回 Web。步骤见 [备份恢复指南](docs/backup-recovery.md)。
+数据库与匹配的签名、TOTP 和授权保护文件需协同备份。恢复时先停服，在全新空库中还原，经安全状态隔离、管理员重新核验和受控放行后再开放入口；不能将旧快照直接接回 Web。步骤见 [备份恢复指南](docs/backup-recovery.md)。
 
 ## 反馈与维护
 

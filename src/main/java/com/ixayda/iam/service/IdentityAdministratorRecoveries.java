@@ -80,7 +80,7 @@ public class IdentityAdministratorRecoveries {
 			if (authenticated.isEmpty()) { return rejected(userId, attempt, audit); }
 			var lifecycle = this.administrators.lockLifecycle();
 			var factor = this.factors.find(userId).filter(IdentityTotpRepository.Factor::active);
-			if (!lifecycle.completed() || this.administrators.find(userId).isEmpty() || factor.isEmpty()) {
+			if (!lifecycle.closed() || this.administrators.find(userId).isEmpty() || factor.isEmpty()) {
 				return rejected(userId, attempt, audit);
 			}
 			UUID recoveryId = UUID.randomUUID();
@@ -118,7 +118,7 @@ public class IdentityAdministratorRecoveries {
 			var pending = this.repository.find(userId).filter(value -> value.recoveryId().equals(recoveryId)
 					&& value.expiresAt().isAfter(value.now()) && value.audit().equals(audit)
 					&& value.credentialVersion() == authenticated.orElseThrow().credentialVersion());
-			if (!lifecycle.completed() || this.administrators.find(userId).isEmpty() || pending.isEmpty()) {
+			if (!lifecycle.closed() || this.administrators.find(userId).isEmpty() || pending.isEmpty()) {
 				return rejected(userId, attempt, audit);
 			}
 			var recovery = pending.orElseThrow();

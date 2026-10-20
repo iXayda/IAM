@@ -24,14 +24,14 @@ public class IdentityDatabaseAccessRepository {
 				    AND NOT has_table_privilege('iam_security_audit','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
 				    AND NOT has_any_column_privilege('iam_security_audit','UPDATE')
 				    AND NOT EXISTS (
-				        SELECT 1 FROM (VALUES ('iam_signing_key'),('iam_administrator'),('iam_signing_key_state'),('iam_admin_bootstrap'),('iam_restore'),('iam_restore_state'),('iam_restore_administrator')) AS t(name)
+				        SELECT 1 FROM (VALUES ('iam_signing_key'),('iam_administrator'),('iam_signing_key_state'),('iam_admin_bootstrap'),('iam_restore'),('iam_restore_state'),('iam_restore_administrator'),('iam_restore_release')) AS t(name)
 				        WHERE has_table_privilege(t.name,'INSERT,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
 				           OR has_any_column_privilege(t.name,'INSERT')
 				    )
 				    AND NOT EXISTS (
 				        SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
 				        WHERE n.nspname=current_schema() AND a.attnum>0 AND NOT a.attisdropped
-				          AND (c.relname IN ('iam_signing_key','iam_administrator','iam_restore','iam_restore_state','iam_restore_administrator')
+				          AND (c.relname IN ('iam_signing_key','iam_administrator','iam_restore','iam_restore_state','iam_restore_administrator','iam_restore_release')
 				               OR c.relname='iam_signing_key_state' AND a.attname<>'singleton'
 				               OR c.relname='iam_admin_bootstrap' AND a.attname<>'revision')
 				          AND has_column_privilege(c.oid,a.attnum,'UPDATE')

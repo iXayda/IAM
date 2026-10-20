@@ -40,7 +40,8 @@ public class IdentityRestores {
 	/** Caller stops the service, verifies the archive and authorizes the destructive containment in an offline terminal. */
 	public IdentityRestore quarantine(String expectedDatabase, String archiveSha256, SecurityAuditContext audit) {
 		if (expectedDatabase == null || archiveSha256 == null || !archiveSha256.matches("[0-9a-f]{64}") || audit == null
-				|| !audit.actor().startsWith("deployment:") || !audit.source().startsWith("deployment:restore:")) {
+				|| !audit.actor().matches("deployment:[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}")
+				|| !audit.source().matches("deployment:restore:[a-zA-Z0-9][a-zA-Z0-9._-]{0,31}")) {
 			throw new IllegalArgumentException("Confirmed database, archive checksum and deployment attribution are required");
 		}
 		if (TransactionSynchronizationManager.isActualTransactionActive()) { throw new IllegalStateException("Restore quarantine requires an independent transaction"); }
@@ -48,8 +49,7 @@ public class IdentityRestores {
 			this.repository.requireOfflineOwner(expectedDatabase);
 			this.repository.lockForQuarantine();
 			var current = this.repository.current();
-			if (current.isPresent()) {
-				if (!current.orElseThrow().archiveSha256().equals(archiveSha256)) { throw new IllegalStateException("A different restore is already quarantined"); }
+			if (current.isPresent() && current.orElseThrow().archiveSha256().equals(archiveSha256)) {
 				this.repository.verifyQuarantine();
 				return current.orElseThrow();
 			}
@@ -61,7 +61,7 @@ public class IdentityRestores {
 				this.repository.eraseClientAccess(clientId, this.secrets.hash(this.secrets.generate()));
 			}
 			this.repository.compromiseHistoricalKeys();
-			this.repository.activateQuarantine(restore.id());
+			this.repository.activateQuarantine(restore.id(), current.map(IdentityRestore::id).orElse(null));
 			this.repository.verifyQuarantine();
 			this.audits.recordTargetSuccess(Action.DATABASE_RESTORE_QUARANTINED,
 					new SecurityAuditTarget(SecurityAuditTarget.Type.DATABASE_RESTORE, restore.id()), audit);

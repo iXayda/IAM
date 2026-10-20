@@ -545,7 +545,7 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 		finally {
 			if (fault.equals("malformed")) { this.jdbc.sql("UPDATE iam_signing_key SET public_key=:value").param("value", original).update(); }
 			else {
-				if (fault.equals("empty")) { this.jdbc.sql("DROP TABLE iam_signing_key").update(); }
+				if (fault.equals("empty")) { this.jdbc.sql("DROP TABLE iam_signing_key CASCADE").update(); }
 				this.jdbc.sql("ALTER TABLE isolated_public_key RENAME TO iam_signing_key").update();
 			}
 		}

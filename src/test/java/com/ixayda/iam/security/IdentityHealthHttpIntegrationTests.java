@@ -109,7 +109,7 @@ class IdentityHealthHttpIntegrationTests extends BrowserHttpTestSupport {
 			assertThat(count("iam_security_audit")).isEqualTo(before);
 		}
 		finally {
-			this.jdbc.sql("TRUNCATE iam_restore_administrator,iam_restore_state,iam_restore").update(); this.jdbc.sql("INSERT INTO iam_restore_state(singleton) VALUES(1)").update();
+			this.jdbc.sql("TRUNCATE iam_restore_release,iam_restore_administrator,iam_restore_state,iam_restore").update(); this.jdbc.sql("INSERT INTO iam_restore_state(singleton) VALUES(1)").update();
 		}
 		probe("/readyz", 200, "UP");
 	}
