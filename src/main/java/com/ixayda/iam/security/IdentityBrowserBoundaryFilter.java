@@ -59,28 +59,28 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 		try {
 			this.securityHeaders.writeHeaders(request, response);
 			if (!request.isSecure()) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			admitted = admit();
 			if (!admitted) {
 				if (!auditThrottle()) {
-					reject(response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE);
+					reject(request, response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE);
 					return;
 				}
 				response.setHeader("Retry-After", "1");
-				reject(response, IdentityBrowserResponses.Error.TOO_MANY_REQUESTS);
+				reject(request, response, IdentityBrowserResponses.Error.TOO_MANY_REQUESTS);
 				return;
 			}
 			if (request.getContentLengthLong() > 8192) {
-				reject(response, IdentityBrowserResponses.Error.PAYLOAD_TOO_LARGE);
+				reject(request, response, IdentityBrowserResponses.Error.PAYLOAD_TOO_LARGE);
 				return;
 			}
 			boolean clientChange = request.getMethod().equals("POST") && (request.getServletPath().equals("/api/admin/clients")
 					|| request.getServletPath().matches("/api/admin/clients/[^/]+/(configuration|disable|enable|secret/rotate)"));
 			if (request.getMethod().equals("POST") && (request.getServletPath().equals("/login") || clientChange)
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/json"))) {
-				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
+				reject(request, response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
 			}
 			boolean passwordChange = request.getServletPath().equals("/api/me/password");
@@ -114,11 +114,11 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			boolean accountChange = userProfileUpdate || userRoleChange || roleCreation || roleName || roleState || resourceCreation || resourceName || resourceState || totpRecovery || totpRecoveryCompletion || totpReplacement || totpReplacementCompletion || totpEnrollment || totpConfirmation || totpCancellation || recoveryCodeIssuance || passwordChange || profileChange || administratorMfa || userCreation || userStateChange || setupManagement || setupCompletion || recoveryManagement || recoveryCompletion;
 			if (request.getMethod().equals("POST") && accountChange
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/x-www-form-urlencoded"))) {
-				reject(response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
+				reject(request, response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
 			}
 			if ((accountChange || clientChange) && request.getQueryString() != null) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			// Let the servlet container enforce its form limit, including chunked requests, before opening a session.
@@ -126,19 +126,19 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				request.getParameterMap();
 			}
 			catch (IllegalStateException ex) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if (accountChange && request.getParameterMap().values().stream().anyMatch(values -> values.length != 1)) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if (userProfileUpdate && !Set.of("displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet())) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if (profileChange && !Set.of("displayName", "_csrf").containsAll(request.getParameterMap().keySet())) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if ((totpEnrollment && !Set.of("currentPassword", "_csrf").containsAll(request.getParameterMap().keySet()))
@@ -148,36 +148,36 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 					|| (totpReplacementCompletion && !Set.of("replacementId", "token", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (totpRecovery && !Set.of("currentPassword", "recoveryCode", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (totpRecoveryCompletion && !Set.of("recoveryId", "token", "code", "_csrf").containsAll(request.getParameterMap().keySet()))) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if ((administratorMfa || userStateChange || setupManagement || recoveryManagement || recoveryCodeIssuance) && !Set.of("code", "_csrf").containsAll(request.getParameterMap().keySet())) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if ((userRoleChange && !Set.of("version", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (roleCreation && !Set.of("roleCode", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (roleName && !Set.of("version", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (roleState && !Set.of("version", "code", "_csrf").containsAll(request.getParameterMap().keySet()))) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if ((resourceCreation && !Set.of("audience", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (resourceName && !Set.of("version", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet()))
 					|| (resourceState && !Set.of("version", "code", "_csrf").containsAll(request.getParameterMap().keySet()))) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if (userCreation && !Set.of("username", "displayName", "code", "_csrf").containsAll(request.getParameterMap().keySet())) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if (setupCompletion && !Set.of("userId", "token", "password", "_csrf").containsAll(request.getParameterMap().keySet())) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if (recoveryCompletion && !Set.of("userId", "token", "newPassword", "_csrf").containsAll(request.getParameterMap().keySet())) {
-				reject(response, IdentityBrowserResponses.Error.BAD_REQUEST);
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			int responseLimit = request.getMethod().equals("GET")
@@ -197,7 +197,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			IdentityBrowserDiagnostics.recordFailure(request, stage, ex);
 			response.reset();
 			this.securityHeaders.writeHeaders(request, response);
-			reject(response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE);
+			reject(request, response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE);
 		}
 		finally {
 			if (admitted) {
@@ -255,9 +255,19 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 		response.setHeader("Referrer-Policy", "no-referrer");
 	}
 
-	private static void reject(HttpServletResponse response, IdentityBrowserResponses.Error error) throws IOException {
+	private static void reject(HttpServletRequest request, HttpServletResponse response, IdentityBrowserResponses.Error error) throws IOException {
 		headers(response);
-		IdentityBrowserResponses.error(response, error);
+		if (IdentityProtocolResponses.TOKEN_ENDPOINT.equals(request.getServletPath())) {
+			int status = switch (error) {
+				case PAYLOAD_TOO_LARGE -> 413;
+				case UNSUPPORTED_MEDIA_TYPE -> 415;
+				case TOO_MANY_REQUESTS -> 429;
+				case SERVICE_UNAVAILABLE -> 503;
+				default -> 400;
+			};
+			IdentityProtocolResponses.error(response, status, status == 503 ? "server_error" : status == 429 ? "temporarily_unavailable" : "invalid_request");
+		}
+		else { IdentityBrowserResponses.error(response, error); }
 	}
 
 	private static final class DeferredResponse extends HttpServletResponseWrapper {

@@ -36,6 +36,8 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 | `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | `NATIVE` 模式必填，匹配实际代理来源 IP 的正则 |
 | `IAM_TOTP_KEY_FILE` | 启用 TOTP 功能时必填，指向包含 32 个原始二进制字节的外部保护密钥文件 |
 | `IAM_SIGNING_KEY_FILE` | 签名私钥的保护密钥文件，包含 32 个原始二进制字节，须与 TOTP 使用不同的密钥 |
+| `IAM_PROTOCOL_ISSUER` | 启用协议入口时必填，显式配置 IAM 的 HTTPS issuer，不从请求 Host 或代理头推导 |
+| `IAM_AUTHORIZATION_KEY_FILE` | 启用协议入口时必填，指向包含 64 个原始二进制字节的独立授权状态保护文件；与签名及 TOTP 保护密钥分别保管 |
 
 数据库账号需要具备建表和执行迁移的权限。Flyway 在启动时创建或升级表结构。TOTP 保护密钥需要持久保存并限制读取权限，不应提交到仓库或在每次启动时重新生成。
 
@@ -55,7 +57,7 @@ IAM 会话与应用会话分别管理，IAM 会话不能作为业务 API 的访�
 
 ## 接口文档工具
 
-接口规范由 springdoc 根据控制器和 DTO 生成，并补充 Spring Security 过滤器处理的登录和退出端点。默认关闭文档入口；需要导出时，在完成数据库和 HTTPS 配置后启用 `documentation` profile：
+接口规范由 springdoc 根据控制器和 DTO 生成，并补充 Spring Security 过滤器处理的登录、退出和协议端点。默认关闭文档入口；需要导出时，在完成数据库和 HTTPS 配置后启用 `documentation` profile：
 
 ```bash
 java -jar target/iam.jar --spring.profiles.active=documentation

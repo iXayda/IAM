@@ -28,12 +28,25 @@ final class IdentityTokenRequests {
 		var context = AuthorizationServerContextHolder.getContext();
 		if (context == null || context.getAuthorizationServerSettings().getIssuer() == null
 				|| !context.getIssuer().equals(context.getAuthorizationServerSettings().getIssuer())) { throw failure("server_error"); }
-		String issuer = context.getIssuer(); var uri = java.net.URI.create(issuer);
-		if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) { throw failure("server_error"); }
+		String issuer;
+		try { issuer = requireIssuer(context.getIssuer()); }
+		catch (IllegalArgumentException ex) { throw failure("server_error"); }
 		OAuth2AuthorizationRequest request = authorization.getAttribute(OAuth2AuthorizationRequest.class.getName());
 		String expected = (issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer) + context.getAuthorizationServerSettings().getAuthorizationEndpoint();
 		if (request == null || !expected.equals(request.getAuthorizationUri())) { throw failure("invalid_grant"); }
 		return issuer;
+	}
+
+	static String requireIssuer(String value) {
+		try {
+			var uri = java.net.URI.create(value);
+			if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
+					|| uri.getPort() == 0 || uri.getPort() > 65535 || uri.getPort() < -1 || uri.getRawAuthority().endsWith(":")) {
+				throw new IllegalArgumentException("An explicit HTTPS issuer is required");
+			}
+			return value;
+		}
+		catch (IllegalArgumentException | NullPointerException ex) { throw new IllegalArgumentException("An explicit HTTPS issuer is required"); }
 	}
 
 	static OAuth2AuthenticationException failure(String code) {
