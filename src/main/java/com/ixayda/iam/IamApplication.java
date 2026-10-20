@@ -8,6 +8,7 @@ import com.ixayda.iam.cli.DatabaseMaintenanceCommand;
 import com.ixayda.iam.cli.SigningKeyRotationCommand;
 import com.ixayda.iam.cli.SigningKeyIncidentCommand;
 import com.ixayda.iam.cli.RestoreQuarantineCommand;
+import com.ixayda.iam.cli.RestoreAdministratorCommand;
 
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
@@ -31,6 +32,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class IamApplication {
 
 	public static void main(String[] args) {
+		if (args.length > 0 && args[0].equals("recover-restored-admin")) {
+			RestoreAdministratorCommand.run(IamApplication.class, args);
+			return;
+		}
 		if (args.length > 0 && args[0].equals("quarantine-restore")) {
 			RestoreQuarantineCommand.run(IamApplication.class, args);
 			return;

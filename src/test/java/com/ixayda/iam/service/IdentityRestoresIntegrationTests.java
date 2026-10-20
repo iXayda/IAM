@@ -71,7 +71,7 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 			this.jdbc.sql("DROP TRIGGER IF EXISTS restore_test_fault ON " + table).update();
 		}
 		this.jdbc.sql("DROP FUNCTION IF EXISTS restore_test_fault()").update();
-		this.jdbc.sql("TRUNCATE iam_restore_state,iam_restore,iam_signing_key_state,iam_signing_key").update();
+		this.jdbc.sql("TRUNCATE iam_restore_administrator,iam_restore_state,iam_restore,iam_signing_key_state,iam_signing_key").update();
 		this.jdbc.sql("INSERT INTO iam_restore_state(singleton) VALUES(1)").update();
 		this.jdbc.sql("INSERT INTO iam_signing_key_state(singleton) VALUES(1)").update();
 	}
