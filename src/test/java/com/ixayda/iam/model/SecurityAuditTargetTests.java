@@ -22,10 +22,10 @@ class SecurityAuditTargetTests {
 	}
 
 	@ParameterizedTest
-	@EnumSource(value = SecurityAuditEvent.Action.class, names = { "USER_ROLE_GRANTED", "USER_ROLE_REVOKED" })
-	void bindingActionsRequireBothTheUserAndTheBusinessRole(SecurityAuditEvent.Action action) {
+	@EnumSource(value = SecurityAuditEvent.Action.class, names = { "USER_ROLE_GRANTED", "USER_ROLE_REVOKED", "AUTHORIZATION_REVOKED" })
+	void userBoundActionsRequireBothTheUserAndMatchingObject(SecurityAuditEvent.Action action) {
 		UUID user = UUID.randomUUID();
-		var target = new SecurityAuditTarget(SecurityAuditTarget.Type.ROLE, UUID.randomUUID());
+		var target = new SecurityAuditTarget(action.targetType(), UUID.randomUUID());
 		assertThat(new SecurityAuditEvent(UUID.randomUUID(), action, user, CONTEXT, target).targetUserId()).isEqualTo(user);
 		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, null, CONTEXT, target));
 		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, user, CONTEXT));

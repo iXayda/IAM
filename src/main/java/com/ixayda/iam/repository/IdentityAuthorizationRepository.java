@@ -54,7 +54,7 @@ public class IdentityAuthorizationRepository {
 			"refresh_token_value", "refresh_token_issued_at", "refresh_token_expires_at", "refresh_token_metadata",
 			"user_code_value", "user_code_issued_at", "user_code_expires_at", "user_code_metadata", "device_code_value", "device_code_issued_at", "device_code_expires_at", "device_code_metadata");
 	private static final String SELECT = """
-			SELECT a.*,r.version,r.user_id AS record_user_id,r.client_id AS record_client_id,
+			SELECT a.*,r.version,r.revocation_seal,r.user_id AS record_user_id,r.client_id AS record_client_id,
 			    ARRAY(SELECT i.token_type || ':' || i.digest FROM iam_authorization_token_index i WHERE i.authorization_id=a.id ORDER BY i.token_type) AS token_indexes
 			FROM oauth2_authorization a JOIN iam_authorization_record r ON r.id=a.id
 			""";
@@ -125,18 +125,21 @@ public class IdentityAuthorizationRepository {
 		return found;
 	}
 
-	public StoredAuthorization save(OAuth2Authorization authorization, long previousVersion) {
+	public StoredAuthorization save(OAuth2Authorization authorization, long previousVersion, boolean revoked) {
 		this.secrets.requireConfigured();
 		var expected = parameters(authorization);
 		var indexes = indexes(authorization);
 		this.delegate.save(authorization);
 		requireNativeValues(UUID.fromString(authorization.getId()), expected);
 		long next = Math.addExact(previousVersion, 1);
+		String seal = revoked ? this.secrets.revocationSeal(UUID.fromString(authorization.getId()), UUID.fromString(authorization.getPrincipalName()),
+				UUID.fromString(authorization.getRegisteredClientId()), next) : null;
 		int changed = previousVersion == 0
-				? this.jdbc.sql("INSERT INTO iam_authorization_record(id,user_id,client_id,version) VALUES (:id,:user,:client,:next)")
-						.param("id", authorization.getId()).param("user", UUID.fromString(authorization.getPrincipalName())).param("client", authorization.getRegisteredClientId()).param("next", next).update()
-				: this.jdbc.sql("UPDATE iam_authorization_record SET version=:next WHERE id=:id AND version=:previous")
-						.param("next", next).param("id", authorization.getId()).param("previous", previousVersion).update();
+				? this.jdbc.sql("INSERT INTO iam_authorization_record(id,user_id,client_id,version,revocation_seal) VALUES (:id,:user,:client,:next,:seal)")
+						.param("id", authorization.getId()).param("user", UUID.fromString(authorization.getPrincipalName())).param("client", authorization.getRegisteredClientId()).param("next", next)
+						.param("seal", seal, java.sql.Types.VARCHAR).update()
+				: this.jdbc.sql("UPDATE iam_authorization_record SET version=:next,revocation_seal=:seal WHERE id=:id AND version=:previous")
+						.param("next", next).param("seal", seal, java.sql.Types.VARCHAR).param("id", authorization.getId()).param("previous", previousVersion).update();
 		requireOne(changed);
 		this.jdbc.sql("DELETE FROM iam_authorization_token_index WHERE authorization_id=:id").param("id", authorization.getId()).update();
 		for (var index : indexes.entrySet()) {
@@ -164,6 +167,12 @@ public class IdentityAuthorizationRepository {
 		var stored = Arrays.stream((Object[]) row.getArray("token_indexes").getArray()).map(Object::toString).sorted().toList();
 		var expected = indexes(authorization).entrySet().stream().map(entry -> entry.getKey() + ":" + entry.getValue()).sorted().toList();
 		if (!stored.equals(expected)) { throw new IllegalStateException("Protocol token indexes do not match"); }
+		String seal = row.getString("revocation_seal");
+		if ((seal != null) != Boolean.TRUE.equals(authorization.getAttribute("iam.authorizationRevoked"))
+				|| seal != null && !this.secrets.verifiesRevocation(UUID.fromString(authorization.getId()), UUID.fromString(authorization.getPrincipalName()),
+						UUID.fromString(authorization.getRegisteredClientId()), row.getLong("version"), seal)) {
+			throw new IllegalStateException("Authorization revocation does not match protected state");
+		}
 		return new StoredAuthorization(authorization, row.getLong("version"));
 	}
 

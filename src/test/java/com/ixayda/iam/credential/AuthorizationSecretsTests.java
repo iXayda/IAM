@@ -19,6 +19,21 @@ class AuthorizationSecretsTests {
 	@TempDir Path directory;
 
 	@Test
+	void revocationSealsBindTheGrantSubjectsAndRevisionWithAnIndependentPurpose() throws Exception {
+		Path path = key(64); var secrets = new AuthorizationSecrets(path.toString());
+		UUID id = UUID.randomUUID(), user = UUID.randomUUID(), client = UUID.randomUUID();
+		String seal = secrets.revocationSeal(id, user, client, 5);
+		assertThat(new AuthorizationSecrets(path.toString()).verifiesRevocation(id, user, client, 5, seal)).isTrue();
+		assertThat(secrets.verifiesRevocation(UUID.randomUUID(), user, client, 5, seal)).isFalse();
+		assertThat(secrets.verifiesRevocation(id, UUID.randomUUID(), client, 5, seal)).isFalse();
+		assertThat(secrets.verifiesRevocation(id, user, UUID.randomUUID(), 5, seal)).isFalse();
+		assertThat(secrets.verifiesRevocation(id, user, client, 6, seal)).isFalse();
+		assertThat(secrets.verifiesRevocation(id, user, client, 5, "f".repeat(64))).isFalse();
+		assertThat(secrets.verifiesRevocation(id, user, client, 5, null)).isFalse();
+		assertThat(secrets.verifiesRevocation(id, user, client, 5, secrets.refreshHistorySeal(id + "|" + user + "|" + client + "|5"))).isFalse();
+	}
+
+	@Test
 	void randomizedEncryptionAuthenticatesTheAuthorizationAndColumnAndNeverFallsBackToPlaintext() throws Exception {
 		var secrets = new AuthorizationSecrets(key(64).toString());
 		UUID id = UUID.randomUUID();

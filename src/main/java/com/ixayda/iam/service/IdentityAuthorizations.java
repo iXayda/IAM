@@ -1,19 +1,24 @@
 package com.ixayda.iam.service;
 
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import com.ixayda.iam.credential.AuthorizationSecrets;
 import com.ixayda.iam.repository.IdentityAuthorizationRepository;
 import com.ixayda.iam.repository.IdentityAuthorizationRepository.StoredAuthorization;
+import com.ixayda.iam.repository.IdentityAuthorizationBindingRepository.RevocationCandidate;
 
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2DeviceCode;
 import org.springframework.security.oauth2.core.OAuth2UserCode;
+import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +28,8 @@ import org.springframework.util.Assert;
 /** Trusted protocol persistence; the protocol workflow owns authorization, deadlines and mandatory audit. */
 @Service
 public class IdentityAuthorizations {
+
+	private static final String REVOKED = "iam.authorizationRevoked";
 
 	private final IdentityAuthorizationRepository repository;
 	private final AuthorizationSecrets secrets;
@@ -65,7 +72,20 @@ public class IdentityAuthorizations {
 		if (existing.map(StoredAuthorization::version).orElse(0L) != expectedVersion) { throw new OptimisticLockingFailureException("Authorization version is stale"); }
 		if (existing.isPresent() && (!existing.orElseThrow().authorization().getPrincipalName().equals(authorization.getPrincipalName())
 				|| !existing.orElseThrow().authorization().getRegisteredClientId().equals(authorization.getRegisteredClientId()))) { throw new IllegalArgumentException("Authorization subjects are immutable"); }
-		return snapshot(this.repository.save(authorization, expectedVersion));
+		boolean revoked = isRevoked(authorization);
+		if (existing.map(value -> isRevoked(value.authorization())).orElse(false) && !revoked) { throw new IllegalStateException("Authorization revocation cannot be cleared"); }
+		return snapshot(this.repository.save(authorization, expectedVersion, revoked));
+	}
+
+	/** Only a verified terminal projection may bypass native decoding and locking in a bulk mutation. */
+	public boolean isAuthenticatedRevocation(RevocationCandidate candidate) {
+		this.secrets.requireConfigured();
+		if (candidate.version() < 1) { throw new IllegalStateException("Bound authorization is missing"); }
+		if (candidate.seal() == null) { return false; }
+		if (!this.secrets.verifiesRevocation(candidate.id(), candidate.userId(), candidate.clientId(), candidate.version(), candidate.seal())) {
+			throw new IllegalStateException("Authorization revocation projection could not be authenticated");
+		}
+		return true;
 	}
 
 	@Transactional
@@ -78,7 +98,34 @@ public class IdentityAuthorizations {
 		this.repository.remove(existing);
 	}
 
-	private static Snapshot snapshot(StoredAuthorization stored) { return new Snapshot(stored.authorization(), stored.version()); }
+	/** Protected terminal state covers unused codes and grants without a refresh family. */
+	public static boolean isRevoked(OAuth2Authorization authorization) {
+		Object marker = authorization.getAttribute(REVOKED);
+		if (marker == null) { return false; }
+		if (!Boolean.TRUE.equals(marker) || Stream.<OAuth2Authorization.Token<?>>of(authorization.getToken(OAuth2AuthorizationCode.class),
+				authorization.getAccessToken(), authorization.getRefreshToken(), authorization.getToken(OidcIdToken.class))
+				.filter(Objects::nonNull).anyMatch(token -> !token.isInvalidated())) { throw new IllegalStateException("Authorization revocation state is inconsistent"); }
+		return true;
+	}
+
+	/** The lifecycle workflow coordinates this marker with the family transition and audit. */
+	static OAuth2Authorization markRevoked(OAuth2Authorization authorization) {
+		return OAuth2Authorization.from(invalidate(authorization)).attribute(REVOKED, true).build();
+	}
+
+	static OAuth2Authorization invalidate(OAuth2Authorization authorization) {
+		var builder = OAuth2Authorization.from(authorization);
+		var code = authorization.getToken(OAuth2AuthorizationCode.class); if (code != null) { builder.invalidate(code.getToken()); }
+		if (authorization.getAccessToken() != null) { builder.invalidate(authorization.getAccessToken().getToken()); }
+		if (authorization.getRefreshToken() != null) { builder.invalidate(authorization.getRefreshToken().getToken()); }
+		var id = authorization.getToken(OidcIdToken.class); if (id != null) { builder.invalidate(id.getToken()); }
+		return builder.build();
+	}
+
+	private static Snapshot snapshot(StoredAuthorization stored) {
+		isRevoked(stored.authorization());
+		return new Snapshot(stored.authorization(), stored.version());
+	}
 
 	public record Snapshot(OAuth2Authorization authorization, long version) {
 		@Override

@@ -59,7 +59,7 @@ public class SecurityAudits {
 		recordTargetSuccess(action, null, target, context);
 	}
 
-	/** Role assignments retain both the affected user and the business role. */
+	/** User-bound object changes retain both the affected user and their typed target. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void recordTargetSuccess(SecurityAuditEvent.Action action, UUID targetUserId, SecurityAuditTarget target, SecurityAuditContext context) {
 		if (action == null || action.isFailure() || target == null) {

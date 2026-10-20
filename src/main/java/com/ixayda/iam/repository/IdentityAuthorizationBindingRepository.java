@@ -7,6 +7,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -46,6 +48,50 @@ public class IdentityAuthorizationBindingRepository {
 				first.credentialVersion(), first.clientVersion(), first.resourceVersion(), first.assignmentVersion(), roles);
 		return Optional.of(new IdentityAuthorizationBinding(id, new IdentityAuthorizationSession(access, first.browserSessionId(), first.authenticatedAt(),
 				first.idleExpiresAt(), first.absoluteExpiresAt()), first.scopes(), first.issuedAt(), first.codeExpiresAt()));
+	}
+
+	/** Parent locks held by the mutation serialize issuance; selectors deliberately have no pagination limit. */
+	public List<UUID> findIdsForUser(UUID userId) { return selectIds("b.user_id=:user", Map.of("user", userId)); }
+	public List<UUID> findIdsForClient(UUID clientId) { return selectIds("b.client_id=:client", Map.of("client", clientId.toString())); }
+	public List<UUID> findIdsForResource(UUID resourceId) { return selectIds("b.resource_id=:resource", Map.of("resource", resourceId)); }
+	public List<UUID> findIdsForUserResource(UUID userId, UUID resourceId) { return selectIds("b.user_id=:user AND b.resource_id=:resource", Map.of("user", userId, "resource", resourceId)); }
+	public List<UUID> findIdsForRole(UUID roleId) {
+		return selectIds("EXISTS (SELECT 1 FROM iam_authorization_binding_role r WHERE r.authorization_id=b.authorization_id AND r.role_id=:role)"
+				+ " OR EXISTS (SELECT 1 FROM iam_user_role a WHERE a.user_id=b.user_id AND a.resource_id=b.resource_id AND a.role_id=:role)", Map.of("role", roleId));
+	}
+
+	/** Parent locks serialize issuance; keyset pages bound retained history without locking native rows. */
+	public List<RevocationCandidate> revocationPageForUser(UUID userId, UUID after) { return revocationPage("b.user_id=:user", Map.of("user", userId), after); }
+	public List<RevocationCandidate> revocationPageForClient(UUID clientId, UUID after) { return revocationPage("b.client_id=:client", Map.of("client", clientId.toString()), after); }
+	public List<RevocationCandidate> revocationPageForResource(UUID resourceId, UUID after) { return revocationPage("b.resource_id=:resource", Map.of("resource", resourceId), after); }
+	public List<RevocationCandidate> revocationPageForUserResource(UUID userId, UUID resourceId, UUID after) {
+		return revocationPage("b.user_id=:user AND b.resource_id=:resource", Map.of("user", userId, "resource", resourceId), after);
+	}
+	public List<RevocationCandidate> revocationPageForRole(UUID roleId, UUID after) {
+		return revocationPage("EXISTS (SELECT 1 FROM iam_authorization_binding_role r WHERE r.authorization_id=b.authorization_id AND r.role_id=:role)"
+				+ " OR EXISTS (SELECT 1 FROM iam_user_role a WHERE a.user_id=b.user_id AND a.resource_id=b.resource_id AND a.role_id=:role)", Map.of("role", roleId), after);
+	}
+
+	private List<RevocationCandidate> revocationPage(String predicate, Map<String, ?> parameters, UUID after) {
+		return this.jdbc.sql("""
+				SELECT b.authorization_id,b.user_id,b.client_id,r.version,r.revocation_seal
+				FROM iam_authorization_binding b LEFT JOIN iam_authorization_record r ON r.id=b.authorization_id
+				WHERE (
+				""" + predicate + ") AND b.authorization_id > :after ORDER BY b.authorization_id LIMIT 100")
+				.params(parameters).param("after", after == null ? "" : after.toString())
+				.query((row, index) -> new RevocationCandidate(UUID.fromString(row.getString("authorization_id")), row.getObject("user_id", UUID.class),
+						UUID.fromString(row.getString("client_id")), row.getLong("version"), row.getString("revocation_seal"))).list();
+	}
+
+	public record RevocationCandidate(UUID id, UUID userId, UUID clientId, long version, String seal) { }
+
+	public boolean isWritableReadCommittedTransaction() {
+		return this.jdbc.sql("SELECT current_setting('transaction_isolation')='read committed' AND current_setting('transaction_read_only')='off'").query(Boolean.class).single();
+	}
+
+	private List<UUID> selectIds(String predicate, Map<String, ?> parameters) {
+		return this.jdbc.sql("SELECT b.authorization_id FROM iam_authorization_binding b WHERE " + predicate + " ORDER BY b.authorization_id")
+				.params(parameters).query((row, index) -> UUID.fromString(row.getString(1))).list();
 	}
 
 	public void insert(IdentityAuthorizationBinding binding) {

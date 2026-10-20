@@ -43,6 +43,17 @@ public final class AuthorizationSecrets {
 		finally { if (bytes != null) { Arrays.fill(bytes, (byte) 0); } }
 	}
 
+	/** Authenticated terminal projections permit historical grants to be skipped without reading native credentials. */
+	public String revocationSeal(UUID id, UUID userId, UUID clientId, long version) {
+		if (id == null || userId == null || clientId == null || version < 1) { throw new IllegalArgumentException("Revocation identity is invalid"); }
+		return lookup("iam:authorization-revocation:v1:", id + "|" + userId + "|" + clientId + "|" + version, 256);
+	}
+
+	public boolean verifiesRevocation(UUID id, UUID userId, UUID clientId, long version, String seal) {
+		return seal != null && seal.matches("[0-9a-f]{64}") && MessageDigest.isEqual(HexFormat.of().parseHex(seal),
+				HexFormat.of().parseHex(revocationSeal(id, userId, clientId, version)));
+	}
+
 	public void requireConfigured() {
 		if (this.encryption == null) { throw new IllegalStateException("Protocol persistence requires external protection keys"); }
 	}

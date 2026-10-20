@@ -12,10 +12,8 @@ import com.ixayda.iam.model.IdentityRefreshFamily;
 import com.ixayda.iam.model.IdentityRefreshHistory;
 import com.ixayda.iam.repository.IdentityRefreshTokenRepository;
 
-import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -109,11 +107,27 @@ public class IdentityRefreshTokens {
 	/** Quarantine and native invalidation remain in the caller's committed denial transaction. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public IdentityAuthorizations.Snapshot quarantine(IdentityAuthorizations.Snapshot previous) {
+		return terminate(previous, IdentityRefreshFamily.Status.QUARANTINED);
+	}
+
+	/** General revocation is terminal for every grant, including an unused code without a family. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public IdentityAuthorizations.Snapshot revoke(IdentityAuthorizations.Snapshot previous) {
+		return terminate(previous, IdentityRefreshFamily.Status.REVOKED);
+	}
+
+	private IdentityAuthorizations.Snapshot terminate(IdentityAuthorizations.Snapshot previous, IdentityRefreshFamily.Status status) {
 		var id = java.util.UUID.fromString(previous.authorization().getId());
 		var locked = this.authorizations.lockForUse(id).orElseThrow(() -> new IllegalStateException("Authorization is missing"));
 		if (locked.version() != previous.version()) { throw new IllegalStateException("Authorization version is stale"); }
-		var invalidated = invalidate(locked.authorization());
 		var found = this.repository.lockFamily(id);
+		if (IdentityAuthorizations.isRevoked(locked.authorization())) {
+			if (status != IdentityRefreshFamily.Status.REVOKED || findByAuthorization(locked.authorization()).filter(family -> family.status() != IdentityRefreshFamily.Status.REVOKED).isPresent()) {
+				throw new IllegalStateException("Revoked authorization cannot change lifecycle state");
+			}
+			return locked;
+		}
+		var invalidated = status == IdentityRefreshFamily.Status.REVOKED ? IdentityAuthorizations.markRevoked(locked.authorization()) : IdentityAuthorizations.invalidate(locked.authorization());
 		if (found.isEmpty()) {
 			if (locked.authorization().getRefreshToken() != null || locked.authorization().getAttribute(FAMILY) != null) {
 				throw new IllegalStateException("Refresh family is missing");
@@ -124,9 +138,10 @@ public class IdentityRefreshTokens {
 		var now = Instant.now().truncatedTo(ChronoUnit.MICROS);
 		if (now.isBefore(current.updatedAt())) { now = current.updatedAt(); }
 		var next = new IdentityRefreshFamily(current.authorizationId(), Math.addExact(current.version(), 1), current.generation(), current.currentDigest(), current.scopes(),
-				current.startedAt(), now, current.idleExpiresAt(), current.absoluteExpiresAt(), IdentityRefreshFamily.Status.QUARANTINED);
+				current.startedAt(), now, current.idleExpiresAt(), current.absoluteExpiresAt(), status);
 		var saved = this.authorizations.save(OAuth2Authorization.from(invalidated).attribute(FAMILY, encode(next)).build(), previous.version());
 		this.repository.updateFamily(next, current.version());
+		if (findByAuthorization(saved.authorization()).filter(next::equals).isEmpty()) { throw new IllegalStateException("Terminal refresh state was not stored"); }
 		return saved;
 	}
 
@@ -160,15 +175,6 @@ public class IdentityRefreshTokens {
 		return "iam:refresh-family:v1|" + family.authorizationId() + "|" + family.version() + "|" + family.generation() + "|" + family.currentDigest()
 				+ "|" + String.join(",", new TreeSet<>(family.scopes())) + "|" + family.startedAt() + "|" + family.updatedAt() + "|" + family.idleExpiresAt()
 				+ "|" + family.absoluteExpiresAt() + "|" + family.status();
-	}
-
-	private static OAuth2Authorization invalidate(OAuth2Authorization authorization) {
-		var revoked = OAuth2Authorization.from(authorization);
-		var code = authorization.getToken(OAuth2AuthorizationCode.class); if (code != null) { revoked.invalidate(code.getToken()); }
-		if (authorization.getAccessToken() != null) { revoked.invalidate(authorization.getAccessToken().getToken()); }
-		if (authorization.getRefreshToken() != null) { revoked.invalidate(authorization.getRefreshToken().getToken()); }
-		var id = authorization.getToken(OidcIdToken.class); if (id != null) { revoked.invalidate(id.getToken()); }
-		return revoked.build();
 	}
 
 }
