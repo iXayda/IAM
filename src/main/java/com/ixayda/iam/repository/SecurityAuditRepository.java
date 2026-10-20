@@ -30,6 +30,11 @@ public class SecurityAuditRepository {
 		this.jdbc = jdbc;
 	}
 
+	public boolean canAppend() {
+		return this.jdbc.sql("SELECT current_setting('transaction_read_only')='off' AND has_table_privilege('iam_security_audit','INSERT')")
+				.query(Boolean.class).single();
+	}
+
 	public List<SecurityAuditEntry> search(SecurityAuditFilter filter, int limit, SecurityAuditPage.Cursor after) {
 		var sql = new StringBuilder("""
 				SELECT id, actor, source, correlation_id, target_user_id, action, outcome, recorded_at, target_type, target_id

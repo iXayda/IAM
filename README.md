@@ -98,7 +98,7 @@ java -jar target/iam.jar --spring.profiles.active=runtime,documentation
 
 ## 运行维护
 
-管理员初始化、恢复及部署维护说明见 [运维指南](docs/operations.md)。
+主 HTTPS 端口提供无需登录的 `GET /livez` 和 `GET /readyz`，仅返回总体状态。前者检查进程，后者检查数据库、必要审计、授权保护配置与签发材料；不可用返回 503。故障定位、管理员恢复及密钥维护见 [运维指南](docs/operations.md)。
 
 ## 反馈与维护
 

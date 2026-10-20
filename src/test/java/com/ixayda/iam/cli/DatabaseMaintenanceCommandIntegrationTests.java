@@ -270,6 +270,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 			try (var application = start(true); var http = client()) {
 				assertThat(application.getBean(IdentitySigningKeys.class).findPublicKey().orElseThrow().id().toString()).isEqualTo(current);
 				assertThat(application.getEnvironment().getProperty("spring.flyway.enabled")).isEqualTo("false");
+				for (String path : List.of("/livez", "/readyz")) { assertThat(get(http, path, null).statusCode()).as(path).isEqualTo(200); }
 				var csrf = get(http, "/api/csrf", null); var login = post(http, "/login", cookie(csrf), credentials("alice", PASSWORD, csrf(csrf)));
 				assertThat(login.statusCode()).as(login.body()).isEqualTo(204); String session = cookie(login);
 				assertThat(get(http, "/api/me", session).statusCode()).isEqualTo(200);

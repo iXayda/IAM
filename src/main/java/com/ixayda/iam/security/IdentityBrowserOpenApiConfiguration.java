@@ -39,8 +39,11 @@ class IdentityBrowserOpenApiConfiguration {
 					.required(List.of("code", "message")));
 			openApi.path("/login", new PathItem().post(login()));
 			openApi.path("/logout", new PathItem().post(logout()));
-			openApi.getPaths().values().forEach(path -> path.readOperations().forEach(operation ->
-					commonResponses().forEach((status, response) -> operation.getResponses().putIfAbsent(status, response))));
+			openApi.getPaths().forEach((uri, path) -> {
+				if (!IdentityHealthRequestFilter.PATHS.contains(uri)) {
+					path.readOperations().forEach(operation -> commonResponses().forEach((status, response) -> operation.getResponses().putIfAbsent(status, response)));
+				}
+			});
 		};
 	}
 

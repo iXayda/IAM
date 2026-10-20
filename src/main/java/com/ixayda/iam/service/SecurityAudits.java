@@ -1,6 +1,7 @@
 package com.ixayda.iam.service;
 
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent;
@@ -12,14 +13,23 @@ import com.ixayda.iam.repository.SecurityAuditRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class SecurityAudits {
 
 	private final SecurityAuditRepository repository;
+	// Low bit marks a known outage; the generation prevents an older commit clearing a newer failure.
+	private final AtomicLong availability = new AtomicLong();
 
 	SecurityAudits(SecurityAuditRepository repository) {
 		this.repository = repository;
+	}
+
+	/** Read-only probe: a known write failure clears only after a real audit transaction commits. */
+	public boolean isAvailable() {
+		return (this.availability.get() & 1L) == 0 && this.repository.canAppend();
 	}
 
 	/** Internal query; the caller authorizes access and retains the returned cursor's filters. */
@@ -50,7 +60,7 @@ public class SecurityAudits {
 		if (action == null || action.isFailure()) {
 			throw new IllegalArgumentException("A success action is required");
 		}
-		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context));
+		append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context));
 	}
 
 	/** Object changes retain a typed target alongside the operation's trusted attribution. */
@@ -65,7 +75,7 @@ public class SecurityAudits {
 		if (action == null || action.isFailure() || target == null) {
 			throw new IllegalArgumentException("A success action and object target are required");
 		}
-		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context, target));
+		append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context, target));
 	}
 
 	/** Failure belongs to a transaction that commits a rejected decision, not to a rolled-back success. */
@@ -74,7 +84,21 @@ public class SecurityAudits {
 		if (action == null || !action.isFailure()) {
 			throw new IllegalArgumentException("A failure action is required");
 		}
-		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context));
+		append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context));
 	}
+
+	private void append(SecurityAuditEvent event) {
+		long observed = this.availability.get();
+		try { this.repository.append(event); }
+		catch (RuntimeException ex) { markUnavailable(); throw ex; }
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() { availability.compareAndSet(observed, observed & ~1L); }
+			@Override
+			public void afterCompletion(int status) { if (status == STATUS_UNKNOWN) { markUnavailable(); } }
+		});
+	}
+
+	private void markUnavailable() { this.availability.updateAndGet(state -> (state + 2) | 1L); }
 
 }

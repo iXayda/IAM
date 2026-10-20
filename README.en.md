@@ -98,7 +98,7 @@ Use a valid session to read `/v3/api-docs` (JSON) or `/v3/api-docs.yaml` (YAML).
 
 ## Operations
 
-See the [operations guide](docs/operations.md) for administrator initialization, recovery, and deployment maintenance.
+The main HTTPS port exposes unauthenticated `GET /livez` and `GET /readyz` endpoints that return only the overall status. Liveness checks the process; readiness checks the database, required auditing, authorization protection configuration, and signing material. Unavailable checks return 503. See the [operations guide](docs/operations.md) for troubleshooting, administrator recovery, and key maintenance.
 
 ## Support and maintenance
 
