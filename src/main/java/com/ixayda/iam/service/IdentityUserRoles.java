@@ -26,14 +26,16 @@ public class IdentityUserRoles {
 	private final IdentityResources resources;
 	private final IdentityResourceRoleRepository roles;
 	private final IdentityUserRoleRepository repository;
+	private final IdentityAuthorizationRevocations revocations;
 	private final SecurityAudits audits;
 
 	IdentityUserRoles(IdentityUsers users, IdentityResources resources, IdentityResourceRoleRepository roles,
-			IdentityUserRoleRepository repository, SecurityAudits audits) {
+			IdentityUserRoleRepository repository, IdentityAuthorizationRevocations revocations, SecurityAudits audits) {
 		this.users = users;
 		this.resources = resources;
 		this.roles = roles;
 		this.repository = repository;
+		this.revocations = revocations;
 		this.audits = audits;
 	}
 
@@ -56,6 +58,7 @@ public class IdentityUserRoles {
 		long next = this.repository.advanceVersion(userId, resource.id(), expectedVersion);
 		if (grant) { this.repository.grant(userId, resource.id(), roleId); }
 		else { this.repository.revoke(userId, roleId); }
+		this.revocations.revokeForUserResource(userId, resource.id(), audit);
 		this.audits.recordTargetSuccess(grant ? Action.USER_ROLE_GRANTED : Action.USER_ROLE_REVOKED, userId,
 				new SecurityAuditTarget(SecurityAuditTarget.Type.ROLE, roleId), audit);
 		return new ChangeResult(true, next, resource.id());

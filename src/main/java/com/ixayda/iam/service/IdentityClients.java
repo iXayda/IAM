@@ -43,14 +43,16 @@ public class IdentityClients {
 	private final IdentityResources resources;
 	private final IdentityResourceRoleRepository roles;
 	private final ClientSecrets secrets;
+	private final IdentityAuthorizationRevocations revocations;
 	private final SecurityAudits audits;
 
 	IdentityClients(IdentityClientRepository repository, IdentityResources resources, IdentityResourceRoleRepository roles,
-			ClientSecrets secrets, SecurityAudits audits) {
+			ClientSecrets secrets, IdentityAuthorizationRevocations revocations, SecurityAudits audits) {
 		this.repository = repository;
 		this.resources = resources;
 		this.roles = roles;
 		this.secrets = secrets;
+		this.revocations = revocations;
 		this.audits = audits;
 	}
 
@@ -93,6 +95,7 @@ public class IdentityClients {
 		var previous = registered(current);
 		var changed = this.repository.update(current, buildRegistration(id, config, previous.getClientSecret(), previous.getClientIdIssuedAt()),
 				config.resourceId(), config.allowedRoleIds(), current.status(), false);
+		this.revocations.revokeForClient(id, audit);
 		record(Action.CLIENT_UPDATED, id, audit);
 		return changed;
 	}
@@ -106,6 +109,7 @@ public class IdentityClients {
 		var next = enabled ? IdentityClient.Status.ACTIVE : IdentityClient.Status.DISABLED;
 		if (current.status() == next) { return current; }
 		var changed = this.repository.update(current, registered(current), current.configuration().resourceId(), current.configuration().allowedRoleIds(), next, false);
+		this.revocations.revokeForClient(id, audit);
 		record(enabled ? Action.CLIENT_ENABLED : Action.CLIENT_DISABLED, id, audit);
 		return changed;
 	}
@@ -117,6 +121,7 @@ public class IdentityClients {
 		String secret = this.secrets.generate();
 		var client = RegisteredClient.from(registered(current)).clientSecret(this.secrets.hash(secret)).build();
 		var changed = this.repository.update(current, client, current.configuration().resourceId(), current.configuration().allowedRoleIds(), current.status(), true);
+		this.revocations.revokeForClient(id, audit);
 		record(Action.CLIENT_SECRET_ROTATED, id, audit);
 		return new IdentityClientSecret(changed, secret);
 	}

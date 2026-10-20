@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.ixayda.iam.IdentityProtocolTestSupport;
 import com.ixayda.iam.model.IdentityRefreshFamily;
+import com.ixayda.iam.repository.IdentityAuthorizationBindingRepository;
 import com.ixayda.iam.security.IdentityAuthorizationRequestProvider;
 import com.ixayda.iam.security.IdentityRefreshTokenProvider;
 
@@ -40,6 +41,7 @@ class IdentityAuthorizationRevocationsIntegrationTests extends IdentityProtocolT
 
 	@Autowired private IdentityAuthorizationRevocations revocations;
 	@Autowired private IdentityAccessTokens online;
+	@Autowired private IdentityAuthorizationBindingRepository storedBindings;
 
 	@ParameterizedTest
 	@ValueSource(strings = { "code", "ordinary", "offline", "closed", "quarantined" })
@@ -158,9 +160,13 @@ class IdentityAuthorizationRevocationsIntegrationTests extends IdentityProtocolT
 	void originalResourceSelectionStillFindsGrantsAfterTheirClientMovesToAnotherResource() {
 		String code = code(Set.of("openid")); UUID next = this.resources.create("urn:example:billing", "Billing", AUDIT).id();
 		this.clients.updateConfiguration(this.clientId, 1, configuration(next, Set.of()), AUDIT);
+		UUID id = UUID.fromString(stored(code).authorization().getId());
+		assertThat(this.storedBindings.findIdsForResource(this.resourceId)).containsExactly(id);
+		assertThat(this.storedBindings.findIdsForResource(next)).isEmpty();
+		// Transfer already revoked it. Original ownership remains discoverable and repeated revocation is idempotent.
 		assertThat(new TransactionTemplate(this.transactions).<Integer>execute(tx -> {
 			this.resources.lockById(this.resourceId); return this.revocations.revokeForResource(this.resourceId, AUDIT);
-		})).isEqualTo(1);
+		})).isZero();
 		assertThat(IdentityAuthorizations.isRevoked(stored(code).authorization())).isTrue();
 	}
 

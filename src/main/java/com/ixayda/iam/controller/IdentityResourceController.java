@@ -118,7 +118,7 @@ public class IdentityResourceController {
 	}
 
 	@ApiResponse(responseCode = "200", description = "资源当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceResponse.class)))
-	@Operation(operationId = "updateResourceName", summary = "修改资源显示名", description = "需要本次操作的新 TOTP，携带最近查询到的正整数 version。仅接受 version、displayName、code 和 CSRF；不接受查询参数。版本过期返回 409，不修改资源或消费验证码；无变化操作保持版本但消费本次验证码。")
+	@Operation(operationId = "updateResourceName", summary = "修改资源显示名", description = "需要本次操作的新 TOTP，携带最近查询到的正整数 version。仅接受 version、displayName、code 和 CSRF；不接受查询参数。实际改名撤销原始绑定到该资源的全部应用授权。版本过期返回 409，不修改资源或消费验证码；无变化操作保持版本但消费本次验证码。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "404", description = "资源不存在；仅在本次 TOTP 验证后返回", content = @Content)
 	@ApiResponse(responseCode = "409", description = "版本冲突", content = @Content(mediaType = "text/plain"))
@@ -134,7 +134,7 @@ public class IdentityResourceController {
 	}
 
 	@ApiResponse(responseCode = "200", description = "资源当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceResponse.class)))
-	@Operation(operationId = "disableResource", summary = "禁用资源", description = "需要本次操作的新 TOTP 和最近查询到的正整数 version。仅接受 version、code 和 CSRF；不接受查询参数。禁用保留不可变资源身份。无变化操作保持版本，但消费验证码。")
+	@Operation(operationId = "disableResource", summary = "禁用资源", description = "需要本次操作的新 TOTP 和最近查询到的正整数 version。仅接受 version、code 和 CSRF；不接受查询参数。实际禁用撤销原始绑定到该资源的全部应用授权，保留不可变资源身份。无变化操作保持版本，但消费验证码。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "404", description = "资源不存在；仅在本次 TOTP 验证后返回", content = @Content)
 	@ApiResponse(responseCode = "409", description = "版本冲突", content = @Content(mediaType = "text/plain"))
@@ -148,7 +148,7 @@ public class IdentityResourceController {
 	}
 
 	@ApiResponse(responseCode = "200", description = "资源当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceResponse.class)))
-	@Operation(operationId = "enableResource", summary = "启用资源", description = "需要本次操作的新 TOTP 和最近查询到的正整数 version。仅接受 version、code 和 CSRF；不接受查询参数。启用不重新创建身份，也不恢复已撤销授权。无变化操作保持版本，但消费验证码。")
+	@Operation(operationId = "enableResource", summary = "启用资源", description = "需要本次操作的新 TOTP 和最近查询到的正整数 version。仅接受 version、code 和 CSRF；不接受查询参数。实际启用撤销旧应用授权，不重新创建身份或恢复已撤销授权。无变化操作保持版本，但消费验证码。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "404", description = "资源不存在；仅在本次 TOTP 验证后返回", content = @Content)
 	@ApiResponse(responseCode = "409", description = "版本冲突", content = @Content(mediaType = "text/plain"))

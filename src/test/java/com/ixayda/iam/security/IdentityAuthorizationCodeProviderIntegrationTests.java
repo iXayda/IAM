@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import com.ixayda.iam.IdentityProtocolTestSupport;
+import com.ixayda.iam.service.IdentityAuthorizations;
 import com.ixayda.iam.model.IdentityRefreshFamily;
 import com.ixayda.iam.service.IdentityBrowserSessions;
 
@@ -169,8 +170,14 @@ class IdentityAuthorizationCodeProviderIntegrationTests extends IdentityProtocol
 	@ValueSource(strings = { "user-disabled", "credential", "client-secret", "client-disabled", "client-transferred", "resource", "resource-disabled", "role", "role-disabled", "assignment" })
 	void currentEpochsCannotBeReplacedByTheOriginalAuthorizationOrAStaleClientProof(String mutation) {
 		String code = code(Set.of("openid", "offline_access")); var client = authenticatedClient(code);
-		mutate(mutation);
-		rejection(request(code, client), "invalid_grant"); assertUnconsumed(code);
+		mutate(mutation); var afterMutation = stored(code);
+		rejection(request(code, client), "invalid_grant"); assertThat(stored(code)).isEqualTo(afterMutation);
+		if (Set.of("user-disabled", "credential").contains(mutation)) { assertUnconsumed(code); }
+		else {
+			assertThat(IdentityAuthorizations.isRevoked(afterMutation.authorization())).isTrue();
+			assertThat(afterMutation.authorization().getAccessToken()).isNull();
+			assertThat(afterMutation.authorization().getRefreshToken()).isNull();
+		}
 	}
 
 	@ParameterizedTest
@@ -320,7 +327,9 @@ class IdentityAuthorizationCodeProviderIntegrationTests extends IdentityProtocol
 				awaitLatch(locked);
 				var reader = executor.submit(() -> { serverContext("https://iam.example"); try { return rejection(request, "invalid_grant"); } finally { AuthorizationServerContextHolder.resetContext(); } });
 				await().atMost(Duration.ofSeconds(10)).until(() -> this.jdbc.sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%FROM iam_user WHERE id%FOR SHARE%')").query(Boolean.class).single());
-				change.countDown(); writer.get(10, TimeUnit.SECONDS); assertThat(reader.get(10, TimeUnit.SECONDS)).isNotNull(); assertUnconsumed(code);
+				change.countDown(); writer.get(10, TimeUnit.SECONDS); assertThat(reader.get(10, TimeUnit.SECONDS)).isNotNull();
+				assertThat(IdentityAuthorizations.isRevoked(stored(code).authorization())).isTrue();
+				assertThat(stored(code).authorization().getAccessToken()).isNull();
 			}
 			finally { change.countDown(); }
 		}

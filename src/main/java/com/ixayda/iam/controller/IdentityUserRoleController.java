@@ -96,7 +96,7 @@ public class IdentityUserRoleController {
 				binding.userId(), binding.resourceId(), binding.roleId(), binding.createdAt())).toList(), page.version(), encodeCursor(page.nextCursor()));
 	}
 
-	@Operation(operationId = "grantUserRole", summary = "授予用户资源角色", description = "携带该用户在角色所属资源的绑定 version 与本次操作的新 TOTP code。未变更过的绑定版本为 0。待开通用户可预配置；禁用用户、资源或角色拒绝授予。无变化操作仍验证和消费 TOTP，保持绑定版本和变更审计不变。")
+	@Operation(operationId = "grantUserRole", summary = "授予用户资源角色", description = "携带该用户在角色所属资源的绑定 version 与本次操作的新 TOTP code。未变更过的绑定版本为 0。待开通用户可预配置；禁用用户、资源或角色拒绝授予。实际授予撤销该用户在该资源的全部旧应用授权。无变化操作仍验证和消费 TOTP，保持绑定版本和变更审计不变。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也接受 _csrf 表单字段", schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "200", description = "返回绑定变更结果及当前绑定版本", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityUserRoleChangeResponse.class)))
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, content = @Content(mediaType = "application/x-www-form-urlencoded", schema = @Schema(implementation = IdentityUserRoleChangeRequest.class)))
@@ -108,7 +108,7 @@ public class IdentityUserRoleController {
 		return change(actorId, parseId(userId), parseId(roleId), command, true, request, response);
 	}
 
-	@Operation(operationId = "revokeUserRole", summary = "撤销用户资源角色", description = "携带该用户在角色所属资源的绑定 version 与本次操作的新 TOTP code。禁用主体仍可撤销；撤销最后一个角色后版本仍保留。无变化操作仍消费 TOTP；目标缺失或版本冲突回滚本次 TOTP 消费。")
+	@Operation(operationId = "revokeUserRole", summary = "撤销用户资源角色", description = "携带该用户在角色所属资源的绑定 version 与本次操作的新 TOTP code。禁用主体仍可撤销；实际撤销同时终止该用户在该资源的全部应用授权；撤销最后一个角色后版本仍保留。无变化操作仍消费 TOTP；目标缺失或版本冲突回滚本次 TOTP 消费。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也接受 _csrf 表单字段", schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "200", description = "返回绑定变更结果及当前绑定版本", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityUserRoleChangeResponse.class)))
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, content = @Content(mediaType = "application/x-www-form-urlencoded", schema = @Schema(implementation = IdentityUserRoleChangeRequest.class)))
