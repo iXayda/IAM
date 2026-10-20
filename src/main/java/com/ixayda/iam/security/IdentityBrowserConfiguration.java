@@ -177,6 +177,12 @@ public class IdentityBrowserConfiguration {
 			repository.setDefaultMaxInactiveInterval(sessions.idleTimeout());
 			repository.setSaveMode(SaveMode.ON_SET_ATTRIBUTE);
 			repository.setFlushMode(FlushMode.ON_SAVE);
+			// Independent snapshots may create the same immutable interaction owner.
+			// A collision must not overwrite another value; the audited adapter verifies every requested attribute after saving.
+			repository.setCreateSessionAttributeQuery("""
+					INSERT INTO %TABLE_NAME%_ATTRIBUTES (SESSION_PRIMARY_ID, ATTRIBUTE_NAME, ATTRIBUTE_BYTES)
+					VALUES (?, ?, ?) ON CONFLICT (SESSION_PRIMARY_ID, ATTRIBUTE_NAME) DO NOTHING
+					""");
 		};
 	}
 

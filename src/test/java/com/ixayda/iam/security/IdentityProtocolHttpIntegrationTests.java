@@ -620,6 +620,8 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 					.extracting(Map.Entry::getKey).containsExactlyInAnyOrder("sub", "name", "preferred_username");
 		}
 		assertThat(document.path("components").path("securitySchemes").path("applicationBearer").path("scheme").asText()).isEqualTo("bearer");
+		assertThat(document.path("paths").has("/oauth2/authorize")).isFalse();
+		assertThat(document.path("paths").has("/api/authorization-interactions/{handle}")).isFalse();
 		assertThat(document.path("info").path("description").asText()).doesNotContain("当前未提供", "随协议实现交付");
 	}
 

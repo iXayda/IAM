@@ -1,12 +1,12 @@
 # 接入指南
 
-本指南面向独立身份前端的接入者，说明跨请求的流程及约束。接口字段、请求编码、响应和错误以对应构建的 OpenAPI 为准。
+本指南面向独立身份前端、保密 Web/BFF 和资源服务的接入者，说明跨请求的流程及约束。接口字段、请求编码、响应和错误以对应构建的 OpenAPI 为准。
 
 ## 接入前提
 
 身份前端负责 IAM 登录与账号交互，由接入方提供。它与 IAM 接口使用同一固定 HTTPS origin；入口代理可使用经过证书链及主机名验证的 HTTPS 回源，或在受保护内网使用显式受信的 HTTP 回源。入口清除并重设外来转发头，不开放跨源凭据访问。
 
-`IAM_PROTOCOL_ISSUER` 是固定 HTTPS issuer。不要根据请求 Host 或参数选择 issuer、Token 或 JWKS。
+`IAM_PROTOCOL_ISSUER` 是固定 HTTPS issuer；`IAM_PROTOCOL_IDENTITY_FRONTEND_URI` 是与 issuer 同源且不含查询串或片段的前端地址。不要根据请求 Host 或参数选择 issuer、Token、JWKS 或身份前端。
 
 应用接入前，由管理员登记资源、角色、用户绑定、保密客户端及精确 HTTPS 回调。客户端秘密仅提供给对应应用服务端。
 
@@ -88,8 +88,23 @@ Cookie `__Host-IAMSESSION` 使用 Secure、HttpOnly、Path=/ 和 SameSite=Lax。
 
 每次敏感写操作请求本次新动态码，明确展示目标及影响，提交期间防止重复操作。动态码不能自动复用于下一次写入。版本冲突时刷新服务器状态并重新确认，不自动覆盖；隐藏按钮不能代替后端授权。
 
+## 保密 Web/BFF
+
+BFF 保存客户端秘密，使用 `client_secret_basic`、授权码和 S256 PKCE，并将 state、nonce 及 verifier 绑定到单次登录交易：
+
+1. BFF 发起授权请求，IAM 导航到已配置的独立身份前端。
+2. 前端接收短期 `interaction` 句柄，取入内存后立即以 `history.replaceState` 清理 URL，不把原 URL 发给统计或错误收集服务。
+3. 查询 `/api/authorization-interactions/{handle}`，展示服务器确认的应用、当前身份及范围；需要登录时先完成 IAM 登录，再重新查询。
+4. 用户明确继续或取消后，携带当前 CSRF 提交决定，只导航到服务器成功响应中的 HTTPS 地址，不自行拼接客户端回调。
+5. BFF 核对 state、nonce、PKCE 及 Token 签名，单次消费交易；UserInfo 的 subject 与已验证的 ID Token 必须相同。
+
+Access Token 和 Refresh Token 只保留在 BFF 服务端，浏览器持有应用自己的安全会话 Cookie。刷新需要单次消费父凭据；提交后超时或丢失响应时结束本地授权并重新登录，不能盲目重试父 Refresh Token。
+
 ## 退出与撤销
 
 | 操作 | 作用范围 |
 | --- | --- |
-| IAM 退出 | 结束当前 IAM 浏览器会话 |
+| 应用退出 | 由接入应用结束本地会话，不自动退出 IAM 或其他应用 |
+| IAM 退出 | 结束当前 IAM 浏览器会话；应用本地会话及授权分别处理 |
+
+接入应用处理失效 Token，不能仅凭本地 Cookie 继续放行业务操作。当前接入使用身份接口，不假定存在未声明的 RP 发起退出端点。

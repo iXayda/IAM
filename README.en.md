@@ -4,6 +4,8 @@
 
 IAM is an identity and access management project for a single organization and its applications. It lets applications share accounts and sign-in, with centralized management of users, application roles, sessions, and security audits.
 
+The project provides the IAM backend. A separate identity frontend implements login and administration interactions. Business applications connect through OIDC and manage their own pages and application sessions.
+
 ## Use cases
 
 - Share accounts and single sign-on across applications operated by your organization.
@@ -37,6 +39,7 @@ Before starting the application, configure a dedicated PostgreSQL database and H
 | `IAM_TOTP_KEY_FILE` | Required when TOTP is enabled; path to an external protection key file containing 32 raw binary bytes |
 | `IAM_SIGNING_KEY_FILE` | Protection key file for the signing private key, containing 32 raw binary bytes; use a different key from the TOTP protection key |
 | `IAM_PROTOCOL_ISSUER` | Required when protocol endpoints are enabled; an explicit HTTPS issuer, never inferred from the request Host or proxy headers |
+| `IAM_PROTOCOL_IDENTITY_FRONTEND_URI` | Required for browser authorization navigation; a fixed HTTPS identity frontend URL on the same origin as the issuer, without a query string or fragment |
 | `IAM_AUTHORIZATION_KEY_FILE` | Required when protocol endpoints are enabled; path to a separate authorization state protection file containing 64 raw binary bytes, kept separately from the signing and TOTP protection keys |
 
 The database account needs permission to create tables and run migrations. Flyway creates or upgrades the schema at startup. Keep the TOTP protection key persistent and restrict read access. Do not commit it to the repository or regenerate it on every startup.

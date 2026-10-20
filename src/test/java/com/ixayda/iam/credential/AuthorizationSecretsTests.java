@@ -102,6 +102,27 @@ class AuthorizationSecretsTests {
 	}
 
 	@Test
+	void sessionOwnerInitializationSurvivesReloadAndCannotBeUsedAsAnotherLookupPurpose() throws Exception {
+		Path path = key(64); var secrets = new AuthorizationSecrets(path.toString());
+		String id = UUID.randomUUID().toString(); String owner = secrets.interactionSessionOwner(id);
+		assertThat(owner).matches("[A-Za-z0-9_-]{43}").isEqualTo(new AuthorizationSecrets(path.toString()).interactionSessionOwner(id))
+				.isNotEqualTo(secrets.interactionSessionOwner(UUID.randomUUID().toString()))
+				.isNotEqualTo(new AuthorizationSecrets(key(64).toString()).interactionSessionOwner(id));
+		assertThat(java.util.HexFormat.of().formatHex(java.util.Base64.getUrlDecoder().decode(owner)))
+				.isNotEqualTo(secrets.digest(id)).isNotEqualTo(secrets.interactionOwnerDigest(id)).isNotEqualTo(secrets.interactionDigest(id));
+		assertThatThrownBy(() -> secrets.interactionSessionOwner(null)).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> secrets.interactionSessionOwner("x".repeat(129))).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new AuthorizationSecrets("").interactionSessionOwner(id)).isInstanceOf(IllegalStateException.class);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "", "\ud800" })
+	void invalidSessionOwnerInputsAreRejected(String value) throws Exception {
+		var secrets = new AuthorizationSecrets(key(64).toString());
+		assertThatThrownBy(() -> secrets.interactionSessionOwner(value)).isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
 	void absentKeysAndOversizedValuesCannotBeUsed() throws Exception {
 		var absent = new AuthorizationSecrets("");
 		assertThatThrownBy(absent::requireConfigured).isInstanceOf(IllegalStateException.class);

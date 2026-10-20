@@ -111,6 +111,11 @@ public final class AuthorizationSecrets {
 	public String interactionOwnerDigest(String value) { return lookup("iam:interaction-owner:v1:", value, 43); }
 	public String interactionBinding(String canonical) { return lookup("iam:interaction-binding:v1:", canonical, 1024); }
 
+	/** Stable initialization prevents independent JDBC snapshots from assigning different owners to one session. */
+	public String interactionSessionOwner(String sessionId) {
+		return Base64.getUrlEncoder().withoutPadding().encodeToString(HexFormat.of().parseHex(lookup("iam:interaction-session-owner:v1:", sessionId, 128)));
+	}
+
 	private String lookup(String domain, String value, int maximum) {
 		requireConfigured();
 		if (value == null || value.isEmpty() || value.length() > maximum) { throw new IllegalArgumentException("Protocol token is invalid"); }

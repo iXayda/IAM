@@ -31,6 +31,13 @@ public class IdentityAuthorizationInteractions {
 	/** Keep this private random value in the server-side session, including legitimate login session-ID rotation. */
 	public String newBrowserOwner() { return this.secrets.generateInteractionSecret(); }
 
+	/** Initialize once from the server-generated session id; retain the result across login rotation. */
+	public String browserOwner(String sessionId) {
+		Assert.isTrue(sessionId != null && sessionId.length() <= 128 && !sessionId.isEmpty()
+				&& sessionId.chars().allMatch(value -> value >= 0x21 && value <= 0x7e), "A server-generated session id is required");
+		return this.secrets.interactionSessionOwner(sessionId);
+	}
+
 	/** Only a fully validated original request may enter this workflow. No login or grant is created here. */
 	@Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
 	public Ticket create(String owner, IdentityAuthorizationInteraction.Request request, long originalAuthenticatedAt) {

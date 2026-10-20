@@ -81,6 +81,7 @@ class IdentityProtocolStartupIntegrationTests {
 		var started = new AtomicInteger();
 		try (var application = start(WebApplicationType.SERVLET, "https://iam.example", this.signing.toString(), this.authorization.toString(), true, started)) {
 			assertThat(application.getBean("protocolSecurity")).isNotNull(); assertThat(started).hasValue(1);
+			assertThat(application.getBeansOfType(IdentityAuthorizationEndpoint.class)).isEmpty();
 		}
 		try (var application = start(WebApplicationType.NONE, "invalid-web-issuer", "", "", true, new AtomicInteger())) {
 			assertThat(application.getBeansOfType(IdentityProtocolConfiguration.class)).isEmpty();
@@ -88,15 +89,44 @@ class IdentityProtocolStartupIntegrationTests {
 		}
 	}
 
+	@ParameterizedTest
+	@ValueSource(strings = { "http://iam.example/identity/authorize", "https://other.example/identity/authorize", "https://iam.example:9443/identity/authorize",
+			"https://iam.example/identity/authorize?redirect=untrusted", "https://iam.example/identity/authorize#private", "https://iam.example/identity/%0Aauthorize" })
+	void invalidIdentityFrontendStopsStartupBeforeRequestsAreAdmitted(String frontend) {
+		var started = new AtomicInteger();
+		assertThatThrownBy(() -> {
+			try (var ignored = start(WebApplicationType.SERVLET, "https://iam.example", this.signing.toString(), this.authorization.toString(), true, started, frontend)) {
+				fail("An invalid identity frontend must not admit requests");
+			}
+		}).isInstanceOf(RuntimeException.class);
+		assertThat(started).hasValue(0);
+	}
+
+	@Test
+	void sameOriginIdentityFrontendActivatesTheBoundAuthorizationWorkflow() {
+		var started = new AtomicInteger();
+		try (var application = start(WebApplicationType.SERVLET, "https://iam.example", this.signing.toString(), this.authorization.toString(), true, started,
+				"https://iam.example:443/identity/authorize")) {
+			assertThat(application.getBean(IdentityAuthorizationEndpoint.class)).isNotNull(); assertThat(started).hasValue(1);
+		}
+	}
+
 	private ConfigurableApplicationContext start(WebApplicationType type, String issuer, String signing, String authorization,
 			boolean lazy, AtomicInteger started) {
+		return start(type, issuer, signing, authorization, lazy, started, null);
+	}
+
+	private ConfigurableApplicationContext start(WebApplicationType type, String issuer, String signing, String authorization,
+			boolean lazy, AtomicInteger started, String frontend) {
 		ApplicationListener<WebServerInitializedEvent> listener = event -> started.incrementAndGet();
-		return new SpringApplicationBuilder(IamApplication.class).web(type).lazyInitialization(lazy).listeners(listener).properties(Map.ofEntries(
+		var properties = new java.util.HashMap<String, Object>(Map.ofEntries(
 				Map.entry("spring.datasource.url", this.postgres.getJdbcUrl()), Map.entry("spring.datasource.username", this.postgres.getUsername()),
 				Map.entry("spring.datasource.password", this.postgres.getPassword()), Map.entry("spring.datasource.hikari.schema", this.schema),
 				Map.entry("spring.flyway.schemas", this.schema), Map.entry("spring.flyway.default-schema", this.schema),
 				Map.entry("iam.protocol.issuer", issuer), Map.entry("iam.signing.key-file", signing), Map.entry("iam.authorization.key-file", authorization),
-				Map.entry("server.port", "0"), Map.entry("spring.main.banner-mode", "off"))).run();
+				Map.entry("server.port", "0"), Map.entry("spring.main.banner-mode", "off")));
+		if (frontend != null) { properties.put("iam.protocol.identity-frontend-uri", frontend); }
+		return new SpringApplicationBuilder(IamApplication.class).web(type).lazyInitialization(lazy).listeners(listener).properties(properties).run();
 	}
 
 	private Path keyFile(String name, int length) throws Exception {
