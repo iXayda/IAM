@@ -38,12 +38,41 @@ class IdentityProtocolOpenApiConfiguration {
 		return openApi -> {
 			openApi.getComponents().addSecuritySchemes("protocolClient", new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("basic")
 					.description("保密 Web/BFF 客户端使用 client_secret_basic；对客户端标识与秘密分别进行 form 编码，再拼接冒号并进行 Base64 编码。秘密仅由客户端服务端保存。"));
+			openApi.getComponents().addSecuritySchemes("applicationBearer", new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("bearer").bearerFormat("JWT")
+					.description("IAM 签发的有效业务 Access Token，必须实际获授 openid；不能使用 ID Token、刷新凭据或 IAM Cookie。"));
 			openApi.getComponents().addSchemas("IdentityProtocolError", new ObjectSchema()
 					.addProperty("error", new StringSchema().description("OAuth 错误标识，不包含请求值或内部异常详情"))
 					.required(List.of("error")).additionalProperties(false));
 			openApi.path(IdentityProtocolResponses.TOKEN_ENDPOINT, new PathItem().post(token()));
 			openApi.path(IdentityProtocolResponses.JWK_SET_ENDPOINT, new PathItem().get(publicKeys()));
+			openApi.path(IdentityProtocolResponses.USER_INFO_ENDPOINT, new PathItem().get(userInfo("getUserInfo")).post(userInfo("postUserInfo")));
 		};
+	}
+
+	private static Operation userInfo(String operationId) {
+		var claims = new ObjectSchema().addProperty("sub", new StringSchema().format("uuid").description("稳定主体标识，客户端须与已验证 ID Token 的 sub 比较"))
+				.addProperty("name", new StringSchema().description("实际获授 profile 时返回当前显示名称"))
+				.addProperty("preferred_username", new StringSchema().description("实际获授 profile 时返回当前登录标识"))
+				.required(List.of("sub")).additionalProperties(false);
+		return new Operation().operationId(operationId).summary("查询 OIDC 用户资料").tags(List.of("protocol"))
+				.security(List.of(new SecurityRequirement().addList("applicationBearer")))
+				.description("通过 Authorization: Bearer 调用，GET 与 POST 均不接受查询串、请求体、重复认证头或 DPoP。"
+						+ "在同一事务内完成严格验签、当前用户及应用授权校验和实际 scope 的资料投影；必须实际具有 openid，profile 控制姓名与用户名。"
+						+ "原始获批或客户端配置的 scope 不能代替本次 Token 的实际范围，资料来自当前用户记录。"
+						+ "响应禁止缓存，不读取或更新 IAM 浏览器会话，也不授予管理权限；客户端须核对 sub 与其已验证 ID Token 一致。"
+						+ "未提供 Bearer 认证时返回空正文的 401 challenge；其他拒绝返回固定 OAuth 错误并记录必需审计。")
+				.responses(new ApiResponses()
+						.addApiResponse("200", new ApiResponse().description("由实际 scope 允许的当前用户资料").content(new Content().addMediaType("application/json", new MediaType().schema(claims))))
+						.addApiResponse("400", error("invalid_request：无效传输、查询串、请求体或重复认证头")
+								.addHeaderObject("WWW-Authenticate", new Header().schema(new StringSchema()).description("Bearer challenge，含 error=\"invalid_request\"")))
+						.addApiResponse("401", error("无 Bearer 时正文为空；其他情况为 invalid_token，含过期、撤销、签名或用途错误")
+								.addHeaderObject("WWW-Authenticate", new Header().schema(new StringSchema()).description("Bearer realm=\"iam/userinfo\"，存在无效 Bearer 时附带 error=\"invalid_token\"")))
+						.addApiResponse("403", error("insufficient_scope：当前有效 Access Token 未实际获授 openid")
+								.addHeaderObject("WWW-Authenticate", new Header().schema(new StringSchema()).description("Bearer challenge，含 error=\"insufficient_scope\" 和 scope=\"openid\"")))
+						.addApiResponse("405", error("仅支持 GET、POST").addHeaderObject("Allow", new Header().schema(new StringSchema()._enum(List.of("GET, POST")))))
+						.addApiResponse("413", error("invalid_request：请求体超过 8 KiB"))
+						.addApiResponse("429", error("temporarily_unavailable：共享入口限流").addHeaderObject("Retry-After", new Header().schema(new IntegerSchema().minimum(BigDecimal.ONE))))
+						.addApiResponse("503", error("server_error：验证依赖、用户存储或必需拒绝审计不可用")));
 	}
 
 	private static Operation publicKeys() {

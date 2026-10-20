@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 
 import com.ixayda.iam.model.IdentityAccessToken;
 import com.ixayda.iam.service.IdentityAccessTokens;
@@ -35,19 +36,24 @@ public final class IdentityAccessTokenVerifier {
 		this.tokens = tokens; this.issuer = IdentityTokenRequests.requireIssuer(issuer);
 	}
 
-	public Optional<IdentityAccessToken> verify(String raw) { return verify(raw, null); }
+	public Optional<IdentityAccessToken> verify(String raw) { return verify(raw, null, Function.identity()); }
+
+	/** Trusted projections run after JWT validation, while subject and grant locks remain held through commit. */
+	<T> Optional<T> use(String raw, Function<IdentityAccessToken, T> projection) {
+		Assert.notNull(projection, "Trusted token projection is required"); return verify(raw, null, projection);
+	}
 
 	/** Resource identity must come from the authenticated resource credential, never bearer claims or request fields. */
 	public Optional<IdentityAccessToken> verifyForResource(String raw, UUID resourceId) {
-		Assert.notNull(resourceId, "Authenticated resource is required"); return verify(raw, resourceId);
+		Assert.notNull(resourceId, "Authenticated resource is required"); return verify(raw, resourceId, Function.identity());
 	}
 
-	private Optional<IdentityAccessToken> verify(String raw, UUID resourceId) {
+	private <T> Optional<T> verify(String raw, UUID resourceId, Function<IdentityAccessToken, T> projection) {
 		var candidate = parse(raw); if (candidate.isEmpty()) { return Optional.empty(); }
 		var parsed = candidate.orElseThrow();
 		try {
-			return resourceId == null ? this.tokens.use(raw, parsed.keyId(), context -> validate(raw, parsed.claims(), context))
-					: this.tokens.useForResource(raw, parsed.keyId(), resourceId, context -> validate(raw, parsed.claims(), context));
+			return resourceId == null ? this.tokens.use(raw, parsed.keyId(), context -> projection.apply(validate(raw, parsed.claims(), context)))
+					: this.tokens.useForResource(raw, parsed.keyId(), resourceId, context -> projection.apply(validate(raw, parsed.claims(), context)));
 		}
 		catch (InvalidAccessTokenException ex) { return Optional.empty(); }
 	}

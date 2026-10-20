@@ -2,6 +2,7 @@ package com.ixayda.iam.security;
 
 import java.util.List;
 
+import com.ixayda.iam.service.IdentityAccessTokens;
 import com.ixayda.iam.service.IdentityApplicationRoles;
 import com.ixayda.iam.service.IdentityAuthorizationBindings;
 import com.ixayda.iam.service.IdentityAuthorizationSessions;
@@ -9,6 +10,7 @@ import com.ixayda.iam.service.IdentityAuthorizations;
 import com.ixayda.iam.service.IdentityProtocolClients;
 import com.ixayda.iam.service.IdentityRefreshTokens;
 import com.ixayda.iam.service.IdentitySigningKeys;
+import com.ixayda.iam.service.IdentityUsers;
 import com.ixayda.iam.service.SecurityAudits;
 
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -70,6 +72,21 @@ public class IdentityProtocolConfiguration {
 				.authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
 				.headers(headers -> headers.disable())
 				.addFilterBefore(new IdentityJwkRequestFilter(source), SecurityContextHolderFilter.class);
+		return http.build();
+	}
+
+	@Bean
+	@Order(2)
+	SecurityFilterChain userInfoSecurity(HttpSecurity http, AuthorizationServerSettings settings, IdentityAccessTokens tokens,
+			IdentityUsers users, SecurityAudits audits, PlatformTransactionManager transactions) throws Exception {
+		var provider = new IdentityUserInfoProvider(new IdentityAccessTokenVerifier(tokens, settings.getIssuer()), users);
+		http.securityMatcher(PathPatternRequestMatcher.withDefaults().matcher(IdentityProtocolResponses.USER_INFO_ENDPOINT))
+				.securityContext(context -> context.securityContextRepository(new NullSecurityContextRepository()))
+				.sessionManagement(session -> session.disable()).requestCache(cache -> cache.disable())
+				.httpBasic(basic -> basic.disable()).csrf(csrf -> csrf.disable())
+				.authorizeHttpRequests(authorize -> authorize.anyRequest().authenticated())
+				.headers(headers -> headers.disable())
+				.addFilterBefore(new IdentityUserInfoRequestFilter(provider, audits, transactions), SecurityContextHolderFilter.class);
 		return http.build();
 	}
 

@@ -310,6 +310,177 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 		assertThat(protocolSnapshot()).isEqualTo(before); assertSingleRequestRejection(); success(token(codeBody(code)));
 	}
 
+
+	@ParameterizedTest
+	@ValueSource(strings = { "GET", "POST" })
+	void userInfoProjectsOnlyCurrentScopePermittedClaimsWithoutReadingBrowserState(String method) throws Exception {
+		String bearer = success(token(codeBody(code(Set.of("openid", "profile"))))).path("access_token").asText();
+		var sessions = sessionSnapshot(); var grants = protocolSnapshot();
+		this.jdbc.sql("UPDATE iam_user SET display_name='Current profile name' WHERE id=:id").param("id", this.userId).update();
+		var response = send("/userinfo", method, null, "Bearer " + bearer, "", Map.of("Cookie", "__Host-IAMSESSION=" + this.sessionId));
+		var claims = userInfoSuccess(response);
+		assertThat(claims.properties()).extracting(Map.Entry::getKey).containsExactlyInAnyOrder("sub", "name", "preferred_username");
+		assertThat(claims.path("sub").asText()).isEqualTo(this.userId.toString());
+		assertThat(claims.path("name").asText()).isEqualTo("Current profile name"); assertThat(claims.path("preferred_username").asText()).isEqualTo("alice");
+		assertThat(sessionSnapshot()).isEqualTo(sessions); assertThat(protocolSnapshot()).isEqualTo(grants); assertThat(userInfoAudits()).isEmpty();
+	}
+
+	@Test
+	void userInfoUsesActualScopesRatherThanClientConfigurationOrTheOriginalAuthorization() throws Exception {
+		String code = code(Set.of("openid", "profile", "offline_access")); var issued = success(token(codeBody(code)));
+		var narrowed = success(token(refreshBody(issued.path("refresh_token").asText()) + "&scope=openid%20offline_access"));
+		var claims = userInfoSuccess(userInfo(narrowed.path("access_token").asText()));
+		assertThat(claims.properties()).containsExactly(Map.entry("sub", new JsonMapper().getNodeFactory().stringNode(this.userId.toString())));
+		var withoutOpenId = success(token(refreshBody(narrowed.path("refresh_token").asText()) + "&scope=offline_access"));
+		var response = userInfo(withoutOpenId.path("access_token").asText()); error(response, 403, "insufficient_scope");
+		assertThat(response.headers().firstValue("WWW-Authenticate").orElseThrow()).contains("Bearer ", "error=\"insufficient_scope\"", "scope=\"openid\"");
+		assertThat(userInfoAudits()).singleElement().satisfies(audit -> {
+			assertThat(audit.get("actor")).isEqualTo("user:" + this.userId); assertThat(audit.get("target_user_id")).isEqualTo(this.userId);
+		});
+	}
+
+	@Test
+	void openIdAloneDoesNotReturnConfiguredProfileClaimsAndBrowserLogoutDoesNotEndAnApplicationGrant() throws Exception {
+		String bearer = success(token(codeBody(code(Set.of("openid"))))).path("access_token").asText();
+		this.store.deleteById(this.sessionId);
+		assertThat(userInfoSuccess(userInfo(bearer)).properties()).extracting(Map.Entry::getKey).containsExactly("sub");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "missing", "basic", "cookie" })
+	void browserOrClientAuthenticationCannotReplaceTheUserInfoBearerChallenge(String proof) throws Exception {
+		var sessions = sessionSnapshot();
+		var response = send("/userinfo", "GET", null, proof.equals("basic") ? basic() : null, "",
+				proof.equals("cookie") ? Map.of("Cookie", "__Host-IAMSESSION=" + this.sessionId) : Map.of());
+		assertThat(response.statusCode()).isEqualTo(401); assertThat(response.body()).isEmpty(); assertSecurityHeaders(response);
+		assertThat(response.headers().firstValue("WWW-Authenticate")).contains("Bearer realm=\"iam/userinfo\"");
+		assertThat(response.headers().allValues("Set-Cookie")).isEmpty(); assertThat(sessionSnapshot()).isEqualTo(sessions);
+		assertAnonymousUserInfoRejection();
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "id_token", "refresh_token", "altered", "malformed" })
+	void userInfoRejectsOtherCredentialPurposesAndInvalidBearerProofs(String proof) throws Exception {
+		var issued = success(token(codeBody(code(Set.of("openid", "offline_access")))));
+		String bearer = switch (proof) {
+			case "altered" -> issued.path("access_token").asText().replaceFirst(".$", "!");
+			case "malformed" -> "private-not-a-jwt";
+			default -> issued.path(proof).asText();
+		};
+		var response = userInfo(bearer); error(response, 401, "invalid_token");
+		assertThat(response.headers().firstValue("WWW-Authenticate").orElseThrow()).contains("Bearer ", "error=\"invalid_token\"");
+		assertAnonymousUserInfoRejection(); assertNoSecretsInAudit(bearer, issued.path("id_token").asText(), issued.path("refresh_token").asText());
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "user-disabled", "credential", "client-secret", "client-disabled", "client-transferred", "resource", "resource-disabled", "role", "role-disabled", "assignment" })
+	void userInfoRechecksTheCurrentUserAndApplicationGrantRatherThanTrustingAnUnexpiredSignature(String mutation) throws Exception {
+		String bearer = success(token(codeBody(code(Set.of("openid", "profile", "offline_access"))))).path("access_token").asText();
+		mutate(mutation); error(userInfo(bearer), 401, "invalid_token"); assertAnonymousUserInfoRejection();
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "query", "body", "duplicate", "dpop", "chunked" })
+	void userInfoRejectsAmbiguousOrAlternateBearerTransportBeforeGrantUse(String transport) throws Exception {
+		String bearer = success(token(codeBody(code(Set.of("openid", "profile"))))).path("access_token").asText();
+		var sessions = sessionSnapshot(); var grants = protocolSnapshot();
+		HttpResponse<String> response;
+		if (transport.equals("chunked")) {
+			try (var client = client()) {
+				var request = HttpRequest.newBuilder(URI.create("https://localhost:" + this.port + "/userinfo")).timeout(Duration.ofSeconds(20))
+						.header("Authorization", "Bearer " + bearer).POST(HttpRequest.BodyPublishers.ofInputStream(() -> new java.io.ByteArrayInputStream(new byte[] { 1 }))).build();
+				response = client.send(request, HttpResponse.BodyHandlers.ofString());
+			}
+		}
+		else {
+			var headers = transport.equals("duplicate") ? Map.of("Authorization", "Bearer private-duplicate") : transport.equals("dpop") ? Map.of("DPoP", "private-proof") : Map.<String, String>of();
+			response = send("/userinfo" + (transport.equals("query") ? "?access_token=private-query-token" : ""), "POST", "application/x-www-form-urlencoded",
+					"Bearer " + bearer, transport.equals("body") ? "access_token=private-body-token" : "", headers);
+		}
+		error(response, 400, "invalid_request"); assertAnonymousUserInfoRejection();
+		assertThat(response.headers().firstValue("WWW-Authenticate").orElseThrow()).contains("Bearer ", "error=\"invalid_request\"");
+		assertThat(sessionSnapshot()).isEqualTo(sessions); assertThat(protocolSnapshot()).isEqualTo(grants);
+		userInfoSuccess(userInfo(bearer)); assertNoSecretsInAudit(bearer, "private-body-token", "private-query-token", "private-proof", "private-duplicate");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE" })
+	void userInfoOnlyAllowsGetAndPostWithoutCookieCsrfOrRedirects(String method) throws Exception {
+		var response = send("/userinfo", method, null, null, "", Map.of());
+		assertThat(response.statusCode()).isEqualTo(405); assertThat(response.headers().firstValue("Allow")).contains("GET, POST");
+		assertThat(response.headers().allValues("Set-Cookie")).isEmpty(); assertThat(response.headers().firstValue("Location")).isEmpty(); assertSecurityHeaders(response);
+		if (!method.equals("HEAD")) { error(response, 405, "invalid_request"); }
+		assertAnonymousUserInfoRejection();
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "suppressed", "altered", "unavailable" })
+	void aFailedMandatoryUserInfoDenialAuditReturnsUnavailableRatherThanAnUnauditedChallenge(String failure) throws Exception {
+		String body = switch (failure) {
+			case "suppressed" -> "IF NEW.action='user_info_rejected' THEN RETURN NULL; END IF; RETURN NEW;";
+			case "altered" -> "IF NEW.action='user_info_rejected' THEN NEW.source='altered'; END IF; RETURN NEW;";
+			default -> "RAISE EXCEPTION 'private userinfo audit fault';";
+		};
+		fault("iam_security_audit", "BEFORE INSERT", body, false);
+		error(userInfo("private-invalid-token"), 503, "server_error"); assertThat(userInfoAudits()).isEmpty();
+		this.jdbc.sql("DROP FUNCTION exchange_test_fault() CASCADE").update();
+	}
+
+	@Test
+	void userInfoDoesNotNeedTheBrowserSessionTableEvenWhenItsCookieIsSupplied() throws Exception {
+		String bearer = success(token(codeBody(code(Set.of("openid", "profile"))))).path("access_token").asText();
+		this.jdbc.sql("ALTER TABLE iam_browser_session RENAME TO isolated_userinfo_browser_session").update();
+		try { userInfoSuccess(send("/userinfo", "POST", null, "Bearer " + bearer, "", Map.of("Cookie", "__Host-IAMSESSION=" + this.sessionId))); }
+		finally { this.jdbc.sql("ALTER TABLE isolated_userinfo_browser_session RENAME TO iam_browser_session").update(); }
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "oauth2_authorization", "iam_user" })
+	void userInfoDependencyFailuresNeverReturnClaimsOrExposeInternalExceptions(String table) throws Exception {
+		String bearer = success(token(codeBody(code(Set.of("openid", "profile"))))).path("access_token").asText();
+		this.jdbc.sql("ALTER TABLE " + table + " RENAME TO isolated_userinfo_unavailable").update();
+		try { error(userInfo(bearer), 503, "server_error"); }
+		finally { this.jdbc.sql("ALTER TABLE isolated_userinfo_unavailable RENAME TO " + table).update(); }
+		assertAnonymousUserInfoRejection(); userInfoSuccess(userInfo(bearer));
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "profile", "disable" })
+	void userInfoWaitingForASubjectWriterUsesItsCommittedProfileAndSecurityState(String mutation) throws Exception {
+		String bearer = success(token(codeBody(code(Set.of("openid", "profile"))))).path("access_token").asText();
+		var postgres = this.context.getBean(org.testcontainers.postgresql.PostgreSQLContainer.class);
+		try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+				var executor = Executors.newSingleThreadExecutor()) {
+			connection.setAutoCommit(false);
+			try (var lock = connection.prepareStatement("SELECT id FROM iam_user WHERE id=? FOR UPDATE")) { lock.setObject(1, this.userId); lock.executeQuery().close(); }
+			var pending = executor.submit(() -> userInfo(bearer));
+			try {
+				org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(5)).until(() -> this.jdbc.sql("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%FROM iam_user WHERE id=%FOR SHARE%'").query(Long.class).single() > 0);
+				String sql = mutation.equals("profile") ? "UPDATE iam_user SET display_name='Committed current profile' WHERE id=?" : "UPDATE iam_user SET status='disabled' WHERE id=?";
+				try (var update = connection.prepareStatement(sql)) { update.setObject(1, this.userId); update.executeUpdate(); }
+			}
+			finally { connection.commit(); }
+			var response = pending.get(15, TimeUnit.SECONDS);
+			if (mutation.equals("profile")) { assertThat(userInfoSuccess(response).path("name").asText()).isEqualTo("Committed current profile"); }
+			else { error(response, 401, "invalid_token"); }
+		}
+	}
+
+	private HttpResponse<String> userInfo(String bearer) throws Exception { return send("/userinfo", "GET", null, "Bearer " + bearer, "", Map.of()); }
+	private static JsonNode userInfoSuccess(HttpResponse<String> response) {
+		assertThat(response.statusCode()).as(response.body()).isEqualTo(200); assertSecurityHeaders(response);
+		assertThat(response.headers().firstValue("Content-Type").orElseThrow()).startsWith("application/json");
+		assertThat(response.headers().allValues("Set-Cookie")).isEmpty(); assertThat(response.headers().firstValue("Location")).isEmpty();
+		return new JsonMapper().readTree(response.body());
+	}
+	private List<Map<String, Object>> userInfoAudits() { return this.jdbc.sql("SELECT * FROM iam_security_audit WHERE action='user_info_rejected'").query().listOfRows(); }
+	private void assertAnonymousUserInfoRejection() {
+		assertThat(userInfoAudits()).singleElement().satisfies(audit -> {
+			assertThat(audit.get("actor")).isEqualTo("anonymous"); assertThat(audit.get("target_user_id")).isNull();
+			assertThat(audit.get("source")).isEqualTo("protocol:userinfo"); assertThat(audit.get("correlation_id")).isInstanceOf(UUID.class);
+		});
+	}
+
 	@Test
 	void publicJwkSetContainsOnlyThePersistentRsaPublicIdentityAndVerifiesIssuedHttpTokens() throws Exception {
 		String code = code(Set.of("openid")); var issued = success(token(codeBody(code)));
@@ -411,7 +582,7 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 	@Test
 	void unsupportedProtocolEndpointsAreNotPublishedByTheNativeConfigurer() throws Exception {
 		for (String path : List.of("/.well-known/openid-configuration", "/.well-known/oauth-authorization-server", "/oauth2/authorize",
-				"/oauth2/introspect", "/oauth2/revoke", "/userinfo", "/connect/register", "/oauth2/device_authorization")) {
+				"/oauth2/introspect", "/oauth2/revoke", "/connect/register", "/oauth2/device_authorization")) {
 			var response = send(path, "GET", null, basic(), "", Map.of());
 			assertThat(response.statusCode()).as(path).isIn(401, 403); assertThat(response.headers().firstValue("Location")).isEmpty();
 		}
@@ -439,6 +610,16 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 		assertThat(document.path("paths").path("/oauth2/jwks").has("post")).isFalse();
 		assertThat(keys.path("responses").path("200").path("content").path("application/json").path("schema").path("properties").path("keys").path("items").path("properties").properties())
 				.extracting(Map.Entry::getKey).containsExactlyInAnyOrder("kty", "kid", "use", "alg", "n", "e");
+
+		for (String method : List.of("get", "post")) {
+			var info = document.path("paths").path("/userinfo").path(method);
+			assertThat(info.path("security").get(0).has("applicationBearer")).isTrue(); assertThat(info.path("security").get(0).has("browserSession")).isFalse();
+			assertThat(info.has("requestBody")).isFalse();
+			assertThat(info.path("responses").path("403").path("headers").has("WWW-Authenticate")).isTrue();
+			assertThat(info.path("responses").path("200").path("content").path("application/json").path("schema").path("properties").properties())
+					.extracting(Map.Entry::getKey).containsExactlyInAnyOrder("sub", "name", "preferred_username");
+		}
+		assertThat(document.path("components").path("securitySchemes").path("applicationBearer").path("scheme").asText()).isEqualTo("bearer");
 		assertThat(document.path("info").path("description").asText()).doesNotContain("当前未提供", "随协议实现交付");
 	}
 
