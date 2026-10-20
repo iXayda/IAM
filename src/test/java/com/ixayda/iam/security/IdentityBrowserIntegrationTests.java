@@ -820,7 +820,7 @@ class IdentityBrowserIntegrationTests {
 			assertThat(profile.headers().firstValue("Cache-Control")).contains("no-store");
 			assertThat(profile.headers().firstValue("Strict-Transport-Security")).isPresent();
 			var oversized = HttpRequest.newBuilder(URI.create("https://localhost:" + this.port + "/login"))
-					.header("X-Oversized", "x".repeat(9000)).GET().build();
+					.header("X-Oversized", "x".repeat(32_769)).GET().build();
 			var rejected = client.send(oversized, HttpResponse.BodyHandlers.ofString());
 			assertThat(rejected.statusCode()).isEqualTo(400);
 			assertThat(rejected.headers().allValues("Set-Cookie")).isEmpty();

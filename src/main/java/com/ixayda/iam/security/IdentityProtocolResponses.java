@@ -13,6 +13,7 @@ final class IdentityProtocolResponses {
 
 	static final String TOKEN_ENDPOINT = "/oauth2/token";
 	static final String JWK_SET_ENDPOINT = "/oauth2/jwks";
+	static final String USER_INFO_ENDPOINT = "/userinfo";
 
 	private IdentityProtocolResponses() { }
 

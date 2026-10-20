@@ -166,6 +166,20 @@ public abstract class IdentityProtocolTestSupport {
 			default -> this.assignments.change(this.userId, this.roleId, 1, false, AUDIT);
 		}
 	}
+	protected String largeAccessToken() {
+		var allowed = new java.util.HashSet<UUID>();
+		long version = 1;
+		for (int i = 0; i < 100; i++) {
+			String name = "role_" + String.format(java.util.Locale.ROOT, "%03d", i) + "_" + "x".repeat(55);
+			var role = this.roles.create(this.resourceId, name, "Long role " + i, AUDIT);
+			version = this.assignments.change(this.userId, role.id(), version, true, AUDIT).version();
+			allowed.add(role.id());
+		}
+		this.clients.updateConfiguration(this.clientId, 1, configuration(this.resourceId, allowed), AUDIT);
+		String code = code(Set.of("openid", "profile", "offline_access"));
+		return exchange(request(code, authenticatedClient(code))).getAccessToken().getTokenValue();
+	}
+
 	protected String code(Set<String> scopes) {
 		var browser = UsernamePasswordAuthenticationToken.authenticated(this.userId, "browser-credential", List.of(new SimpleGrantedAuthority("ROLE_IAM_ADMIN")));
 		var request = new OAuth2AuthorizationCodeRequestAuthenticationToken("https://iam.example/oauth2/authorize", this.clientId.toString(), browser,
