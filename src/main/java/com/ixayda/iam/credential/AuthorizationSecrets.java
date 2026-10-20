@@ -86,13 +86,27 @@ public final class AuthorizationSecrets {
 
 	/** Lookup is domain separated from encryption and covers all supported token types. */
 	public String digest(String value) {
+		return lookup("iam:authorization-lookup:v1:", value, 16_384);
+	}
+
+	/** Refresh history is a separate purpose from the native current-token index. */
+	public String refreshDigest(String value) { return lookup("iam:refresh-lookup:v1:", value, 16_384); }
+
+	/** Authenticates history ownership, generation, parent and timestamps, including the spent transition. */
+	public String refreshHistorySeal(String canonical) { return lookup("iam:refresh-history:v1:", canonical, 4096); }
+
+	public boolean verifiesRefreshHistory(String canonical, String seal) {
+		return seal != null && seal.matches("[0-9a-f]{64}") && MessageDigest.isEqual(HexFormat.of().parseHex(seal), HexFormat.of().parseHex(refreshHistorySeal(canonical)));
+	}
+
+	private String lookup(String domain, String value, int maximum) {
 		requireConfigured();
-		if (value == null || value.isEmpty() || value.length() > 16_384) { throw new IllegalArgumentException("Protocol token is invalid"); }
+		if (value == null || value.isEmpty() || value.length() > maximum) { throw new IllegalArgumentException("Protocol token is invalid"); }
 		byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
 		try {
 			if (!new String(encoded, StandardCharsets.UTF_8).equals(value)) { throw new IllegalArgumentException("Protocol token requires valid Unicode"); }
 			var mac = Mac.getInstance("HmacSHA256"); mac.init(this.lookup);
-			mac.update("iam:authorization-lookup:v1:".getBytes(StandardCharsets.US_ASCII));
+			mac.update(domain.getBytes(StandardCharsets.US_ASCII));
 			return HexFormat.of().formatHex(mac.doFinal(encoded));
 		}
 		catch (GeneralSecurityException ex) { throw new IllegalStateException("Protocol lookup is unavailable", ex); }
