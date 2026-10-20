@@ -1,6 +1,7 @@
 package com.ixayda.iam.security;
 
 import com.ixayda.iam.service.IdentitySigningKeys;
+import com.ixayda.iam.service.IdentityRestores;
 
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
@@ -22,10 +23,10 @@ public class IdentitySigningConfiguration {
 	@Bean
 	@Lazy(false)
 	@DependsOnDatabaseInitialization
-	SmartInitializingSingleton signingKeyInitializer(IdentitySigningKeys keys) {
+	SmartInitializingSingleton signingKeyInitializer(IdentitySigningKeys keys, IdentityRestores restores) {
 		// Non-Web administrator commands do not need signing components; Web startup must load them.
 		// A runner executes after the web server has started; this callback precedes lifecycle start.
-		return keys::initialize;
+		return () -> { restores.requireAvailable(); keys.initialize(); };
 	}
 
 }

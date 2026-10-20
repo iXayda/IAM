@@ -11,6 +11,6 @@ public record SecurityAuditTarget(Type type, UUID id) {
 		Objects.requireNonNull(id, "Audit target id is required");
 	}
 
-	public enum Type { RESOURCE, ROLE, CLIENT, AUTHORIZATION, BROWSER_SESSION, SIGNING_KEY }
+	public enum Type { RESOURCE, ROLE, CLIENT, AUTHORIZATION, BROWSER_SESSION, SIGNING_KEY, DATABASE_RESTORE }
 
 }

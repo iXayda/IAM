@@ -50,14 +50,14 @@ public class IdentityDatabaseAccessRepository {
 				    AND NOT has_table_privilege('iam_security_audit','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
 				    AND NOT has_any_column_privilege('iam_security_audit','UPDATE')
 				    AND NOT EXISTS (
-				        SELECT 1 FROM (VALUES ('iam_authorization_protection'),('iam_signing_key'),('iam_administrator'),('iam_signing_key_state'),('iam_admin_bootstrap')) AS t(name)
+				        SELECT 1 FROM (VALUES ('iam_authorization_protection'),('iam_signing_key'),('iam_administrator'),('iam_signing_key_state'),('iam_admin_bootstrap'),('iam_restore'),('iam_restore_state')) AS t(name)
 				        WHERE has_table_privilege(t.name,'INSERT,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
 				           OR has_any_column_privilege(t.name,'INSERT')
 				    )
 				    AND NOT EXISTS (
 				        SELECT 1 FROM (VALUES
 				            ('iam_authorization_protection',NULL),('iam_signing_key',NULL),('iam_administrator',NULL),
-				            ('iam_signing_key_state','singleton'),('iam_admin_bootstrap','revision')
+				            ('iam_restore',NULL),('iam_restore_state',NULL),('iam_signing_key_state','singleton'),('iam_admin_bootstrap','revision')
 				        ) AS protected(name,allowed_update_column)
 				        JOIN pg_attribute a ON a.attrelid=to_regclass(protected.name)
 				        WHERE a.attnum>0 AND NOT a.attisdropped

@@ -41,6 +41,10 @@ final class MaintenanceApplication {
 				candidate.getEnvironment().getPropertySources().addFirst(new MapPropertySource("iamMaintenanceDatabasePolicy",
 						Map.of("spring.flyway.enabled", false)));
 			}
+			if ("quarantine-restore".equals(command)) {
+				candidate.getEnvironment().getPropertySources().addFirst(new MapPropertySource("iamRestoreDatabasePool",
+						Map.of("spring.datasource.hikari.maximum-pool-size", 1, "spring.datasource.hikari.minimum-idle", 0)));
+			}
 		});
 		if (migrate) { builder.sources(MigrationAdmission.class); }
 		var context = builder.run();
@@ -92,7 +96,7 @@ final class MaintenanceApplication {
 		// Check the business connection against this artifact's complete migration set. Deployment
 		// target/ignore settings must not admit pending or newer schemas for maintenance mutations.
 		// Flyway opens main and callback connections even for validation. Share one borrowed
-		// connection so validation needs only one pool slot.
+		// connection so offline restore admission can retain its single-connection pool.
 		try (var connection = context.getBean(DataSource.class).getConnection()) {
 			var configuration = Flyway.configure().dataSource(new SingleConnectionDataSource(connection, true))
 					.locations("classpath:db/migration").table(properties.getTable())

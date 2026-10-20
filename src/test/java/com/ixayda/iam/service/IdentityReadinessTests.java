@@ -13,7 +13,7 @@ class IdentityReadinessTests {
 	private final IdentityAuthorizations authorizations = mock(IdentityAuthorizations.class);
 	private final SecurityAudits audits = mock(SecurityAudits.class);
 	private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
-	private final IdentityReadiness readiness = new IdentityReadiness(this.keys, this.authorizations, this.audits, this.manager);
+	private final IdentityReadiness readiness = new IdentityReadiness(this.keys, this.authorizations, this.audits, mock(IdentityRestores.class), this.manager);
 
 	@Test
 	void identifiesTheFailedCapabilityWithoutEchoingDiagnostics() {

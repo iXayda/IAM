@@ -159,11 +159,12 @@ class IdentitySigningStartupIntegrationTests {
 			previous.sql("INSERT INTO iam_security_audit (id,actor,source,correlation_id,target_user_id,action,outcome) VALUES (:id,'system:fixture','internal:test',:correlation,:user,'user_created','success')")
 					.param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("user", id).update();
 			var before = List.of("iam_user", "iam_security_audit", "iam_admin_bootstrap").stream()
-					.map(table -> previous.sql("SELECT (to_jsonb(r) - 'target_type' - 'target_id')::text FROM " + table + " r ORDER BY 1").query(String.class).list()).toList();
+					.map(table -> previous.sql("SELECT (to_jsonb(r) - 'target_type' - 'target_id' - 'restore_closed')::text FROM " + table + " r ORDER BY 1").query(String.class).list()).toList();
 			try (var ignored = start(WebApplicationType.NONE, KEY_FILE.toString(), null)) {
 				var after = List.of("iam_user", "iam_security_audit", "iam_admin_bootstrap").stream()
-						.map(table -> previous.sql("SELECT (to_jsonb(r) - 'target_type' - 'target_id')::text FROM " + table + " r ORDER BY 1").query(String.class).list()).toList();
+						.map(table -> previous.sql("SELECT (to_jsonb(r) - 'target_type' - 'target_id' - 'restore_closed')::text FROM " + table + " r ORDER BY 1").query(String.class).list()).toList();
 				assertThat(after).isEqualTo(before);
+				assertThat(previous.sql("SELECT restore_closed FROM iam_admin_bootstrap").query(Boolean.class).single()).isFalse();
 				assertThat(count("iam_signing_key")).isZero();
 			}
 		}

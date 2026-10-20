@@ -18,10 +18,11 @@ public class IdentityReadiness {
 	private final IdentitySigningKeys keys;
 	private final IdentityAuthorizations authorizations;
 	private final SecurityAudits audits;
+	private final IdentityRestores restores;
 	private final TransactionTemplate transaction;
 
-	IdentityReadiness(IdentitySigningKeys keys, IdentityAuthorizations authorizations, SecurityAudits audits, PlatformTransactionManager manager) {
-		this.keys = keys; this.authorizations = authorizations; this.audits = audits;
+	IdentityReadiness(IdentitySigningKeys keys, IdentityAuthorizations authorizations, SecurityAudits audits, IdentityRestores restores, PlatformTransactionManager manager) {
+		this.keys = keys; this.authorizations = authorizations; this.audits = audits; this.restores = restores;
 		this.transaction = new TransactionTemplate(manager);
 		this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 		// JDBC applies the remaining transaction deadline to each statement, including lifecycle lock waits.
@@ -31,6 +32,7 @@ public class IdentityReadiness {
 	public void requireReady() {
 		check(Failure.DATABASE, () -> this.transaction.executeWithoutResult(tx -> {
 			check(Failure.SIGNING, this.keys::lockForIssuance);
+			check(Failure.RESTORE, this.restores::requireAvailable);
 			check(Failure.AUDIT, () -> { if (!this.audits.isAvailable()) { throw new Unavailable(Failure.AUDIT); } });
 			check(Failure.AUTHORIZATION_PIN, this.authorizations::requireConfigured);
 		}));
@@ -44,7 +46,7 @@ public class IdentityReadiness {
 		catch (RuntimeException ex) { throw new Unavailable(dependency); }
 	}
 
-	public enum Failure { DATABASE, SIGNING, AUDIT, AUTHORIZATION_PIN, TIMEOUT, INTERRUPTED, UNKNOWN }
+	public enum Failure { DATABASE, SIGNING, RESTORE, AUDIT, AUTHORIZATION_PIN, TIMEOUT, INTERRUPTED, UNKNOWN }
 
 	public static final class Unavailable extends IllegalStateException {
 		private final Failure failure;
