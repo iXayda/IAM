@@ -33,18 +33,21 @@ public class IdentityPasswordRecoveries {
 
 	private final IdentityBrowserSessions sessions;
 
+	private final IdentityAuthorizationRevocations revocations;
+
 	private final SecurityAudits audits;
 
 	private final TransactionTemplate transaction;
 
 	IdentityPasswordRecoveries(IdentityUsers users, IdentityPasswordRecoveryRepository repository,
-			PasswordRecoveryTokens tokens, PasswordHasher passwords, IdentityBrowserSessions sessions,
+			PasswordRecoveryTokens tokens, PasswordHasher passwords, IdentityBrowserSessions sessions, IdentityAuthorizationRevocations revocations,
 			SecurityAudits audits, PlatformTransactionManager manager) {
 		this.users = users;
 		this.repository = repository;
 		this.tokens = tokens;
 		this.passwords = passwords;
 		this.sessions = sessions;
+		this.revocations = revocations;
 		this.audits = audits;
 		this.transaction = new TransactionTemplate(manager);
 	}
@@ -142,6 +145,7 @@ public class IdentityPasswordRecoveries {
 		}
 		var audit = new SecurityAuditContext("user:" + userId, anonymous.source(), anonymous.correlationId());
 		this.sessions.revokeAll(userId, audit);
+		this.revocations.revokeForUser(userId, audit);
 		this.audits.recordSuccess(Action.PASSWORD_RECOVERY_COMPLETED, userId, audit);
 		if (!this.repository.isFreshlyConsumed(userId, digest)) { throw new InvalidProofException(); }
 		return Result.COMPLETED;

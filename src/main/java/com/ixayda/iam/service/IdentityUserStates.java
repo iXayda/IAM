@@ -18,15 +18,17 @@ public class IdentityUserStates {
 	private final IdentityUserSetups setups;
 	private final IdentityPasswordRecoveries recoveries;
 	private final IdentityBrowserSessions sessions;
+	private final IdentityAuthorizationRevocations revocations;
 	private final IdentityAdministrators administrators;
 	private final SecurityAudits audits;
 
 	IdentityUserStates(IdentityUsers users, IdentityUserSetups setups, IdentityPasswordRecoveries recoveries,
-			IdentityBrowserSessions sessions, IdentityAdministrators administrators, SecurityAudits audits) {
+			IdentityBrowserSessions sessions, IdentityAuthorizationRevocations revocations, IdentityAdministrators administrators, SecurityAudits audits) {
 		this.users = users;
 		this.setups = setups;
 		this.recoveries = recoveries;
 		this.sessions = sessions;
+		this.revocations = revocations;
 		this.administrators = administrators;
 		this.audits = audits;
 	}
@@ -44,6 +46,7 @@ public class IdentityUserStates {
 		this.setups.cancelOutstanding(userId, audit);
 		this.recoveries.cancelOutstanding(userId, audit);
 		this.sessions.revokeAll(userId, audit);
+		this.revocations.revokeForUser(userId, audit);
 		this.audits.recordSuccess(Action.USER_DISABLED, userId, audit);
 		return Result.CHANGED;
 	}
@@ -55,6 +58,7 @@ public class IdentityUserStates {
 			return Result.UNCHANGED;
 		}
 		this.users.enable(userId);
+		this.revocations.revokeForUser(userId, audit);
 		this.audits.recordSuccess(Action.USER_ENABLED, userId, audit);
 		return Result.CHANGED;
 	}

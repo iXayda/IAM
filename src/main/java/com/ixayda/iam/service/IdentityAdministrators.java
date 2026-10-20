@@ -36,12 +36,13 @@ public class IdentityAdministrators {
 	private final TotpSecrets secrets;
 	private final IdentityMfaRecoveryCodes recoveryCodes;
 	private final IdentityBrowserSessions sessions;
+	private final IdentityAuthorizationRevocations revocations;
 	private final SecurityAudits audits;
 	private final TransactionTemplate transaction;
 
 	IdentityAdministrators(IdentityAdministratorRepository repository, IdentityUsers users, IdentityUserSetups setups, IdentityAuthentications authentications,
 			IdentityTotps totps, TotpAuthenticationLimits limits, TotpSecrets secrets, IdentityMfaRecoveryCodes recoveryCodes,
-			IdentityBrowserSessions sessions, SecurityAudits audits, PlatformTransactionManager manager) {
+			IdentityBrowserSessions sessions, IdentityAuthorizationRevocations revocations, SecurityAudits audits, PlatformTransactionManager manager) {
 		this.repository = repository;
 		this.users = users;
 		this.setups = setups;
@@ -51,6 +52,7 @@ public class IdentityAdministrators {
 		this.secrets = secrets;
 		this.recoveryCodes = recoveryCodes;
 		this.sessions = sessions;
+		this.revocations = revocations;
 		this.audits = audits;
 		this.transaction = new TransactionTemplate(manager);
 	}
@@ -145,6 +147,7 @@ public class IdentityAdministrators {
 			this.users.invalidateAuthentications(userId, decision.credentialVersion());
 			var audit = new SecurityAuditContext("user:" + userId, context.source(), context.correlationId());
 			this.sessions.revokeAll(userId, audit);
+			this.revocations.revokeForUser(userId, audit);
 			var codes = this.recoveryCodes.issueForVerifiedFactor(userId, decision.factorId(), audit);
 			this.audits.recordSuccess(Action.ADMIN_BOOTSTRAP_COMPLETED, userId, audit);
 			return Optional.of(codes);

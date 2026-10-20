@@ -46,13 +46,14 @@ public class IdentityTotpRecoveries {
 	private final TotpSecrets secrets;
 	private final TotpCodes codes;
 	private final IdentityBrowserSessions sessions;
+	private final IdentityAuthorizationRevocations revocations;
 	private final SecurityAudits audits;
 	private final TransactionTemplate transaction;
 
 	IdentityTotpRecoveries(IdentityUsers users, IdentityAuthentications authentications, IdentityMfaRecoveryCodes recoveryCodes,
 			MfaRecoveryCodeLimits recoveryLimits, TotpAuthenticationLimits totpLimits, IdentityTotpRepository factors,
 			IdentityTotpRecoveryRepository repository, TotpRecoveryTokens tokens, TotpSecrets secrets, TotpCodes codes,
-			IdentityBrowserSessions sessions, SecurityAudits audits, PlatformTransactionManager manager) {
+			IdentityBrowserSessions sessions, IdentityAuthorizationRevocations revocations, SecurityAudits audits, PlatformTransactionManager manager) {
 		this.users = users;
 		this.authentications = authentications;
 		this.recoveryCodes = recoveryCodes;
@@ -64,6 +65,7 @@ public class IdentityTotpRecoveries {
 		this.secrets = secrets;
 		this.codes = codes;
 		this.sessions = sessions;
+		this.revocations = revocations;
 		this.audits = audits;
 		this.transaction = new TransactionTemplate(manager);
 	}
@@ -156,6 +158,7 @@ public class IdentityTotpRecoveries {
 						this.users.invalidateAuthentications(userId, version.orElseThrow());
 						var audit = userAudit(userId, context.source(), context.correlationId());
 						this.sessions.revokeAll(userId, audit);
+						this.revocations.revokeForUser(userId, audit);
 						var replacementCodes = this.recoveryCodes.issueForVerifiedFactor(userId, recovery.newFactorId(), audit);
 						this.totpLimits.succeeded(attempt);
 						this.audits.recordSuccess(Action.TOTP_RECOVERY_COMPLETED, userId, audit);
