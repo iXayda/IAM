@@ -295,6 +295,34 @@ class SecurityAuditsIntegrationTests {
 	}
 
 	@Test
+	void allSessionRevocationUpgradePreservesHistoryAndRequiresASuccessfulUserTarget() throws Exception {
+		String schema = "all_session_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		this.jdbc.sql("CREATE SCHEMA " + schema).update();
+		try {
+			Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())
+					.schemas(schema).defaultSchema(schema).target("37").load().migrate();
+			try (var connection = DriverManager.getConnection(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())) {
+				connection.setSchema(schema); var previous = JdbcClient.create(new SingleConnectionDataSource(connection, true));
+				previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,action,outcome) VALUES (:id,'anonymous','protocol:token',:correlation,'token_request_rejected','failure')")
+						.param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).update();
+				String history = previous.sql("SELECT row_to_json(r)::text FROM iam_security_audit r").query(String.class).single();
+				UUID user = UUID.randomUUID();
+				String insert = "INSERT INTO iam_security_audit(id,actor,source,correlation_id,target_user_id,action,outcome) VALUES (:id,'system:test','internal:test',:correlation,:user,'all_sessions_revoked','success')";
+				assertThatThrownBy(() -> previous.sql(insert).param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("user", user).update()).isInstanceOf(DataIntegrityViolationException.class);
+				Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())
+						.schemas(schema).defaultSchema(schema).load().migrate();
+				assertThat(previous.sql("SELECT row_to_json(r)::text FROM iam_security_audit r").query(String.class).single()).isEqualTo(history);
+				previous.sql(insert).param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("user", user).update();
+				for (String mutation : new String[] { "target_user_id=NULL", "outcome='failure'", "target_type='authorization',target_id='" + UUID.randomUUID() + "'" }) {
+					assertThatThrownBy(() -> previous.sql("UPDATE iam_security_audit SET " + mutation + " WHERE action='all_sessions_revoked'").update()).isInstanceOf(DataIntegrityViolationException.class);
+				}
+				assertThat(previous.sql("SELECT count(*) FROM iam_security_audit").query(Long.class).single()).isEqualTo(2);
+			}
+		}
+		finally { this.jdbc.sql("DROP SCHEMA " + schema + " CASCADE").update(); }
+	}
+
+	@Test
 	void upgradesExistingV1DataWithoutInventingHistoricalAuditEvents() throws Exception {
 		String schema = "audit_upgrade_" + UUID.randomUUID().toString().replace("-", "");
 		this.jdbc.sql("CREATE SCHEMA " + schema).update();
