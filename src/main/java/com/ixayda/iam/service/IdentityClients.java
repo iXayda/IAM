@@ -63,7 +63,7 @@ public class IdentityClients {
 		lockRoles(config, null, resource);
 		UUID id = UUID.randomUUID();
 		String secret = this.secrets.generate();
-		var client = this.repository.create(build(id, config, this.secrets.hash(secret), this.repository.databaseTime()), config.resourceId(), config.allowedRoleIds());
+		var client = this.repository.create(buildRegistration(id, config, this.secrets.hash(secret), this.repository.databaseTime()), config.resourceId(), config.allowedRoleIds());
 		record(Action.CLIENT_CREATED, id, audit);
 		return new IdentityClientSecret(client, secret);
 	}
@@ -91,7 +91,7 @@ public class IdentityClients {
 		var current = locked.client();
 		if (current.configuration().equals(config)) { return current; }
 		var previous = registered(current);
-		var changed = this.repository.update(current, build(id, config, previous.getClientSecret(), previous.getClientIdIssuedAt()),
+		var changed = this.repository.update(current, buildRegistration(id, config, previous.getClientSecret(), previous.getClientIdIssuedAt()),
 				config.resourceId(), config.allowedRoleIds(), current.status(), false);
 		record(Action.CLIENT_UPDATED, id, audit);
 		return changed;
@@ -203,7 +203,7 @@ public class IdentityClients {
 
 	private static boolean hasControls(String value) { return value != null && value.codePoints().anyMatch(Character::isISOControl); }
 
-	private static RegisteredClient build(UUID id, IdentityClientConfiguration config, String hash, Instant issuedAt) {
+	static RegisteredClient buildRegistration(UUID id, IdentityClientConfiguration config, String hash, Instant issuedAt) {
 		var client = RegisteredClient.withId(id.toString()).clientId(id.toString()).clientIdIssuedAt(issuedAt).clientName(config.displayName())
 				.clientSecret(hash).clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
 				.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)

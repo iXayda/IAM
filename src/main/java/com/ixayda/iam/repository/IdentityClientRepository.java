@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 import com.ixayda.iam.model.IdentityClient;
 import com.ixayda.iam.model.IdentityClientConfiguration;
 import com.ixayda.iam.model.IdentityClientPage;
+import com.ixayda.iam.model.IdentityResource;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -34,8 +35,19 @@ public class IdentityClientRepository {
 			    ARRAY(SELECT a.role_id FROM iam_client_allowed_role a WHERE a.client_id=c.id ORDER BY a.role_id) AS role_ids
 			FROM iam_client c JOIN oauth2_registered_client r ON r.id=c.id
 			""";
+	private static final String PROTOCOL_SELECT = """
+			SELECT r.id,r.client_id,r.client_id_issued_at,r.client_secret,r.client_secret_expires_at,r.client_name,
+			    r.client_authentication_methods,r.authorization_grant_types,r.redirect_uris,r.post_logout_redirect_uris,
+			    r.scopes,r.client_settings,r.token_settings,c.resource_id,c.status,c.version,c.created_at,c.updated_at,c.secret_rotated_at,
+			    p.audience AS resource_audience,p.display_name AS resource_display_name,p.status AS resource_status,
+			    p.version AS resource_version,p.created_at AS resource_created_at,p.updated_at AS resource_updated_at,
+			    ARRAY(SELECT a.role_id FROM iam_client_allowed_role a WHERE a.client_id=c.id ORDER BY a.role_id) AS role_ids
+			FROM iam_client c JOIN oauth2_registered_client r ON r.id=c.id JOIN iam_resource p ON p.id=c.resource_id
+			WHERE c.id=:id AND c.status='active' AND p.status='active'
+			""";
 	private final JdbcClient jdbc;
 	private final JdbcRegisteredClientRepository registered;
+	private final JdbcRegisteredClientRepository.JsonMapperRegisteredClientRowMapper protocolMapper = new JdbcRegisteredClientRepository.JsonMapperRegisteredClientRowMapper();
 
 	IdentityClientRepository(JdbcClient jdbc, JdbcTemplate template) {
 		this.jdbc = jdbc;
@@ -53,6 +65,37 @@ public class IdentityClientRepository {
 
 	/** Trusted protocol/configuration access only; never returned by a public client query. */
 	public RegisteredClient registeredById(UUID id) { return this.registered.findById(id.toString()); }
+
+	/** One statement captures native registration, public configuration and resource epochs together. */
+	public Optional<StoredProtocolClient> findActiveProtocolClient(UUID id) {
+		return this.jdbc.sql(PROTOCOL_SELECT).param("id", id.toString()).query((row, index) -> {
+			var resource = new IdentityResource(row.getObject("resource_id", UUID.class), row.getString("resource_audience"), row.getString("resource_display_name"),
+					IdentityResource.Status.valueOf(row.getString("resource_status").toUpperCase(Locale.ROOT)), row.getLong("resource_version"),
+					row.getObject("resource_created_at", OffsetDateTime.class).toInstant(), row.getObject("resource_updated_at", OffsetDateTime.class).toInstant());
+			return new StoredProtocolClient(this.protocolMapper.mapRow(row, index), mapClient(row, index), resource);
+		}).optional();
+	}
+
+	public boolean isWritableReadCommittedTransaction() {
+		return this.jdbc.sql("SELECT current_setting('transaction_isolation')='read committed' AND current_setting('transaction_read_only')='off'").query(Boolean.class).single();
+	}
+
+	/** Caller has locked signing keys and subjects before resource -> roles -> client ordering. */
+	public boolean lockProtocolResource(UUID id) {
+		return this.jdbc.sql("SELECT id FROM iam_resource WHERE id=:id FOR SHARE").param("id", id).query(UUID.class).optional().isPresent();
+	}
+
+	public boolean lockProtocolRoles(UUID resourceId, Set<UUID> roleIds) {
+		if (roleIds.isEmpty()) { return true; }
+		return this.jdbc.sql("SELECT id FROM iam_resource_role WHERE resource_id=:resource AND id IN (:roles) ORDER BY id FOR SHARE")
+				.param("resource", resourceId).param("roles", roleIds.stream().sorted().toList()).query(UUID.class).list().size() == roleIds.size();
+	}
+
+	/** A fresh protocol snapshot must be read after this statement completes any lock waits. */
+	public boolean lockProtocolClient(UUID id) {
+		return this.jdbc.sql("SELECT c.id FROM iam_client c JOIN oauth2_registered_client r ON r.id=c.id WHERE c.id=:id FOR SHARE OF c,r")
+				.param("id", id.toString()).query(String.class).optional().isPresent();
+	}
 
 	public Instant databaseTime() {
 		return this.jdbc.sql("SELECT clock_timestamp()").query((row, index) -> row.getObject(1, OffsetDateTime.class).toInstant()).single();
@@ -133,5 +176,10 @@ public class IdentityClientRepository {
 
 	private static List<String> split(String value) { return value == null || value.isEmpty() ? List.of() : Arrays.stream(value.split(",", -1)).sorted().toList(); }
 	private static void requireOne(int changed) { if (changed != 1) { throw new IllegalStateException("Client mutation was not stored"); } }
+
+	public record StoredProtocolClient(RegisteredClient registration, IdentityClient client, IdentityResource resource) {
+		@Override
+		public String toString() { return "StoredProtocolClient[REDACTED]"; }
+	}
 
 }
