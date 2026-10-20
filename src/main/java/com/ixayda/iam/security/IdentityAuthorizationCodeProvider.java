@@ -21,9 +21,7 @@ import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
-import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
@@ -32,12 +30,15 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
-import org.springframework.security.oauth2.server.authorization.context.AuthorizationServerContextHolder;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
+
+import static com.ixayda.iam.security.IdentityTokenRequests.client;
+import static com.ixayda.iam.security.IdentityTokenRequests.failure;
+import static com.ixayda.iam.security.IdentityTokenRequests.issuer;
 
 /** Explicit native exchange adapter; grant state and mandatory audit commit before tokens or replay denial escape. */
 public final class IdentityAuthorizationCodeProvider implements AuthenticationProvider {
@@ -75,7 +76,7 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 		var audit = new SecurityAuditContext("anonymous", "protocol:token", evidence.correlationId());
 		Decision decision;
 		try {
-			var client = client(request);
+			var client = client(request.getPrincipal());
 			audit = new SecurityAuditContext("client:" + client.client().id(), "protocol:token", evidence.correlationId());
 			String verifier = verifier(request);
 			var initial = this.authorizations.findByToken(request.getCode(), "code").orElseThrow(() -> failure("invalid_grant"));
@@ -134,15 +135,6 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 
 	private record Decision(OAuth2AccessTokenAuthenticationToken response, boolean replayed) { }
 
-	private static IdentityProtocolClients.Snapshot client(OAuth2AuthorizationCodeAuthenticationToken request) {
-		if (!(request.getPrincipal() instanceof OAuth2ClientAuthenticationToken client) || !client.isAuthenticated() || client.getCredentials() != null
-				|| !ClientAuthenticationMethod.CLIENT_SECRET_BASIC.equals(client.getClientAuthenticationMethod())
-				|| !(client.getDetails() instanceof IdentityProtocolClients.Snapshot snapshot) || !snapshot.registration().equals(client.getRegisteredClient())) {
-			throw failure("invalid_client");
-		}
-		return snapshot;
-	}
-
 	private static String verifier(OAuth2AuthorizationCodeAuthenticationToken request) {
 		for (var entry : request.getAdditionalParameters().entrySet()) {
 			if (!(entry.getValue() instanceof String text)) { throw failure("invalid_request"); }
@@ -151,32 +143,10 @@ public final class IdentityAuthorizationCodeProvider implements AuthenticationPr
 		return request.getAdditionalParameters().get("code_verifier") instanceof String text ? text : null;
 	}
 
-	private static String issuer(OAuth2Authorization authorization) {
-		var context = AuthorizationServerContextHolder.getContext();
-		if (context == null || context.getAuthorizationServerSettings().getIssuer() == null
-				|| !context.getIssuer().equals(context.getAuthorizationServerSettings().getIssuer())) { throw failure("server_error"); }
-		String issuer = context.getIssuer(); var uri = java.net.URI.create(issuer);
-		if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) { throw failure("server_error"); }
-		OAuth2AuthorizationRequest request = authorization.getAttribute(OAuth2AuthorizationRequest.class.getName());
-		String expected = (issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer) + context.getAuthorizationServerSettings().getAuthorizationEndpoint();
-		if (request == null || !expected.equals(request.getAuthorizationUri())) { throw failure("invalid_grant"); }
-		return issuer;
-	}
-
 	private OAuth2AuthenticationException rejected(String code, UUID subject, SecurityAuditContext audit) {
 		try { this.transaction.executeWithoutResult(status -> this.audits.recordFailure(Action.TOKEN_REQUEST_REJECTED, subject, audit)); }
 		catch (RuntimeException ex) { return failure("server_error"); }
 		return failure(code);
-	}
-
-	private static OAuth2AuthenticationException failure(String code) {
-		String description = switch (code) {
-			case "invalid_client" -> "Client authentication failed";
-			case "invalid_grant" -> "Authorization grant is invalid";
-			case "invalid_request" -> "Token request is invalid";
-			default -> { code = "server_error"; yield "Token exchange is unavailable"; }
-		};
-		return new OAuth2AuthenticationException(new OAuth2Error(code, description, null));
 	}
 
 	private final class ExchangeStore implements OAuth2AuthorizationService {

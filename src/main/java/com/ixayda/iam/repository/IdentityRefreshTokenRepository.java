@@ -59,6 +59,21 @@ public class IdentityRefreshTokenRepository {
 		return this.jdbc.sql("SELECT * FROM iam_refresh_history WHERE digest=:digest").param("digest", digest).query(this::history).optional();
 	}
 
+	public Optional<IdentityRefreshHistory> lockHistory(String digest) {
+		this.jdbc.sql("SELECT digest FROM iam_refresh_history WHERE digest=:digest FOR UPDATE").param("digest", digest).query(String.class).optional();
+		return findHistory(digest);
+	}
+
+	public void consumeHistory(IdentityRefreshHistory history) {
+		if (history.consumedAt() == null) { throw new IllegalArgumentException("Refresh consumption time is required"); }
+		requireOne(this.jdbc.sql("""
+				UPDATE iam_refresh_history SET consumed_at=:consumed,seal=:seal
+				WHERE authorization_id=:id AND digest=:digest AND generation=:generation AND consumed_at IS NULL
+				""").param("consumed", timestamp(history.consumedAt())).param("seal", this.secrets.refreshHistorySeal(encode(history)))
+				.param("id", history.authorizationId().toString()).param("digest", history.digest()).param("generation", history.generation()).update());
+		if (findHistory(history.digest()).filter(history::equals).isEmpty()) { throw new IllegalStateException("Refresh consumption was not stored"); }
+	}
+
 	public void insertHistory(IdentityRefreshHistory history) {
 		requireOne(this.jdbc.sql("""
 				INSERT INTO iam_refresh_history(digest,authorization_id,generation,parent_digest,issued_at,expires_at,consumed_at,seal)

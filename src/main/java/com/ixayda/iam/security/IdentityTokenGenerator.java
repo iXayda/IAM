@@ -9,6 +9,7 @@ import com.ixayda.iam.model.IdentityAuthorizationBinding;
 import com.ixayda.iam.service.IdentityProtocolClients;
 
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
@@ -42,21 +43,23 @@ final class IdentityTokenGenerator implements OAuth2TokenGenerator<OAuth2Token> 
 			throw new IllegalStateException("Token context does not match its authorization");
 		}
 		if (!OAuth2TokenType.REFRESH_TOKEN.equals(context.getTokenType())) { return this.jwt.generate(context); }
-		if (!context.getAuthorizedScopes().contains("offline_access")) { return null; }
+		// The native refresh provider requires a successor even when scope reduction closes the family; the adapter withholds it.
+		if (!context.getAuthorizedScopes().contains("offline_access") && !AuthorizationGrantType.REFRESH_TOKEN.equals(context.getAuthorizationGrantType())) { return null; }
 		var generated = this.refresh.generate(context);
 		if (generated == null) { return null; }
 		Instant issued = generated.getIssuedAt().truncatedTo(ChronoUnit.MICROS);
 		Instant expiry = minimum(generated.getExpiresAt().truncatedTo(ChronoUnit.MICROS), issued.plus(7, ChronoUnit.DAYS), absoluteDeadline());
-		if (!expiry.isAfter(issued)) { throw new IllegalStateException("Token lifetime has ended"); }
+		if (!expiry.isAfter(issued)) { throw IdentityTokenRequests.failure("invalid_grant"); }
 		return new OAuth2RefreshToken(generated.getTokenValue(), issued, expiry);
 	}
 
 	private void customize(JwtEncodingContext context) {
 		boolean access = OAuth2TokenType.ACCESS_TOKEN.equals(context.getTokenType());
 		Instant issued = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-		Instant expiry = access ? minimum(issued.plusSeconds(300), issued.plus(context.getRegisteredClient().getTokenSettings().getAccessTokenTimeToLive()), absoluteDeadline())
-				: minimum(issued.plusSeconds(300), absoluteDeadline());
-		if (!expiry.isAfter(issued)) { throw new IllegalStateException("Token lifetime has ended"); }
+		Instant expiry = minimum(issued.plusSeconds(300), absoluteDeadline());
+		if (access) { expiry = minimum(expiry, issued.plus(context.getRegisteredClient().getTokenSettings().getAccessTokenTimeToLive())); }
+		expiry = expiry.truncatedTo(ChronoUnit.SECONDS);
+		if (!expiry.isAfter(issued)) { throw IdentityTokenRequests.failure("invalid_grant"); }
 		var identity = this.binding.session().access();
 		context.getJwsHeader().type(access ? "at+jwt" : "JWT");
 		context.getClaims().issuer(this.issuer).subject(identity.userId().toString()).issuedAt(issued).expiresAt(expiry)
