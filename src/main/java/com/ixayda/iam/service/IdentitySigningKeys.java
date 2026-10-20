@@ -72,7 +72,7 @@ public class IdentitySigningKeys {
 		return this.transaction.execute(status -> loadLockedMaterial(this.repository.lockLifecycle()));
 	}
 
-	/** Acquire first, before resource/client/user/session/authorization locks; retain through issuance and audit commit. */
+	/** Acquire first, before user/resource/role/client/session/authorization locks; retain through issuance and audit commit. */
 	public IdentitySigningMaterial lockForIssuance() {
 		if (!TransactionSynchronizationManager.isActualTransactionActive() || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
 			throw new IllegalStateException("Token signing requires an active write transaction");
