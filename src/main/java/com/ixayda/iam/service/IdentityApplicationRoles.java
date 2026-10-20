@@ -30,19 +30,26 @@ public class IdentityApplicationRoles {
 	/** Call before any subject/catalog locks; the outer workflow retains all locks through grant and audit commit. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public Optional<IdentityApplicationAccess> projectForIssuance(UUID userId, long credentialVersion, IdentityProtocolClients.Snapshot client) {
+		this.keys.lockForIssuance();
+		return project(userId, credentialVersion, client, false);
+	}
+
+	/** Online use already holds the public signing lifecycle lock; no private signing capability is needed. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityApplicationAccess> projectForUse(UUID userId, long credentialVersion, IdentityProtocolClients.Snapshot client) {
 		return project(userId, credentialVersion, client, false);
 	}
 
 	/** Browser requests may save the session in this transaction; acquire UPDATE up front, never upgrade SHARE. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<IdentityApplicationAccess> projectForBrowserIssuance(UUID userId, long credentialVersion, IdentityProtocolClients.Snapshot client) {
+		this.keys.lockForIssuance();
 		return project(userId, credentialVersion, client, true);
 	}
 
 	private Optional<IdentityApplicationAccess> project(UUID userId, long credentialVersion, IdentityProtocolClients.Snapshot client, boolean browser) {
 		Assert.notNull(userId, "Subject is required"); Assert.notNull(client, "Client snapshot is required");
 		if (credentialVersion < 1) { throw new IllegalArgumentException("Subject credential version must be positive"); }
-		this.keys.lockForIssuance();
 		var user = browser ? this.users.lockForStateChange(userId) : this.users.lockForAuthorization(userId);
 		if (user.isEmpty() || user.orElseThrow().status() != IdentityUser.Status.ACTIVE || !this.users.passwordVersion(userId).equals(Optional.of(credentialVersion))) { return Optional.empty(); }
 		var locked = this.clients.lockForIssuance(client);

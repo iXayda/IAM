@@ -101,6 +101,8 @@ public class IdentityAuthorizationBindings {
 
 	public boolean isBeforeDeadline(Instant deadline) { return this.repository.isBeforeDeadline(deadline); }
 
+	public boolean isWithinLifetime(Instant issued, Instant expiry) { return this.repository.isWithinLifetime(issued, expiry); }
+
 	private static String encode(IdentityAuthorizationBinding binding, OAuth2Authorization authorization) {
 		var session = binding.session(); var access = session.access();
 		var value = new StringBuilder("iam:authorization-binding:v1|").append(binding.id()).append('|').append(access.userId()).append('|')

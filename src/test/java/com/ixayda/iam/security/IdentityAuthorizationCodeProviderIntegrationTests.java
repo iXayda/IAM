@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import com.ixayda.iam.IdentityProtocolTestSupport;
 import com.ixayda.iam.model.IdentityRefreshFamily;
 import com.ixayda.iam.service.IdentityBrowserSessions;
 
