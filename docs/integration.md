@@ -8,7 +8,7 @@
 
 `IAM_PROTOCOL_ISSUER` 是固定 HTTPS 根地址，可带端口和末尾 `/`，不支持路径前缀；`IAM_PROTOCOL_IDENTITY_FRONTEND_URI` 是与 issuer 同源且不含查询串或片段的前端地址，可包含路径。不要根据请求 Host 或参数选择 issuer、Token、JWKS 或身份前端。
 
-应用接入前，由管理员登记资源、角色、用户绑定、保密客户端及精确 HTTPS 回调。客户端秘密仅提供给对应应用服务端。
+应用接入前，由管理员登记资源、角色、用户绑定、保密客户端及精确 HTTPS 回调。客户端秘密和资源校验秘密分别保管，仅提供给对应服务端。
 
 ## HTTPS 与受信代理
 
