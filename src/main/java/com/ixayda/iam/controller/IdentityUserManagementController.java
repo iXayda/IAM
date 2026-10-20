@@ -162,7 +162,7 @@ public class IdentityUserManagementController {
 		};
 	}
 
-	@Operation(operationId = "disableUser", summary = "禁用用户", description = "需要有效管理员 MFA 会话及本次操作的新 TOTP。userId 使用完整 UUID；仅接受 code 及 CSRF，拒绝查询参数、重复及额外字段。撤销目标全部 IAM 会话，取消未消费的开通和密码恢复凭据；拒绝禁用最后可用管理员。禁用本人成功后清除当前会话 Cookie。重复操作返回 204，不重复记录状态变更事件；每次验证成功均消费该 TOTP，且不延长管理期限。")
+	@Operation(operationId = "disableUser", summary = "禁用用户", description = "需要有效管理员 MFA 会话及本次操作的新 TOTP。userId 使用完整 UUID；仅接受 code 及 CSRF，拒绝查询参数、重复及额外字段。撤销目标全部 IAM 会话及应用授权，取消未消费的开通和密码恢复凭据；拒绝禁用最后可用管理员。禁用本人成功后清除当前会话 Cookie。重复操作返回 204，不重复记录状态变更事件；每次验证成功均消费该 TOTP，且不延长管理期限。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也支持 _csrf 表单字段", schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "204", description = "操作完成或已处于目标状态", content = @Content)
 	@ApiResponse(responseCode = "400", description = "用户标识、TOTP 或请求格式无效", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
@@ -180,7 +180,7 @@ public class IdentityUserManagementController {
 		return changeState(actorId, parseUserId(userId), IdentityUserStateChanges.Change.DISABLE, command.code(), request, response);
 	}
 
-	@Operation(operationId = "enableUser", summary = "重新启用用户", description = "需要有效管理员 MFA 会话及本次操作的新 TOTP。userId 使用完整 UUID；仅接受 code 及 CSRF，拒绝查询参数、重复及额外字段。已完成受控开通且有密码的账号恢复 ACTIVE，否则恢复 PENDING；不恢复旧会话或已取消的凭据。重复操作返回 204，不重复记录状态变更事件；每次验证成功均消费该 TOTP，且不延长管理期限。")
+	@Operation(operationId = "enableUser", summary = "重新启用用户", description = "需要有效管理员 MFA 会话及本次操作的新 TOTP。userId 使用完整 UUID；仅接受 code 及 CSRF，拒绝查询参数、重复及额外字段。已完成受控开通且有密码的账号恢复 ACTIVE，否则恢复 PENDING；撤销目标全部旧应用授权，不恢复旧会话或已取消的凭据。重复操作返回 204，不重复记录状态变更事件；每次验证成功均消费该 TOTP，且不延长管理期限。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也支持 _csrf 表单字段", schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "204", description = "操作完成或已处于目标状态", content = @Content)
 	@ApiResponse(responseCode = "400", description = "用户标识、TOTP 或请求格式无效", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })

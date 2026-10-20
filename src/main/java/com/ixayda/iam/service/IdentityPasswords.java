@@ -27,16 +27,19 @@ public class IdentityPasswords {
 
 	private final IdentityBrowserSessions sessions;
 
+	private final IdentityAuthorizationRevocations revocations;
+
 	private final SecurityAudits audits;
 
 	private final TransactionTemplate transaction;
 
 	IdentityPasswords(IdentityUsers users, PasswordHasher passwords, PasswordAuthenticationLimits limits,
-			IdentityBrowserSessions sessions, SecurityAudits audits, PlatformTransactionManager manager) {
+			IdentityBrowserSessions sessions, IdentityAuthorizationRevocations revocations, SecurityAudits audits, PlatformTransactionManager manager) {
 		this.users = users;
 		this.passwords = passwords;
 		this.limits = limits;
 		this.sessions = sessions;
+		this.revocations = revocations;
 		this.audits = audits;
 		this.transaction = new TransactionTemplate(manager);
 	}
@@ -97,6 +100,7 @@ public class IdentityPasswords {
 		}
 		this.users.replacePassword(userId, replacement, credentialVersion);
 		this.sessions.revokeAll(userId, audit);
+		this.revocations.revokeForUser(userId, audit);
 		this.limits.succeeded(attempt);
 		this.audits.recordSuccess(Action.PASSWORD_CHANGED, userId, audit);
 		// Revocation is intentional; preserve the original deadlines through all writes and audit.

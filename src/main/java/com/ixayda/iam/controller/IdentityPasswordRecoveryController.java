@@ -72,7 +72,7 @@ public class IdentityPasswordRecoveryController {
 	}
 
 	@SecurityRequirements
-	@Operation(operationId = "completePasswordRecovery", summary = "完成密码恢复", description = "无需登录。先从 /api/csrf 获取所属会话 Cookie 和 CSRF 令牌，通过同源 HTTPS 提交 userId、token、newPassword 及 CSRF；拒绝查询参数、重复和额外字段。userId 为完整 UUID，凭据原样提交，不得进入 URL、日志或本地存储。账号和来源分别限制每 15 分钟 5 次及 30 次失败；未知或无效账号、错绑、过期、取消、被替换和重放的凭据统一返回无效凭据。仅在凭据有效时检查密码规则，不合规可在剩余有效期及预算内重试。成功原子替换密码、递增版本、消费凭据、撤销目标全部 IAM 会话并记录审计；拒绝与当前密码相同的密码（按 NFC 匹配）。不自动登录，不改变用户状态、管理资格或 MFA；之后通过 /login 正常登录。恢复本人时清除当前会话 Cookie，恢复其他账号时保留调用者身份。")
+	@Operation(operationId = "completePasswordRecovery", summary = "完成密码恢复", description = "无需登录。先从 /api/csrf 获取所属会话 Cookie 和 CSRF 令牌，通过同源 HTTPS 提交 userId、token、newPassword 及 CSRF；拒绝查询参数、重复和额外字段。userId 为完整 UUID，凭据原样提交，不得进入 URL、日志或本地存储。账号和来源分别限制每 15 分钟 5 次及 30 次失败；未知或无效账号、错绑、过期、取消、被替换和重放的凭据统一返回无效凭据。仅在凭据有效时检查密码规则，不合规可在剩余有效期及预算内重试。成功原子替换密码、递增版本、消费凭据、撤销目标全部 IAM 会话及应用授权并记录审计；拒绝与当前密码相同的密码（按 NFC 匹配）。不自动登录，不改变用户状态、管理资格或 MFA；之后通过 /login 正常登录。恢复本人时清除当前会话 Cookie，恢复其他账号时保留调用者身份。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, description = "同一会话的 /api/csrf 令牌；也支持 _csrf 表单字段", schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "204", description = "密码已替换且全部所属会话已撤销，仍需正常登录", content = @Content,
 			headers = @Header(name = "Set-Cookie", description = "恢复本人时清除 __Host-IAMSESSION Cookie：Secure、HttpOnly、Path=/、SameSite=Lax；匿名或恢复其他账号时不清调用者 Cookie", schema = @Schema(type = "string")))

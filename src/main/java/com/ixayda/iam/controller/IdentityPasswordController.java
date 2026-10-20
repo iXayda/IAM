@@ -50,8 +50,8 @@ public class IdentityPasswordController {
 	}
 
 	@Operation(operationId = "changeCurrentPassword", summary = "修改本人密码",
-			description = "使用当前会话及 CSRF 令牌提交当前密码和新密码；成功后撤销本人全部 IAM 登录会话并清除 Cookie。拒绝查询参数及重复参数。")
-	@ApiResponse(responseCode = "204", description = "密码已修改，全部 IAM 登录会话已撤销", content = @Content)
+			description = "使用当前会话及 CSRF 令牌提交当前密码和新密码；成功后撤销本人全部 IAM 登录会话及应用授权并清除 Cookie。拒绝查询参数及重复参数。")
+	@ApiResponse(responseCode = "204", description = "密码已修改，全部 IAM 登录会话及应用授权已撤销", content = @Content)
 	@ApiResponse(responseCode = "400", description = "密码修改被拒绝；边界拒绝使用 JSON 错误",
 			content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")),
 					@Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })
