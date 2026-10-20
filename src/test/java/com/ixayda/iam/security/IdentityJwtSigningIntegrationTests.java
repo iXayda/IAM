@@ -188,7 +188,9 @@ class IdentityJwtSigningIntegrationTests {
 	}
 
 	@Test
-	void restartUsesTheSameKidAndDatabaseIdentity() {
+	void restartAfterRotationUsesTheSameCurrentKidAndRetainsThePreviousPublicIdentity() {
+		var previous = this.key;
+		this.key = this.keys.rotate(previous.id(), new com.ixayda.iam.model.SecurityAuditContext("deployment:operator", "deployment:signing-rotation:CHANGE-123", UUID.randomUUID()));
 		var before = snapshot();
 		try (var restarted = new SpringApplicationBuilder(IamApplication.class).web(WebApplicationType.NONE).properties(Map.of(
 				"spring.datasource.url", this.postgres.getJdbcUrl(), "spring.datasource.username", this.postgres.getUsername(), "spring.datasource.password", this.postgres.getPassword(),
@@ -198,6 +200,7 @@ class IdentityJwtSigningIntegrationTests {
 			var token = template.execute(tx -> reloaded.encode(JwtEncoderParameters.from(claims())));
 			assertThat(token.getHeaders()).containsEntry("kid", this.key.id().toString());
 			decode(token);
+			assertThat(restarted.getBean(IdentitySigningKeys.class).verificationKeys()).containsExactly(previous, this.key);
 			assertThat(restarted.getBeansOfType(IdentityJwtEncoder.class)).isEmpty();
 			assertThat(restarted.getBeansOfType(IdentityJwkSource.class)).isEmpty();
 		}
@@ -257,7 +260,7 @@ class IdentityJwtSigningIntegrationTests {
 			try (var lock = connection.prepareStatement("SELECT singleton FROM iam_signing_key_state FOR UPDATE")) { lock.executeQuery().close(); }
 			var signing = executor.submit(() -> { assertUnavailable(() -> encode(JwtEncoderParameters.from(claims()))); return true; });
 			try {
-				await().atMost(Duration.ofSeconds(5)).until(() -> this.jdbc.sql("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%SELECT initial_key_id, initialized_at FROM iam_signing_key_state%'").query(Long.class).single() > 0);
+				await().atMost(Duration.ofSeconds(5)).until(() -> this.jdbc.sql("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT initial_key_id%FROM iam_signing_key_state%FOR SHARE'").query(Long.class).single() > 0);
 				try (var tamper = connection.prepareStatement("UPDATE iam_signing_key SET encrypted_private_key=set_byte(encrypted_private_key,10,get_byte(encrypted_private_key,10) # 1)")) { tamper.executeUpdate(); }
 			}
 			finally { connection.commit(); }
@@ -267,11 +270,12 @@ class IdentityJwtSigningIntegrationTests {
 
 	@Test
 	void publicJwkSelectionWorksWithoutPrivateColumnPermissionsOrProtectionKeys() throws Exception {
+		this.keys.rotate(this.key.id(), new com.ixayda.iam.model.SecurityAuditContext("deployment:operator", "deployment:signing-rotation:CHANGE-123", UUID.randomUUID()));
 		String role = "jwk_reader_" + UUID.randomUUID().toString().replace("-", "");
 		this.jdbc.sql("CREATE ROLE " + role + " NOLOGIN").update();
 		try {
 			this.jdbc.sql("GRANT USAGE ON SCHEMA public TO " + role).update();
-			this.jdbc.sql("GRANT SELECT (id,algorithm,public_key,created_at) ON iam_signing_key TO " + role).update();
+			this.jdbc.sql("GRANT SELECT (id,algorithm,public_key,created_at,status,verification_until) ON iam_signing_key TO " + role).update();
 			try (var connection = DriverManager.getConnection(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword());
 					var context = new AnnotationConfigApplicationContext()) {
 				JdbcClient reader = JdbcClient.create(new SingleConnectionDataSource(connection, true)); reader.sql("SET ROLE " + role).update();
@@ -279,7 +283,7 @@ class IdentityJwtSigningIntegrationTests {
 				context.registerBean(SecurityAudits.class, () -> this.audits); context.registerBean(PlatformTransactionManager.class, () -> this.transactions);
 				context.register(IdentitySigningKeyRepository.class, IdentitySigningKeys.class); context.refresh();
 				var source = new IdentityJwkSource(context.getBean(IdentitySigningKeys.class));
-				assertThat(source.get(ALL, null)).hasSize(1).allSatisfy(jwk -> assertThat(jwk.isPrivate()).isFalse());
+				assertThat(source.get(ALL, null)).hasSize(2).allSatisfy(jwk -> assertThat(jwk.isPrivate()).isFalse());
 				this.jdbc.sql("REVOKE SELECT(public_key) ON iam_signing_key FROM " + role).update();
 				assertThatThrownBy(() -> source.get(ALL, null)).isInstanceOf(KeySourceException.class).hasMessage("Public signing keys are unavailable").hasNoCause();
 			}

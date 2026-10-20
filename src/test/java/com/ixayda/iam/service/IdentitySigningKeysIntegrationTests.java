@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.security.Signature;
 import java.sql.DriverManager;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -14,6 +15,8 @@ import java.util.concurrent.TimeUnit;
 
 import com.ixayda.iam.PostgreSqlTestConfiguration;
 import com.ixayda.iam.credential.SigningKeySecrets;
+import com.ixayda.iam.model.SecurityAuditContext;
+import com.ixayda.iam.model.IdentitySigningKeyMetadata.Status;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.model.SecurityAuditFilter;
 import com.ixayda.iam.repository.IdentitySigningKeyRepository;
@@ -23,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -38,6 +42,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.awaitility.Awaitility.await;
+import static com.ixayda.iam.PostgreSqlMigrationTestSupport.copyRows;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Import(PostgreSqlTestConfiguration.class)
@@ -209,6 +215,7 @@ class IdentitySigningKeysIntegrationTests {
 	void initializedMarkerWithMissingMaterialCannotCreateAReplacement() {
 		this.keys.initialize();
 		this.jdbc.sql("ALTER TABLE iam_signing_key_state DROP CONSTRAINT iam_signing_key_state_initial_key_id_fkey").update();
+		this.jdbc.sql("ALTER TABLE iam_signing_key_state DROP CONSTRAINT iam_signing_key_state_active_key_id_fkey").update();
 		try {
 			this.jdbc.sql("DELETE FROM iam_signing_key").update();
 			var missing = snapshot();
@@ -219,6 +226,7 @@ class IdentitySigningKeysIntegrationTests {
 		finally {
 			clean();
 			this.jdbc.sql("ALTER TABLE iam_signing_key_state ADD CONSTRAINT iam_signing_key_state_initial_key_id_fkey FOREIGN KEY (initial_key_id) REFERENCES iam_signing_key (id) ON DELETE RESTRICT").update();
+			this.jdbc.sql("ALTER TABLE iam_signing_key_state ADD CONSTRAINT iam_signing_key_state_active_key_id_fkey FOREIGN KEY (active_key_id) REFERENCES iam_signing_key (id) ON DELETE RESTRICT").update();
 		}
 	}
 
@@ -228,7 +236,7 @@ class IdentitySigningKeysIntegrationTests {
 		var before = snapshot();
 		for (String sql : List.of("DELETE FROM iam_signing_key_state", "UPDATE iam_signing_key_state SET initial_key_id = NULL, initialized_at = NULL",
 				"UPDATE iam_signing_key_state SET initialized_at = initialized_at + interval '1 second'", "DELETE FROM iam_signing_key",
-				"INSERT INTO iam_signing_key SELECT gen_random_uuid(), algorithm, public_key, encrypted_private_key, protection_key_id, created_at FROM iam_signing_key")) {
+				"INSERT INTO iam_signing_key (id,algorithm,public_key,encrypted_private_key,protection_key_id,created_at) SELECT gen_random_uuid(), algorithm, public_key, encrypted_private_key, protection_key_id, created_at FROM iam_signing_key")) {
 			assertThatThrownBy(() -> this.jdbc.sql(sql).update()).isInstanceOf(DataIntegrityViolationException.class);
 		}
 		assertThat(snapshot()).isEqualTo(before);
@@ -252,7 +260,7 @@ class IdentitySigningKeysIntegrationTests {
 		this.jdbc.sql("CREATE ROLE " + role + " NOLOGIN").update();
 		try {
 			this.jdbc.sql("GRANT USAGE ON SCHEMA public TO " + role).update();
-			this.jdbc.sql("GRANT SELECT (id, algorithm, public_key, created_at) ON iam_signing_key TO " + role).update();
+			this.jdbc.sql("GRANT SELECT (id, algorithm, public_key, created_at, status, verification_until) ON iam_signing_key TO " + role).update();
 			try (var connection = DriverManager.getConnection(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword());
 					var context = new AnnotationConfigApplicationContext()) {
 				JdbcClient reader = JdbcClient.create(new SingleConnectionDataSource(connection, true));
@@ -280,6 +288,174 @@ class IdentitySigningKeysIntegrationTests {
 		});
 		assertEmptyInitialization();
 	}
+
+	@Test
+	void normalRotationErasesTheRetiredPrivateMaterialAndPreservesTheInitializationMarkerAndCorrelatedAudits() {
+		var original = this.keys.initialize().orElseThrow();
+		var marker = this.jdbc.sql("SELECT initial_key_id,initialized_at FROM iam_signing_key_state").query().singleRow();
+		var audit = rotationAudit();
+		var next = this.keys.rotate(original.id(), audit);
+		assertThat(next.id()).isNotEqualTo(original.id());
+		assertThat(next.publicKey()).isNotEqualTo(original.publicKey());
+		assertThat(this.keys.initialize()).contains(next);
+		assertThat(this.keys.signingMaterial().key()).isEqualTo(next);
+		assertThat(this.keys.verificationKeys()).containsExactly(original, next);
+		assertThat(this.jdbc.sql("SELECT initial_key_id,initialized_at FROM iam_signing_key_state").query().singleRow()).isEqualTo(marker);
+		assertThat(this.keys.metadata()).filteredOn(key -> key.status() == Status.RETIRED).singleElement().satisfies(key -> {
+			assertThat(key.id()).isEqualTo(original.id());
+			assertThat(key.verificationUntil()).isEqualTo(key.retiredAt().plusSeconds(330));
+		});
+		assertThat(this.jdbc.sql("SELECT encrypted_private_key IS NULL AND protection_key_id IS NULL FROM iam_signing_key WHERE id=:id")
+				.param("id", original.id()).query(Boolean.class).single()).isTrue();
+		var events = this.jdbc.sql("SELECT * FROM iam_security_audit WHERE correlation_id=:id ORDER BY action")
+				.param("id", audit.correlationId()).query().listOfRows();
+		assertThat(events).hasSize(2).allSatisfy(event -> {
+			assertThat(event.get("actor")).isEqualTo(audit.actor());
+			assertThat(event.get("source")).isEqualTo(audit.source());
+			assertThat(event.get("target_type")).isEqualTo("signing_key");
+			assertThat(event.get("target_user_id")).isNull();
+			assertThat(event.get("outcome")).isEqualTo("success");
+		});
+		assertThat(events.get(0)).containsEntry("action", "signing_key_retired").containsEntry("target_id", original.id());
+		assertThat(events.get(1)).containsEntry("action", "signing_key_rotated").containsEntry("target_id", next.id());
+	}
+
+	@Test
+	void staleConfirmationCannotRotateAgainButAConfirmedCurrentKeyCanRotateWithAllRequiredPublicKeysRetained() {
+		var original = this.keys.initialize().orElseThrow();
+		var second = this.keys.rotate(original.id(), rotationAudit()); var before = snapshot();
+		assertThatIllegalStateException().isThrownBy(() -> this.keys.rotate(original.id(), rotationAudit()));
+		assertThat(snapshot()).isEqualTo(before);
+		var third = this.keys.rotate(second.id(), rotationAudit());
+		assertThat(this.keys.verificationKeys()).containsExactly(original, second, third);
+		assertThat(this.keys.metadata()).filteredOn(key -> key.status() == Status.ACTIVE).singleElement().satisfies(key -> assertThat(key.id()).isEqualTo(third.id()));
+		assertThat(this.jdbc.sql("SELECT revision FROM iam_signing_key_state").query(Long.class).single()).isEqualTo(3);
+	}
+
+	@Test
+	void concurrentRotationsWithTheSameConfirmationCommitExactlyOnce() throws Exception {
+		var original = this.keys.initialize().orElseThrow(); var start = new CountDownLatch(1);
+		try (var executor = Executors.newFixedThreadPool(2)) {
+			var attempts = java.util.stream.IntStream.range(0, 2).mapToObj(index -> executor.submit(() -> {
+				assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+				try { this.keys.rotate(original.id(), rotationAudit()); return true; }
+				catch (IllegalStateException ex) { assertThat(ex).hasMessage("Current signing key changed"); return false; }
+			})).toList(); start.countDown();
+			assertThat(List.of(attempts.get(0).get(20, TimeUnit.SECONDS), attempts.get(1).get(20, TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
+		}
+		assertThat(count("iam_signing_key")).isEqualTo(2);
+		assertThat(count("iam_security_audit")).isEqualTo(3);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "issuance", "validation" })
+	void rotationWaitsUntilExistingSigningOrOnlineValidationTransactionsCommit(String operation) throws Exception {
+		var original = this.keys.initialize().orElseThrow(); var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+		try (var executor = Executors.newFixedThreadPool(2)) {
+			var reader = executor.submit(() -> new TransactionTemplate(this.transactions).executeWithoutResult(tx -> {
+				if (operation.equals("issuance")) { assertThat(this.keys.lockForIssuance().key()).isEqualTo(original); }
+				else { assertThat(this.keys.lockForValidation(original.id())).contains(original); }
+				entered.countDown();
+				try { assertThat(release.await(10, TimeUnit.SECONDS)).isTrue(); }
+				catch (InterruptedException ex) { Thread.currentThread().interrupt(); throw new AssertionError(ex); }
+			}));
+			try {
+				assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+				var rotation = executor.submit(() -> this.keys.rotate(original.id(), rotationAudit()));
+				await().atMost(Duration.ofSeconds(5)).until(() -> this.jdbc.sql("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT initial_key_id%FROM iam_signing_key_state%FOR UPDATE'").query(Long.class).single() > 0);
+				assertThat(rotation.isDone()).isFalse(); assertThat(this.keys.findPublicKey()).contains(original);
+				release.countDown(); reader.get(10, TimeUnit.SECONDS);
+				assertThat(rotation.get(20, TimeUnit.SECONDS).id()).isNotEqualTo(original.id());
+			}
+			finally { release.countDown(); }
+		}
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "retire-suppressed", "retire-public-altered", "retire-time-altered", "key-suppressed", "key-altered", "state-suppressed", "state-altered", "audit-rejected", "audit-suppressed", "audit-altered", "commit-rejected" })
+	void retirementReplacementActivationAndAuditsRollBackTogetherOnStorageOrCommitFaults(String failure) {
+		var original = this.keys.initialize().orElseThrow(); var before = snapshot();
+		String table = failure.startsWith("retire-") || failure.startsWith("key-") ? "iam_signing_key" : failure.startsWith("state-") ? "iam_signing_key_state" : "iam_security_audit";
+		String operation = failure.startsWith("retire-") || failure.startsWith("state-") ? "UPDATE" : "INSERT";
+		String body = failure.endsWith("suppressed") ? "RETURN NULL;" : switch (failure) {
+			case "retire-public-altered" -> "NEW.public_key := set_byte(NEW.public_key,10,get_byte(NEW.public_key,10) # 1); RETURN NEW;";
+			case "retire-time-altered" -> "NEW.retired_at := NEW.retired_at+interval '1 second'; NEW.verification_until := NEW.verification_until+interval '1 second'; RETURN NEW;";
+			case "key-altered" -> "NEW.protection_key_id := repeat('0',64); RETURN NEW;";
+			case "state-altered" -> "NEW.active_key_id := OLD.active_key_id; NEW.active_key_created_at := OLD.active_key_created_at; RETURN NEW;";
+			case "audit-altered" -> "NEW.target_id := gen_random_uuid(); RETURN NEW;";
+			default -> "RAISE EXCEPTION 'isolated rotation storage failure';";
+		};
+		installFault(table, operation, body, failure.equals("commit-rejected"));
+		assertThatThrownBy(() -> this.keys.rotate(original.id(), rotationAudit())).isInstanceOf(RuntimeException.class);
+		assertThat(snapshot()).isEqualTo(before); removeFaults();
+		assertThat(this.keys.rotate(original.id(), rotationAudit()).id()).isNotEqualTo(original.id());
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "absent", "wrong", "ciphertext", "ambient" })
+	void rotationCannotReplaceAnUnusableCurrentKeyOrEscapeAnUncommittedCaller(String failure) {
+		var original = this.keys.initialize().orElseThrow();
+		if (failure.equals("ciphertext")) { this.jdbc.sql("UPDATE iam_signing_key SET encrypted_private_key=set_byte(encrypted_private_key,10,get_byte(encrypted_private_key,10) # 1)").update(); }
+		var before = snapshot();
+		var candidate = failure.equals("absent") || failure.equals("wrong") ? withProtectionFile(failure.equals("absent") ? "" : OTHER_KEY_FILE.toString()) : this.keys;
+		if (failure.equals("ambient")) {
+			new TransactionTemplate(this.transactions).executeWithoutResult(tx -> assertThatIllegalStateException().isThrownBy(() -> candidate.rotate(original.id(), rotationAudit())));
+		}
+		else { assertThatIllegalStateException().isThrownBy(() -> candidate.rotate(original.id(), rotationAudit())); }
+		assertThat(snapshot()).isEqualTo(before);
+	}
+
+	@Test
+	void expiredRetiredKeysLeaveBothPublicVerificationPathsWhileTheCurrentKeyAndInitializationRemainStable() {
+		var original = this.keys.initialize().orElseThrow(); var current = this.keys.rotate(original.id(), rotationAudit());
+		// Move this public-only history into the past instead of waiting 330 real seconds.
+		this.jdbc.sql("""
+				WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS now)
+				UPDATE iam_signing_key SET created_at=moment.now-interval '10 minutes',retired_at=moment.now-interval '331 seconds',verification_until=moment.now-interval '1 second'
+				FROM moment WHERE id=:id
+				""").param("id", original.id()).update();
+		assertThat(this.keys.verificationKeys()).containsExactly(current);
+		new TransactionTemplate(this.transactions).executeWithoutResult(tx -> {
+			assertThat(this.keys.lockForValidation(original.id())).isEmpty();
+			assertThat(this.keys.lockForValidation(current.id())).contains(current);
+		});
+		assertThat(this.keys.initialize()).contains(current);
+		assertThat(this.keys.metadata()).hasSize(2);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "status='retired'", "status='unknown'", "encrypted_private_key=NULL", "protection_key_id=NULL", "retired_at=clock_timestamp()", "verification_until=clock_timestamp()" })
+	void databaseRequiresCompleteActiveOrRetiredStates(String assignment) {
+		this.keys.initialize(); var before = snapshot();
+		assertThatThrownBy(() -> this.jdbc.sql("UPDATE iam_signing_key SET " + assignment).update()).isInstanceOf(DataIntegrityViolationException.class);
+		assertThat(snapshot()).isEqualTo(before);
+	}
+
+	@Test
+	void upgradePreservesExistingIdentityCiphertextInitializationAndAuditWithoutRotating() throws Exception {
+		var original = this.keys.initialize().orElseThrow();
+		String schema = "signing_rotation_upgrade_" + UUID.randomUUID().toString().replace("-", ""); this.jdbc.sql("CREATE SCHEMA " + schema).update();
+		try {
+			Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword()).schemas(schema).defaultSchema(schema).target("38").load().migrate();
+			try (var connection = DriverManager.getConnection(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())) {
+				connection.setSchema(schema); var old = JdbcClient.create(new SingleConnectionDataSource(connection, true));
+				copyRows(old, "iam_signing_key");
+				old.sql("UPDATE iam_signing_key_state SET initial_key_id=:id, initialized_at=(SELECT created_at FROM iam_signing_key WHERE id=:id)").param("id", original.id()).update();
+				copyRows(old, "iam_security_audit");
+				var before = old.sql("SELECT to_jsonb(s)::text FROM iam_signing_key s").query(String.class).single();
+				var audit = old.sql("SELECT to_jsonb(a)::text FROM iam_security_audit a").query(String.class).list();
+				var migration = Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword()).schemas(schema).defaultSchema(schema).target("39").load();
+				assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);
+				assertThat(old.sql("SELECT (to_jsonb(s)-'status'-'retired_at'-'verification_until')::text FROM iam_signing_key s").query(String.class).single()).isEqualTo(before);
+				assertThat(old.sql("SELECT to_jsonb(a)::text FROM iam_security_audit a").query(String.class).list()).isEqualTo(audit);
+				assertThat(old.sql("SELECT active_key_id=initial_key_id AND active_key_created_at=initialized_at AND revision=1 FROM iam_signing_key_state").query(Boolean.class).single()).isTrue();
+				assertThat(migration.migrate().migrationsExecuted).isZero();
+			}
+		}
+		finally { this.jdbc.sql("DROP SCHEMA " + schema + " CASCADE").update(); }
+	}
+
+	private static SecurityAuditContext rotationAudit() { return new SecurityAuditContext("deployment:operator-1", "deployment:signing-rotation:CHANGE-123", UUID.randomUUID()); }
 
 	private IdentitySigningKeys withProtectionFile(String file) {
 		return new IdentitySigningKeys(this.repository, new SigningKeySecrets(file), this.audits, this.transactions);

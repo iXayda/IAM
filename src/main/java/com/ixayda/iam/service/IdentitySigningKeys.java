@@ -1,14 +1,17 @@
 package com.ixayda.iam.service;
 
 import java.security.interfaces.RSAPublicKey;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import com.ixayda.iam.credential.SigningKeySecrets;
 import com.ixayda.iam.model.IdentitySigningKey;
+import com.ixayda.iam.model.IdentitySigningKeyMetadata;
 import com.ixayda.iam.model.IdentitySigningMaterial;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
+import com.ixayda.iam.model.SecurityAuditTarget;
 import com.ixayda.iam.repository.IdentitySigningKeyRepository;
 import com.ixayda.iam.repository.IdentitySigningKeyRepository.StoredKey;
 
@@ -17,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.Assert;
 
 @Service
 @Lazy
@@ -41,7 +45,7 @@ public class IdentitySigningKeys {
 			var lifecycle = this.repository.lockLifecycle();
 			var stored = this.repository.findStoredKey();
 			if (lifecycle.initialKeyId() == null) {
-				if (stored.isPresent()) { throw new IllegalStateException("Signing initialization state is inconsistent"); }
+				if (this.repository.hasStoredKeys()) { throw new IllegalStateException("Signing initialization state is inconsistent"); }
 				if (!this.secrets.isConfigured()) { return Optional.empty(); }
 				UUID id = UUID.randomUUID();
 				var generated = this.secrets.generate();
@@ -63,6 +67,34 @@ public class IdentitySigningKeys {
 	public Optional<IdentitySigningKey> findPublicKey() {
 		return this.repository.findPublicKey().map(stored -> new IdentitySigningKey(stored.id(), stored.algorithm(),
 				this.secrets.readPublicKey(stored.publicKey()), stored.createdAt()));
+	}
+
+	public List<IdentitySigningKey> verificationKeys() {
+		return this.repository.findVerificationKeys().stream().map(stored -> new IdentitySigningKey(stored.id(), stored.algorithm(),
+				this.secrets.readPublicKey(stored.publicKey()), stored.createdAt())).toList();
+	}
+
+	public List<IdentitySigningKeyMetadata> metadata() { return this.repository.metadata(); }
+
+	/** Deployment-only operation; OS access and maintenance database credentials authorize the trusted caller. */
+	public IdentitySigningKey rotate(UUID expectedCurrent, SecurityAuditContext audit) {
+		Assert.notNull(expectedCurrent, "Current signing key id is required");
+		Assert.notNull(audit, "Trusted audit context is required");
+		requireIndependentTransaction();
+		this.secrets.requireConfigured();
+		return this.transaction.execute(tx -> {
+			var lifecycle = this.repository.lockLifecycle();
+			var material = loadLockedMaterial(lifecycle);
+			if (!material.key().id().equals(expectedCurrent)) { throw new IllegalStateException("Current signing key changed"); }
+			this.repository.retire(expectedCurrent);
+			UUID next = UUID.randomUUID(); var generated = this.secrets.generate();
+			this.repository.insert(next, generated.getPublic().getEncoded(), this.secrets.encrypt(next, generated.getPrivate()), this.secrets.protectionKeyId());
+			this.repository.activate(expectedCurrent, next, lifecycle.revision());
+			var current = loadLockedMaterial(this.repository.lockLifecycle()).key();
+			this.audits.recordTargetSuccess(Action.SIGNING_KEY_RETIRED, null, new SecurityAuditTarget(SecurityAuditTarget.Type.SIGNING_KEY, expectedCurrent), audit);
+			this.audits.recordTargetSuccess(Action.SIGNING_KEY_ROTATED, null, new SecurityAuditTarget(SecurityAuditTarget.Type.SIGNING_KEY, next), audit);
+			return current;
+		});
 	}
 
 	/** Only trusted signing code receives private material, after the read transaction has committed. */
@@ -90,14 +122,15 @@ public class IdentitySigningKeys {
 		var lifecycle = this.repository.lockForIssuance();
 		var key = findPublicKey();
 		if (lifecycle.initialKeyId() == null) {
-			if (key.isPresent()) { throw new IllegalStateException("Signing initialization state is inconsistent"); }
+			if (this.repository.hasStoredKeys()) { throw new IllegalStateException("Signing initialization state is inconsistent"); }
 			return Optional.empty();
 		}
 		var current = key.orElseThrow(() -> new IllegalStateException("Initialized signing key is missing"));
-		if (!current.id().equals(lifecycle.initialKeyId()) || !current.createdAt().equals(lifecycle.initializedAt())) {
+		if (!current.id().equals(lifecycle.activeKeyId()) || !current.createdAt().equals(lifecycle.activeKeyCreatedAt())) {
 			throw new IllegalStateException("Signing initialization state is inconsistent");
 		}
-		return current.id().equals(id) ? key : Optional.empty();
+		return this.repository.findVerificationKey(id).map(stored -> new IdentitySigningKey(stored.id(), stored.algorithm(),
+				this.secrets.readPublicKey(stored.publicKey()), stored.createdAt()));
 	}
 
 	private IdentitySigningMaterial loadLockedMaterial(IdentitySigningKeyRepository.Lifecycle lifecycle) {
@@ -113,7 +146,8 @@ public class IdentitySigningKeys {
 	}
 
 	private static void requireConsistentState(IdentitySigningKeyRepository.Lifecycle lifecycle, StoredKey stored) {
-		if (!stored.id().equals(lifecycle.initialKeyId()) || !stored.createdAt().equals(lifecycle.initializedAt())) {
+		if (lifecycle.initialKeyId() == null || !stored.id().equals(lifecycle.activeKeyId()) || !stored.createdAt().equals(lifecycle.activeKeyCreatedAt())
+				|| lifecycle.revision() < 1 || lifecycle.initialKeyId().equals(stored.id()) && !stored.createdAt().equals(lifecycle.initializedAt())) {
 			throw new IllegalStateException("Signing initialization state is inconsistent");
 		}
 	}
