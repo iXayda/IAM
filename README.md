@@ -86,6 +86,8 @@ java -jar target/iam.jar --spring.profiles.active=runtime
 
 IAM 会话与应用会话分别管理，IAM 会话不能作为业务 API 的访问令牌。接口字段、请求示例、响应及错误由 OpenAPI 描述；跨请求流程见 [接入指南](docs/integration.md)。
 
+[应用示例](examples/oidc/README.md)提供两个独立 Node.js 22 保密 Web/BFF 与资源服务，演示授权码与 S256 PKCE、SSO 及在线授权校验。接入应用需自行执行具体业务操作和对象归属校验。[浏览器验证说明](tests/browser/README.md)提供隔离环境的场景运行方法。
+
 ## 接口文档工具
 
 接口规范由 springdoc 根据控制器和 DTO 生成，并补充 Spring Security 过滤器处理的登录、退出和协议端点。默认关闭文档入口；需要导出时，在完成数据库和 HTTPS 配置后启用 `documentation` profile：

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IAM 独立前端测试夹具</title><script src="/identity.js" defer></script></head>
+<body>
+<h1>IAM 独立前端测试夹具</h1>
+<p>仅用于隔离验收。所有交互通过同源 HTTPS 和 JavaScript 调用后端。</p>
+<form id="login"><h2>登录</h2><label>账号<input name="username" autocomplete="username" required></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><button>登录 IAM</button></form>
+<form id="mfa"><h2>管理员验证</h2><label>动态码<input name="code" autocomplete="one-time-code" required></label><button>验证管理员</button></form>
+<section id="interaction" hidden><h2>应用登录</h2><pre id="interaction-view"></pre><button id="continue">确认当前账号与范围</button><button id="cancel">取消应用登录</button></section>
+<section><h2>本人资料</h2><button id="profile">查看本人资料</button><button id="logout">退出 IAM 会话</button></section>
+<form id="setup"><h2>完成账号开通</h2><label>用户 UUID<input name="userId" required></label><label>一次性凭据<input name="token" type="password" autocomplete="off" required></label><label>新密码<input name="password" type="password" autocomplete="new-password" required></label><button>完成开通</button></form>
+<form id="recovery"><h2>完成密码恢复</h2><label>用户 UUID<input name="userId" required></label><label>恢复凭据<input name="token" type="password" autocomplete="off" required></label><label>新密码<input name="newPassword" type="password" autocomplete="new-password" required></label><button>恢复密码</button></form>
+<form id="operation"><h2>接口交互夹具</h2><p>路径和字段按当前接口规范填写；提交后立即清理输入。</p><label>方法<select name="method"><option>GET</option><option>POST</option></select></label><label>接口路径<input name="path" required></label><label>字段 JSON<textarea name="fields" autocomplete="off">{}</textarea></label><label><input name="json" type="checkbox">JSON 请求体</label><button>执行接口</button></form>
+<section><h2>本次结果</h2><p>秘密只在本次交互中显示；保存后隐藏，离开页面自动清理。</p><pre id="result" aria-live="polite"></pre><button id="hide">已保存，隐藏</button></section>
+</body></html>

@@ -86,6 +86,8 @@ The identity frontend calls IAM over same-origin HTTPS, using session cookies an
 
 IAM and application sessions are managed separately. An IAM session cannot serve as an access token for business APIs. OpenAPI describes API fields, request examples, responses, and errors; see the [integration guide](docs/integration.md) for flows across requests.
 
+The [application examples](examples/oidc/README.md) provide two standalone Node.js 22 confidential web/BFF clients and resource services, demonstrating authorization code flow with S256 PKCE, SSO, and online authorization validation. Each application must enforce its own operation-level and object ownership checks. The [browser verification guide](tests/browser/README.md) explains how to run scenarios in an isolated environment.
+
 ## API documentation tools
 
 springdoc generates the API specification from controllers and DTOs, with additional descriptions for login, logout, and protocol endpoints handled by Spring Security filters. Documentation endpoints are disabled by default. After configuring the database and HTTPS, enable the `documentation` profile to export the specification:

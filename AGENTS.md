@@ -5,10 +5,12 @@
 ## 仓库导航
 
 - `src/main/java/com/ixayda/iam/`：Java 源码；`src/test/java/com/ixayda/iam/`：Java 测试及共享夹具。
+- `examples/oidc/`：独立 BFF 和资源服务示例；`tests/browser/`：浏览器验证，`tests/browser/fixtures/` 下的身份前端仅用于测试。
 
 ## 开发环境
 
 - 在仓库根目录使用 Maven Wrapper 和 Oracle JDK 21；Java 集成测试需要 Docker。
+- 修改应用示例或浏览器场景时使用 Node.js 22；浏览器还需按下方验证说明安装 Chromium。
 
 执行完整 Java 验证并构建 JAR：
 
@@ -45,8 +47,17 @@ java -jar target/iam.jar --spring.profiles.active=runtime
 ./mvnw -Dtest=ArchitectureTests test
 ```
 
+修改 OIDC 应用示例时执行：
+
+```bash
+npm --prefix examples/oidc ci --ignore-scripts
+npm --prefix examples/oidc test
+npm --prefix examples/oidc run check
+```
+
 | 改动 | 补充检查 |
 | --- | --- |
+| 浏览器或协议交互 | 按 [浏览器验证说明](tests/browser/README.md)准备依赖与 Java 夹具，再运行受影响场景 |
 | 仅文档 | 检查链接、示例及说明与实现的一致性；涉及可执行示例时验证受影响命令 |
 
 ## 安全注意点
