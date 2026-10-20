@@ -184,7 +184,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state", "bootstrap-admin", "recover-admin", "recover-admin-credentials", "rotate-signing-key", "compromise-signing-key", "recover-signing-key", "quarantine-restore" })
+	@ValueSource(strings = { "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state", "bootstrap-admin", "recover-admin", "recover-admin-credentials", "rotate-signing-key", "compromise-signing-key", "recover-signing-key", "quarantine-restore", "recover-restored-admin" })
 	void everyMaintenanceStartupRefusesAnEmptySchemaWithMigrationExplicitlyEnabled(String command) {
 		withSystemProperties(installationProperties(), () -> withSystemProperties(Map.of("spring.flyway.enabled", "true"), () ->
 				assertThatThrownBy(() -> { try (var ignored = MaintenanceApplication.start(IamApplication.class, command)) { fail("Empty schema must be rejected"); } })
@@ -230,7 +230,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 
 
 	@ParameterizedTest
-	@ValueSource(strings = { "quarantine-restore" })
+	@ValueSource(strings = { "quarantine-restore", "recover-restored-admin" })
 	void restoreAdmissionValidatesWithItsSingleConnectionPool(String command) {
 		runCommand("migrate");
 		withSystemProperties(installationProperties(), () -> withSystemProperties(Map.of("spring.datasource.hikari.connection-timeout", "500"), () -> {
@@ -305,7 +305,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "iam_authorization_protection.key_id", "iam_signing_key.public_key", "iam_administrator.user_id", "iam_signing_key_state.active_key_id", "iam_admin_bootstrap.completed_at", "iam_restore_state.current_restore_id" })
+	@ValueSource(strings = { "iam_authorization_protection.key_id", "iam_signing_key.public_key", "iam_administrator.user_id", "iam_signing_key_state.active_key_id", "iam_admin_bootstrap.completed_at", "iam_restore_state.current_restore_id", "iam_restore_administrator.completed_at" })
 	void runtimeChecksProtectedColumnsOnResolvedRelationsBehindTheFirstSearchPathSchema(String column) throws Exception {
 		runCommand("migrate"); runCommand("initialize-signing-key"); runCommand("initialize-authorization-key"); applyGrants("public");
 		this.maintenance.sql("CREATE SCHEMA prefix").update();
@@ -367,6 +367,8 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 					"UPDATE iam_admin_bootstrap SET completed_at=completed_at", "UPDATE iam_admin_bootstrap SET candidate_user_id=candidate_user_id",
 					"UPDATE iam_admin_bootstrap SET restore_closed=false", "UPDATE iam_restore_state SET current_restore_id=NULL",
 					"DELETE FROM iam_restore", "TRUNCATE iam_restore", "UPDATE iam_restore SET archive_sha256=archive_sha256",
+					"INSERT INTO iam_restore_administrator(restore_id,user_id,factor_id) VALUES (gen_random_uuid(),gen_random_uuid(),gen_random_uuid())",
+					"UPDATE iam_restore_administrator SET completed_at=clock_timestamp()", "DELETE FROM iam_restore_administrator", "TRUNCATE iam_restore_administrator",
 					"UPDATE iam_authorization_protection SET key_id=key_id", "DELETE FROM iam_authorization_protection",
 					"SELECT * FROM iam_administrator_recovery", "SELECT * FROM flyway_schema_history",
 					"CREATE TABLE runtime_ddl(id int)", "CREATE TEMP TABLE runtime_temp(id int)", "CREATE SCHEMA runtime_schema",
@@ -389,7 +391,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "column-audit", "public-audit", "signing-state", "bootstrap", "restore-state", "restore-evidence", "owner", "membership" })
+	@ValueSource(strings = { "column-audit", "public-audit", "signing-state", "bootstrap", "restore-state", "restore-evidence", "restore-administrator", "owner", "membership" })
 	void runtimeProfileRejectsMaintenanceCredentialsAndPrivilegeDriftBeforeListening(String fault) throws Exception {
 		runCommand("migrate"); runCommand("initialize-signing-key"); runCommand("initialize-authorization-key"); applyGrants("public");
 		switch (fault) {
@@ -399,6 +401,7 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 			case "bootstrap" -> this.maintenance.sql("GRANT UPDATE(completed_at) ON iam_admin_bootstrap TO " + this.runtime).update();
 			case "restore-state" -> this.maintenance.sql("GRANT UPDATE(current_restore_id) ON iam_restore_state TO " + this.runtime).update();
 			case "restore-evidence" -> this.maintenance.sql("GRANT DELETE ON iam_restore TO PUBLIC").update();
+			case "restore-administrator" -> this.maintenance.sql("GRANT UPDATE(completed_at) ON iam_restore_administrator TO " + this.runtime).update();
 			case "membership" -> adminSql("GRANT " + this.owner + " TO " + this.runtime + " WITH INHERIT FALSE, SET TRUE");
 		}
 		Runnable attempt = () -> assertThatThrownBy(() -> { try (var ignored = start(true)) { fail("Unsafe identity must prevent startup"); } })

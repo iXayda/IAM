@@ -47,7 +47,7 @@ public class IdentityRestoreRepository {
 
 	public void lockForQuarantine() {
 		this.jdbc.sql("SELECT set_config('lock_timeout','5s',true)").query(String.class).single();
-		this.jdbc.sql("LOCK TABLE iam_restore_state, iam_restore, iam_signing_key_state, iam_signing_key, iam_user, iam_admin_bootstrap, "
+		this.jdbc.sql("LOCK TABLE iam_restore_state, iam_restore, iam_restore_administrator, iam_signing_key_state, iam_signing_key, iam_user, iam_admin_bootstrap, "
 				+ "iam_resource, iam_resource_role, iam_user_resource_role_revision, iam_client, oauth2_registered_client, iam_resource_credential, "
 				+ "iam_security_audit, " + String.join(", ", INVALIDATED_TABLES) + " IN ACCESS EXCLUSIVE MODE").update();
 	}

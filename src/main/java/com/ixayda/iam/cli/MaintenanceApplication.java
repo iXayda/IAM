@@ -41,7 +41,7 @@ final class MaintenanceApplication {
 				candidate.getEnvironment().getPropertySources().addFirst(new MapPropertySource("iamMaintenanceDatabasePolicy",
 						Map.of("spring.flyway.enabled", false)));
 			}
-			if ("quarantine-restore".equals(command)) {
+			if ("quarantine-restore".equals(command) || "recover-restored-admin".equals(command)) {
 				candidate.getEnvironment().getPropertySources().addFirst(new MapPropertySource("iamRestoreDatabasePool",
 						Map.of("spring.datasource.hikari.maximum-pool-size", 1, "spring.datasource.hikari.minimum-idle", 0)));
 			}

@@ -10,6 +10,7 @@ import com.ixayda.iam.cli.DatabaseMaintenanceCommand;
 import com.ixayda.iam.cli.SigningKeyRotationCommand;
 import com.ixayda.iam.cli.SigningKeyIncidentCommand;
 import com.ixayda.iam.cli.RestoreQuarantineCommand;
+import com.ixayda.iam.cli.RestoreAdministratorCommand;
 
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
@@ -41,6 +42,7 @@ public class IamApplication {
 		}
 		if (args.length > 0 && !args[0].startsWith("--")) {
 			switch (args[0]) {
+				case "recover-restored-admin" -> RestoreAdministratorCommand.run(IamApplication.class, args);
 				case "quarantine-restore" -> RestoreQuarantineCommand.run(IamApplication.class, args);
 				case "migrate", "initialize-signing-key", "initialize-authorization-key", "preview-protocol-cleanup", "cleanup-protocol-state" ->
 						DatabaseMaintenanceCommand.run(IamApplication.class, args);
