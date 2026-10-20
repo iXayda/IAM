@@ -14,12 +14,12 @@ public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, Secu
 		Objects.requireNonNull(id, "Audit event id is required");
 		Objects.requireNonNull(action, "Audit action is required");
 		if (action.targetType() != null) {
-			if (target == null || target.type() != action.targetType() || targetUserId != null) {
+			if (target == null || target.type() != action.targetType() || (targetUserId != null && !action.requiresUserTarget())) {
 				throw new IllegalArgumentException("Audit object target is required and must match the action");
 			}
 		}
 		else if (target != null) { throw new IllegalArgumentException("Audit action does not accept an object target"); }
-		if (targetUserId == null && action.requiresTarget()) {
+		if (targetUserId == null && action.requiresUserTarget()) {
 			throw new IllegalArgumentException("Audit target user id is required");
 		}
 		Objects.requireNonNull(context, "Audit context is required");
@@ -43,11 +43,12 @@ public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, Secu
 		ADMIN_RECOVERY_STARTED, ADMIN_RECOVERY_COMPLETED, ADMIN_RECOVERY_REJECTED, ADMIN_RECOVERY_THROTTLED,
 		SIGNING_KEY_INITIALIZED,
 		RESOURCE_CREATED, RESOURCE_UPDATED, RESOURCE_DISABLED, RESOURCE_ENABLED,
-		RESOURCE_ROLE_CREATED, RESOURCE_ROLE_UPDATED, RESOURCE_ROLE_DISABLED, RESOURCE_ROLE_ENABLED;
+		RESOURCE_ROLE_CREATED, RESOURCE_ROLE_UPDATED, RESOURCE_ROLE_DISABLED, RESOURCE_ROLE_ENABLED,
+		USER_ROLE_GRANTED, USER_ROLE_REVOKED;
 
 		public SecurityAuditTarget.Type targetType() {
 			return switch (this) {
-				case RESOURCE_ROLE_CREATED, RESOURCE_ROLE_UPDATED, RESOURCE_ROLE_DISABLED, RESOURCE_ROLE_ENABLED -> SecurityAuditTarget.Type.ROLE;
+				case USER_ROLE_GRANTED, USER_ROLE_REVOKED, RESOURCE_ROLE_CREATED, RESOURCE_ROLE_UPDATED, RESOURCE_ROLE_DISABLED, RESOURCE_ROLE_ENABLED -> SecurityAuditTarget.Type.ROLE;
 				case RESOURCE_CREATED, RESOURCE_UPDATED, RESOURCE_DISABLED, RESOURCE_ENABLED -> SecurityAuditTarget.Type.RESOURCE;
 				default -> null;
 			};
@@ -67,8 +68,8 @@ public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, Secu
 					|| this == ADMIN_RECOVERY_REJECTED || this == ADMIN_RECOVERY_THROTTLED;
 		}
 
-		public boolean requiresTarget() {
-			return targetType() == null && this != PASSWORD_AUTH_FAILED && this != PASSWORD_AUTH_THROTTLED && this != BROWSER_ENTRY_THROTTLED
+		public boolean requiresUserTarget() {
+			return this == USER_ROLE_GRANTED || this == USER_ROLE_REVOKED || (targetType() == null && this != PASSWORD_AUTH_FAILED && this != PASSWORD_AUTH_THROTTLED && this != BROWSER_ENTRY_THROTTLED
 					&& this != ACCOUNT_SETUP_FAILED && this != ACCOUNT_SETUP_THROTTLED
 					&& this != PASSWORD_RECOVERY_FAILED && this != PASSWORD_RECOVERY_THROTTLED && this != TOTP_ENROLLMENT_FAILED && this != TOTP_ENROLLMENT_THROTTLED
 					&& this != TOTP_AUTH_FAILED && this != TOTP_AUTH_THROTTLED
@@ -76,7 +77,7 @@ public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, Secu
 					&& this != TOTP_RECOVERY_FAILED && this != TOTP_RECOVERY_THROTTLED
 					&& this != TOTP_REPLACEMENT_FAILED && this != TOTP_REPLACEMENT_THROTTLED
 					&& this != ADMIN_BOOTSTRAP_THROTTLED && this != ADMIN_ACCESS_DENIED
-					&& this != ADMIN_RECOVERY_REJECTED && this != ADMIN_RECOVERY_THROTTLED && this != SIGNING_KEY_INITIALIZED;
+					&& this != ADMIN_RECOVERY_REJECTED && this != ADMIN_RECOVERY_THROTTLED && this != SIGNING_KEY_INITIALIZED);
 		}
 	}
 

@@ -84,7 +84,7 @@ class SecurityAuditSearchIntegrationTests {
 	@ParameterizedTest
 	@EnumSource(Action.class)
 	void readsEveryExistingActionAndItsStoredAttributionWithoutInventingATarget(Action action) {
-		UUID target = action.requiresTarget() ? TARGET : null;
+		UUID target = action.requiresUserTarget() ? TARGET : null;
 		var expected = seed(id(1), action, target, "system:reader", "internal:test", CORRELATION, RECORDED);
 		var page = this.audits.search(ALL, 1, null);
 		assertThat(page.items()).containsExactly(expected);
@@ -395,7 +395,7 @@ class SecurityAuditSearchIntegrationTests {
 	}
 
 	private void seed(int number, Action action) {
-		seed(id(number), action, action.requiresTarget() ? TARGET : null, "system:reader", "internal:test", CORRELATION, RECORDED);
+		seed(id(number), action, action.requiresUserTarget() ? TARGET : null, "system:reader", "internal:test", CORRELATION, RECORDED);
 	}
 
 	private SecurityAuditEntry seed(UUID id, Action action, UUID target, String actor, String source, UUID correlation, Instant time) {

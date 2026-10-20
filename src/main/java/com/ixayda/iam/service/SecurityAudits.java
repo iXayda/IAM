@@ -56,10 +56,16 @@ public class SecurityAudits {
 	/** Object changes retain a typed target alongside the operation's trusted attribution. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void recordTargetSuccess(SecurityAuditEvent.Action action, SecurityAuditTarget target, SecurityAuditContext context) {
+		recordTargetSuccess(action, null, target, context);
+	}
+
+	/** Role assignments retain both the affected user and the business role. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void recordTargetSuccess(SecurityAuditEvent.Action action, UUID targetUserId, SecurityAuditTarget target, SecurityAuditContext context) {
 		if (action == null || action.isFailure() || target == null) {
 			throw new IllegalArgumentException("A success action and object target are required");
 		}
-		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, null, context, target));
+		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context, target));
 	}
 
 	/** Failure belongs to a transaction that commits a rejected decision, not to a rolled-back success. */

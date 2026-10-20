@@ -21,6 +21,18 @@ class SecurityAuditTargetTests {
 		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, target.id(), CONTEXT, target));
 	}
 
+	@ParameterizedTest
+	@EnumSource(value = SecurityAuditEvent.Action.class, names = { "USER_ROLE_GRANTED", "USER_ROLE_REVOKED" })
+	void bindingActionsRequireBothTheUserAndTheBusinessRole(SecurityAuditEvent.Action action) {
+		UUID user = UUID.randomUUID();
+		var target = new SecurityAuditTarget(SecurityAuditTarget.Type.ROLE, UUID.randomUUID());
+		assertThat(new SecurityAuditEvent(UUID.randomUUID(), action, user, CONTEXT, target).targetUserId()).isEqualTo(user);
+		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, null, CONTEXT, target));
+		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, user, CONTEXT));
+		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, user, CONTEXT,
+				new SecurityAuditTarget(SecurityAuditTarget.Type.RESOURCE, target.id())));
+	}
+
 	@Test
 	void userActionsAndObjectTargetsRemainSeparate() {
 		var target = new SecurityAuditTarget(SecurityAuditTarget.Type.RESOURCE, UUID.randomUUID());
