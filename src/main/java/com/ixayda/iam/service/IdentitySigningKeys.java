@@ -15,6 +15,7 @@ import com.ixayda.iam.repository.IdentitySigningKeyRepository.StoredKey;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -26,6 +27,7 @@ public class IdentitySigningKeys {
 	private final SigningKeySecrets secrets;
 	private final SecurityAudits audits;
 	private final TransactionTemplate transaction;
+	private final Object issuanceResource = new Object();
 
 	IdentitySigningKeys(IdentitySigningKeyRepository repository, SigningKeySecrets secrets, SecurityAudits audits, PlatformTransactionManager manager) {
 		this.repository = repository;
@@ -72,13 +74,27 @@ public class IdentitySigningKeys {
 		return this.transaction.execute(status -> loadLockedMaterial(this.repository.lockLifecycle()));
 	}
 
-	/** Acquire first, before user/resource/role/client/session/authorization locks; retain through issuance and audit commit. */
+	/**
+	 * Acquire first, before user/resource/role/client/session/authorization locks; retain through issuance and audit commit.
+	 * Repeated issuance in that transaction shares the verified capability; completion discards the private material.
+	 */
 	public IdentitySigningMaterial lockForIssuance() {
 		if (!TransactionSynchronizationManager.isActualTransactionActive() || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
 			throw new IllegalStateException("Token signing requires an active write transaction");
 		}
+		if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+			throw new IllegalStateException("Token signing requires transaction completion synchronization");
+		}
+		var existing = (IssuanceCapability) TransactionSynchronizationManager.getResource(this.issuanceResource);
+		if (existing != null && existing.completing) { throw new IllegalStateException("Token signing transaction is completing"); }
+		if (existing != null && existing.material != null) { return existing.material; }
 		this.secrets.requireConfigured();
-		return loadLockedMaterial(this.repository.lockForIssuance());
+		var material = loadLockedMaterial(this.repository.lockForIssuance());
+		if (existing != null) { existing.material = material; return material; }
+		var capability = new IssuanceCapability(this.issuanceResource, material);
+		TransactionSynchronizationManager.bindResource(this.issuanceResource, capability);
+		TransactionSynchronizationManager.registerSynchronization(capability);
+		return material;
 	}
 
 	private IdentitySigningMaterial loadLockedMaterial(IdentitySigningKeyRepository.Lifecycle lifecycle) {
@@ -96,6 +112,21 @@ public class IdentitySigningKeys {
 	private static void requireConsistentState(IdentitySigningKeyRepository.Lifecycle lifecycle, StoredKey stored) {
 		if (!stored.id().equals(lifecycle.initialKeyId()) || !stored.createdAt().equals(lifecycle.initializedAt())) {
 			throw new IllegalStateException("Signing initialization state is inconsistent");
+		}
+	}
+
+	/** The holder survives savepoints, but its capability cannot survive a potentially released lifecycle lock. */
+	private static final class IssuanceCapability implements TransactionSynchronization {
+		private final Object resource;
+		private IdentitySigningMaterial material;
+		private boolean completing;
+		private IssuanceCapability(Object resource, IdentitySigningMaterial material) { this.resource = resource; this.material = material; }
+		@Override public void suspend() { TransactionSynchronizationManager.unbindResource(this.resource); }
+		@Override public void resume() { TransactionSynchronizationManager.bindResource(this.resource, this); }
+		@Override public void savepointRollback(Object savepoint) { this.material = null; }
+		@Override public void beforeCompletion() { this.completing = true; this.material = null; }
+		@Override public void afterCompletion(int status) {
+			TransactionSynchronizationManager.unbindResourceIfPossible(this.resource); this.material = null;
 		}
 	}
 

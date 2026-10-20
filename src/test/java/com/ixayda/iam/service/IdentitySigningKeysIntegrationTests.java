@@ -103,6 +103,39 @@ class IdentitySigningKeysIntegrationTests {
 		assertThat(this.audits.search(filter, 10, null).items()).hasSize(1);
 	}
 
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void issuanceReusesVerifiedMaterialOnlyUntilItsTransactionCompletes(boolean rollback) {
+		this.keys.initialize();
+		var transaction = new TransactionTemplate(this.transactions);
+		var first = transaction.execute(tx -> {
+			var material = this.keys.lockForIssuance();
+			assertThat(this.keys.lockForIssuance()).isSameAs(material);
+			if (rollback) { tx.setRollbackOnly(); }
+			return material;
+		});
+		transaction.executeWithoutResult(tx -> {
+			var next = this.keys.lockForIssuance();
+			assertThat(next).isNotSameAs(first);
+			assertThat(this.keys.lockForIssuance()).isSameAs(next);
+		});
+		this.jdbc.sql("UPDATE iam_signing_key SET encrypted_private_key=set_byte(encrypted_private_key,40,get_byte(encrypted_private_key,40) # 1)").update();
+		assertThatThrownBy(() -> transaction.executeWithoutResult(tx -> this.keys.lockForIssuance())).isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
+	void suspendedIssuanceCapabilityIsNotReusedByAnIndependentNestedTransaction() {
+		this.keys.initialize();
+		var outer = new TransactionTemplate(this.transactions);
+		var inner = new TransactionTemplate(this.transactions);
+		inner.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+		outer.executeWithoutResult(tx -> {
+			var material = this.keys.lockForIssuance();
+			inner.executeWithoutResult(nested -> assertThat(this.keys.lockForIssuance()).isNotSameAs(material));
+			assertThat(this.keys.lockForIssuance()).isSameAs(material);
+		});
+	}
+
 	@Test
 	void restartAndRepeatedInitializationKeepTheIdentityCiphertextAndAuditUnchanged() throws Exception {
 		var original = this.keys.initialize().orElseThrow();

@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.ixayda.iam.credential.CodeVerifiers;
 import com.ixayda.iam.model.IdentityAuthorizationBinding;
 import com.ixayda.iam.model.IdentityAuthorizationSession;
 import com.ixayda.iam.model.SecurityAuditContext;
@@ -88,6 +89,17 @@ public class IdentityAuthorizationBindings {
 		var password = FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY).issuedAt(session.authenticatedAt()).build();
 		return UsernamePasswordAuthenticationToken.authenticated(session.access().userId().toString(), null, List.of(password));
 	}
+
+	/** Recheck proof in the grant transaction; native client authentication happened before these locks. */
+	public boolean matchesExchangeProof(OAuth2Authorization authorization, String code, String redirectUri, String verifier) {
+		var nativeCode = authorization.getToken(OAuth2AuthorizationCode.class);
+		OAuth2AuthorizationRequest request = authorization.getAttribute(OAuth2AuthorizationRequest.class.getName());
+		return nativeCode != null && nativeCode.getToken().getTokenValue().equals(code) && request != null
+				&& request.getRedirectUri().equals(redirectUri) && "S256".equals(request.getAdditionalParameters().get("code_challenge_method"))
+				&& request.getAdditionalParameters().get("code_challenge") instanceof String challenge && CodeVerifiers.matchesS256(verifier, challenge);
+	}
+
+	public boolean isBeforeDeadline(Instant deadline) { return this.repository.isBeforeDeadline(deadline); }
 
 	private static String encode(IdentityAuthorizationBinding binding, OAuth2Authorization authorization) {
 		var session = binding.session(); var access = session.access();
