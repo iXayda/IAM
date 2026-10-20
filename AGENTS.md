@@ -27,7 +27,7 @@ java -jar target/iam.jar
 - 修改前阅读受影响实现及已有测试，沿用该文件的缩进、导入和命名方式。
 - 控制器、安全适配器及 CLI 调用 `service`，持久化访问放在 `repository`；`model` 不依赖 Spring 或数据库 API。遵循 [ArchitectureTests](src/test/java/com/ixayda/iam/ArchitectureTests.java)中的依赖和循环约束；任务涉及架构调整时同步更新实现、约束测试及相关说明。
 - 数据结构变化新增 `src/main/resources/db/migration/` 下的 Flyway 迁移，不改写已交付迁移。
-- HTTP 契约变化同步更新受影响控制器、DTO、OpenAPI 和测试。由 Spring Security 处理的登录及退出端点，另核对 [IdentityBrowserOpenApiConfiguration](src/main/java/com/ixayda/iam/security/IdentityBrowserOpenApiConfiguration.java)中的描述。
+- HTTP 契约变化同步更新受影响控制器、DTO、OpenAPI 和测试。由 Spring Security 处理的登录、退出及协议端点，另核对 [IdentityBrowserOpenApiConfiguration](src/main/java/com/ixayda/iam/security/IdentityBrowserOpenApiConfiguration.java)和 [IdentityProtocolOpenApiConfiguration](src/main/java/com/ixayda/iam/security/IdentityProtocolOpenApiConfiguration.java)中的描述。
 
 ## 测试与检查
 

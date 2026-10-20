@@ -6,6 +6,8 @@
 
 身份前端负责 IAM 登录与账号交互，由接入方提供。它与 IAM 接口使用同一固定 HTTPS origin；入口代理可使用经过证书链及主机名验证的 HTTPS 回源，或在受保护内网使用显式受信的 HTTP 回源。入口清除并重设外来转发头，不开放跨源凭据访问。
 
+`IAM_PROTOCOL_ISSUER` 是固定 HTTPS issuer。不要根据请求 Host 或参数选择 issuer、Token 或 JWKS。
+
 应用接入前，由管理员登记资源、角色、用户绑定、保密客户端及精确 HTTPS 回调。客户端秘密仅提供给对应应用服务端。
 
 ## HTTPS 与受信代理

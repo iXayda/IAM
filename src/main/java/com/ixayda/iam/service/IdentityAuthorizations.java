@@ -35,6 +35,9 @@ public class IdentityAuthorizations {
 
 	IdentityAuthorizations(IdentityAuthorizationRepository repository, AuthorizationSecrets secrets) { this.repository = repository; this.secrets = secrets; }
 
+	/** Protocol HTTP startup checks protection configuration before admitting requests. */
+	public void requireConfigured() { this.secrets.requireConfigured(); }
+
 	public Optional<Snapshot> findById(UUID id) {
 		Assert.notNull(id, "Authorization id is required");
 		this.secrets.requireConfigured();

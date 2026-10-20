@@ -1,6 +1,5 @@
 package com.ixayda.iam.security;
 
-import java.net.URI;
 import java.text.ParseException;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,7 +32,7 @@ public final class IdentityAccessTokenVerifier {
 
 	public IdentityAccessTokenVerifier(IdentityAccessTokens tokens, String issuer) {
 		Assert.notNull(tokens, "Online token gate is required");
-		this.tokens = tokens; this.issuer = requireIssuer(issuer);
+		this.tokens = tokens; this.issuer = IdentityTokenRequests.requireIssuer(issuer);
 	}
 
 	public Optional<IdentityAccessToken> verify(String raw) { return verify(raw, null); }
@@ -105,18 +104,6 @@ public final class IdentityAccessTokenVerifier {
 		if (!(raw instanceof Long || raw instanceof Integer)) { throw rejected(); }
 		try { return Instant.ofEpochSecond(((Number) raw).longValue()); }
 		catch (java.time.DateTimeException ex) { throw rejected(); }
-	}
-
-	private static String requireIssuer(String value) {
-		try {
-			var uri = URI.create(value);
-			if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
-					|| uri.getPort() == 0 || uri.getPort() > 65535 || uri.getPort() < -1 || uri.getRawAuthority().endsWith(":")) {
-				throw new IllegalArgumentException("An explicit HTTPS issuer is required");
-			}
-			return value;
-		}
-		catch (IllegalArgumentException | NullPointerException ex) { throw new IllegalArgumentException("An explicit HTTPS issuer is required"); }
 	}
 
 	private static InvalidAccessTokenException rejected() { return new InvalidAccessTokenException(); }
