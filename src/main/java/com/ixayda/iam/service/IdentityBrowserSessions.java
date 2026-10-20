@@ -1,8 +1,8 @@
 package com.ixayda.iam.service;
 
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.InstantSource;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -54,10 +54,10 @@ public class IdentityBrowserSessions {
 	private final TransactionTemplate saveTransaction;
 	private final Duration idleTimeout;
 	private final Duration absoluteTimeout;
-	private final Clock clock;
+	private final InstantSource clock;
 
 	IdentityBrowserSessions(IdentityUsers users, IdentityBrowserSessionRepository repository, SecurityAudits audits,
-			IdentityAdministratorSessions administrators, PlatformTransactionManager manager, Clock clock, @Value("${iam.browser.idle-seconds:1800}") int idleSeconds,
+			IdentityAdministratorSessions administrators, PlatformTransactionManager manager, InstantSource clock, @Value("${iam.browser.idle-seconds:1800}") int idleSeconds,
 			@Value("${iam.browser.absolute-seconds:28800}") int absoluteSeconds) {
 		if (idleSeconds < 1 || idleSeconds > 1800 || absoluteSeconds < idleSeconds || absoluteSeconds > 28800) {
 			throw new IllegalArgumentException("Browser session timeouts exceed the supported policy");
@@ -263,8 +263,9 @@ public class IdentityBrowserSessions {
 	}
 
 	boolean withinAbsoluteLifetime(Object authenticatedAt) {
+		if (!(authenticatedAt instanceof Long time)) { return false; }
 		long now = this.clock.millis();
-		return authenticatedAt instanceof Long time && time <= now && time > now - this.absoluteTimeout.toMillis();
+		return time <= now && time > now - this.absoluteTimeout.toMillis();
 	}
 
 }

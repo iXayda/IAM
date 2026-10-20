@@ -1,7 +1,5 @@
 package com.ixayda.iam;
 
-import java.time.Clock;
-
 import com.ixayda.iam.cli.AdministratorCredentialRecoveryCommand;
 
 import com.ixayda.iam.cli.AdministratorBootstrapCommand;
@@ -16,7 +14,6 @@ import io.swagger.v3.oas.annotations.security.SecurityScheme;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
 
 @SpringBootApplication
 @OpenAPIDefinition(info = @Info(title = "IAM API", version = "0.1.0",
@@ -28,11 +25,6 @@ import org.springframework.context.annotation.Bean;
 @SecurityScheme(name = "browserSession", type = SecuritySchemeType.APIKEY, in = SecuritySchemeIn.COOKIE,
 		paramName = "__Host-IAMSESSION", description = "浏览器会话 Cookie；通过 /api/csrf 创建匿名会话，登录成功后轮换为已认证会话，由浏览器自动携带。")
 public class IamApplication {
-
-	@Bean
-	Clock browserSessionClock() {
-		return Clock.systemUTC();
-	}
 
 	public static void main(String[] args) {
 		for (int index = 1; index < args.length; index++) {

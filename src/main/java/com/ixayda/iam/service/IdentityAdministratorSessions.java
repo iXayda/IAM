@@ -1,7 +1,7 @@
 package com.ixayda.iam.service;
 
-import java.time.Clock;
 import java.time.Instant;
+import java.time.InstantSource;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -32,10 +32,10 @@ public class IdentityAdministratorSessions {
 	private final IdentityAdministratorRepository administrators;
 	private final IdentityBrowserSessionRepository sessions;
 	private final SecurityAudits audits;
-	private final Clock clock;
+	private final InstantSource clock;
 
 	IdentityAdministratorSessions(IdentityAdministratorRepository administrators,
-			IdentityBrowserSessionRepository sessions, SecurityAudits audits, Clock clock) {
+			IdentityBrowserSessionRepository sessions, SecurityAudits audits, InstantSource clock) {
 		this.administrators = administrators;
 		this.sessions = sessions;
 		this.audits = audits;
@@ -47,13 +47,10 @@ public class IdentityAdministratorSessions {
 	}
 
 	public List<GrantedAuthority> authorities(UUID userId, Object passwordAuthenticatedAt, Object evidence) {
-		Instant now = this.clock.instant();
-		if (!(passwordAuthenticatedAt instanceof Long passwordTime) || passwordTime <= 0 || passwordTime > now.toEpochMilli()) {
-			return List.of();
-		}
-		if (!(evidence instanceof IdentityAdministratorAuthentication verified)
+		if (!(passwordAuthenticatedAt instanceof Long passwordTime) || passwordTime <= 0
+				|| !(evidence instanceof IdentityAdministratorAuthentication verified)
 				|| !verified.userId().equals(userId) || verified.passwordAuthenticatedAt() != passwordTime
-				|| !isCurrent(verified, now)) {
+				|| !isCurrent(verified, this.clock.instant())) {
 			return List.of();
 		}
 		var password = FactorGrantedAuthority.withAuthority(FactorGrantedAuthority.PASSWORD_AUTHORITY)

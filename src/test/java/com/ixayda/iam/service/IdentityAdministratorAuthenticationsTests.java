@@ -79,9 +79,9 @@ class IdentityAdministratorAuthenticationsTests {
 
 	@ParameterizedTest
 	@ValueSource(longs = {-3600, 3600})
-	void sessionEvidenceUsesBrowserTimeRegardlessOfDatabaseSkew(long databaseOffsetSeconds) {
+	void sessionEvidenceRecordsElevationTimeRatherThanTheFactorConsumptionTimestamp(long factorOffsetSeconds) {
 		var consumed = new IdentityTotpVerification(this.userId, this.verification.factorId(), 1L, 1L,
-				this.clock.instant().plusSeconds(databaseOffsetSeconds), this.context.correlationId());
+				this.clock.instant().plusSeconds(factorOffsetSeconds), this.context.correlationId());
 		when(this.totps.verifyInTransaction(this.userId, "123456", this.context)).thenReturn(Optional.of(consumed));
 		assertThat(authenticate(this.authenticatedAt)).isEqualTo(IdentityAdministratorAuthentications.Result.AUTHENTICATED);
 		verify(this.persist).apply(this.evidence);

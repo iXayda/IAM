@@ -1,6 +1,6 @@
 package com.ixayda.iam.service;
 
-import java.time.Clock;
+import java.time.InstantSource;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -27,10 +27,10 @@ public class IdentityAdministratorAuthentications {
 	private final TotpAuthenticationLimits limits;
 	private final SecurityAudits audits;
 	private final TransactionTemplate transaction;
-	private final Clock clock;
+	private final InstantSource clock;
 
 	IdentityAdministratorAuthentications(IdentityUsers users, IdentityBrowserSessions sessions, IdentityAdministratorSessions administrators,
-			IdentityTotps totps, TotpAuthenticationLimits limits, SecurityAudits audits, PlatformTransactionManager manager, Clock clock) {
+			IdentityTotps totps, TotpAuthenticationLimits limits, SecurityAudits audits, PlatformTransactionManager manager, InstantSource clock) {
 		this.users = users;
 		this.sessions = sessions;
 		this.administrators = administrators;
