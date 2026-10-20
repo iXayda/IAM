@@ -225,22 +225,51 @@ class IdentityBrowserBoundaryFilterTests {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "/api/me", "/swagger-ui/swagger-ui-bundle.js" })
-	void boundsIdentityResponses(String path) throws Exception {
+	@ValueSource(strings = { "/api/me", "/swagger-ui/swagger-ui-bundle.js", "/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs-other" })
+	void boundsOpenApiResponsesSeparatelyFromIdentityResponses(String path) throws Exception {
 		var filter = new IdentityBrowserBoundaryFilter(mock(IdentityBrowserSessions.class), 100, 8, headers());
 		var request = request();
 		request.setServletPath(path);
 		var response = new MockHttpServletResponse();
 		filter.doFilter(request, response, (req, res) -> res.getOutputStream().write(new byte[1_600_000]));
-		assertThat(response.getStatus()).isEqualTo(503);
-		assertThat(response.getContentAsString()).contains("\"code\":\"SERVICE_UNAVAILABLE\"");
+		if (path.equals("/v3/api-docs") || path.equals("/v3/api-docs.yaml")) {
+			assertThat(response.getStatus()).isEqualTo(200);
+			assertThat(response.getContentAsByteArray()).hasSize(1_600_000);
+		}
+		else {
+			assertThat(response.getStatus()).isEqualTo(503);
+			assertThat(response.getContentAsString()).contains("\"code\":\"SERVICE_UNAVAILABLE\"");
+		}
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "stream", "writer" })
+	void downstreamCannotPublishSuccessAfterCatchingAndResettingAnOverflow(String output) throws Exception {
+		var filter = new IdentityBrowserBoundaryFilter(mock(IdentityBrowserSessions.class), 100, 8, headers());
+		var actual = new MockHttpServletResponse();
+		filter.doFilter(request(), actual, (req, res) -> {
+			if (output.equals("stream")) {
+				try { res.getOutputStream().write(new byte[131_073]); }
+				catch (IOException ignored) { /* MVC may classify this as a disconnected client. */ }
+			}
+			else {
+				res.getWriter().write("x".repeat(131_073));
+				res.getWriter().flush();
+				assertThat(res.getWriter().checkError()).isTrue();
+			}
+			res.reset();
+			((HttpServletResponse) res).setStatus(200);
+			res.getWriter().write("misleading success");
+		});
+		assertThat(actual.getStatus()).isEqualTo(503);
+		assertThat(actual.getContentAsString()).contains("\"code\":\"SERVICE_UNAVAILABLE\"").doesNotContain("misleading success");
 	}
 
 	@Test
-	void oversizedResponsesAreWithdrawnWithoutCookies() throws Exception {
+	void oversizedOpenApiResponsesAreWithdrawnWithoutCookies() throws Exception {
 		var filter = new IdentityBrowserBoundaryFilter(mock(IdentityBrowserSessions.class), 100, 8, headers());
 		var request = request();
-		request.setServletPath("/api/me");
+		request.setServletPath("/v3/api-docs");
 		var response = new MockHttpServletResponse();
 		filter.doFilter(request, response, (req, res) -> {
 			((HttpServletResponse) res).setHeader("Set-Cookie", "uncommitted");
