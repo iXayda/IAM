@@ -112,4 +112,11 @@ public class IdentityResources {
 		return this.repository.lockById(id);
 	}
 
+	/** Keep validation state stable without upgrading an existing shared catalog lock. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityResource> lockForValidation(UUID id) {
+		Assert.notNull(id, "Resource id is required");
+		return this.repository.lockForValidation(id);
+	}
+
 }

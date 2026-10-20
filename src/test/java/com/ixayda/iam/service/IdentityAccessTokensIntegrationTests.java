@@ -35,6 +35,7 @@ class IdentityAccessTokensIntegrationTests extends IdentityProtocolTestSupport {
 
 	@Autowired private IdentityAccessTokens online;
 	@Autowired private IdentityUserStates states;
+	@Autowired private IdentityResourceCredentials credentials;
 
 	@ParameterizedTest
 	@ValueSource(booleans = { false, true })
@@ -155,6 +156,39 @@ class IdentityAccessTokensIntegrationTests extends IdentityProtocolTestSupport {
 			}
 			finally { release.countDown(); }
 		}
+	}
+
+	@Test
+	void differentSubjectsCanValidateTheSameResourceConcurrentlyWithoutUpgradingItsSharedLock() throws Exception {
+		var issued = this.credentials.rotateSecret(this.resourceId, 0, AUDIT);
+		var credential = this.credentials.authenticate(this.resourceId.toString(), issued.secret()).orElseThrow();
+		UUID firstUser = this.userId;
+		String firstCode = code(Set.of("openid"));
+		String firstToken = exchange(request(firstCode, authenticatedClient(firstCode))).getAccessToken().getTokenValue();
+		this.userId = activeUser("bob");
+		this.assignments.change(this.userId, this.roleId, 0, true, AUDIT);
+		this.sessionId = browserSession(this.userId, this.authenticatedAt);
+		UUID secondUser = this.userId;
+		String secondCode = code(Set.of("openid"));
+		String secondToken = exchange(request(secondCode, authenticatedClient(secondCode))).getAccessToken().getTokenValue();
+		assertThat(secondUser).isNotEqualTo(firstUser);
+		long deadlocks = this.jdbc.sql("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()").query(Long.class).single();
+		var projected = new CountDownLatch(2);
+		try (var executor = Executors.newFixedThreadPool(2)) {
+			var first = executor.submit(() -> this.online.useForResource(firstToken, this.signing.id(), this.resourceId, context -> {
+				projected.countDown(); awaitLatch(projected);
+				assertThat(this.credentials.lockForValidation(credential)).contains(credential);
+				return verifiedAccess(context, firstToken).access().userId();
+			}));
+			var second = executor.submit(() -> this.online.useForResource(secondToken, this.signing.id(), this.resourceId, context -> {
+				projected.countDown(); awaitLatch(projected);
+				assertThat(this.credentials.lockForValidation(credential)).contains(credential);
+				return verifiedAccess(context, secondToken).access().userId();
+			}));
+			assertThat(first.get(15, TimeUnit.SECONDS)).contains(firstUser);
+			assertThat(second.get(15, TimeUnit.SECONDS)).contains(secondUser);
+		}
+		assertThat(this.jdbc.sql("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()").query(Long.class).single()).isEqualTo(deadlocks);
 	}
 
 	@Test

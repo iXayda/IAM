@@ -38,6 +38,12 @@ public class IdentityResourceRepository {
 				.param("id", id).query(IdentityResourceRepository::mapResource).optional();
 	}
 
+	/** Validation readers may coexist; resource and credential mutations retain the exclusive parent lock. */
+	public Optional<IdentityResource> lockForValidation(UUID id) {
+		return this.jdbc.sql("SELECT " + COLUMNS + " FROM iam_resource WHERE id = :id FOR SHARE")
+				.param("id", id).query(IdentityResourceRepository::mapResource).optional();
+	}
+
 	public IdentityResource create(UUID id, String audience, String displayName) {
 		int inserted = this.jdbc.sql("INSERT INTO iam_resource (id, audience, display_name) VALUES (:id, :audience, :display)")
 				.param("id", id).param("audience", audience).param("display", displayName).update();
