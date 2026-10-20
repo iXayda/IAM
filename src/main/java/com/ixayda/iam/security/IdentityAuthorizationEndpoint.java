@@ -201,7 +201,7 @@ public final class IdentityAuthorizationEndpoint {
 	private static String requireFrontend(String issuer, String value) {
 		try {
 			if (value == null || value.length() > 2048) { throw new IllegalArgumentException(); }
-			var front = URI.create(IdentityTokenRequests.requireIssuer(value)); var base = URI.create(issuer);
+			var front = IdentityTokenRequests.requireHttpsUri(value); var base = URI.create(issuer);
 			if (!base.getHost().equalsIgnoreCase(front.getHost()) || port(base) != port(front)
 					|| front.getPath() != null && front.getPath().chars().anyMatch(character -> character < 0x20 || character == 0x7f)) { throw new IllegalArgumentException(); }
 			return value;

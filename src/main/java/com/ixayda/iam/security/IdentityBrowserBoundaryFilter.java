@@ -257,7 +257,8 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 
 	private static void reject(HttpServletRequest request, HttpServletResponse response, IdentityBrowserResponses.Error error) throws IOException {
 		headers(response);
-		if (Set.of(IdentityProtocolResponses.TOKEN_ENDPOINT, IdentityProtocolResponses.JWK_SET_ENDPOINT, IdentityProtocolResponses.USER_INFO_ENDPOINT, IdentityProtocolResponses.AUTHORIZATION_ENDPOINT).contains(request.getServletPath())
+		if (Set.of(IdentityProtocolResponses.TOKEN_ENDPOINT, IdentityProtocolResponses.JWK_SET_ENDPOINT, IdentityProtocolResponses.USER_INFO_ENDPOINT, IdentityProtocolResponses.AUTHORIZATION_ENDPOINT,
+				IdentityProtocolResponses.OIDC_DISCOVERY_ENDPOINT, IdentityProtocolResponses.OAUTH_DISCOVERY_ENDPOINT).contains(request.getServletPath())
 				|| request.getServletPath().startsWith(IdentityProtocolResponses.INTERACTION_ENDPOINT + "/")) {
 			int status = switch (error) {
 				case PAYLOAD_TOO_LARGE -> 413;

@@ -16,6 +16,8 @@ final class IdentityProtocolResponses {
 	static final String USER_INFO_ENDPOINT = "/userinfo";
 	static final String AUTHORIZATION_ENDPOINT = "/oauth2/authorize";
 	static final String INTERACTION_ENDPOINT = "/api/authorization-interactions";
+	static final String OIDC_DISCOVERY_ENDPOINT = "/.well-known/openid-configuration";
+	static final String OAUTH_DISCOVERY_ENDPOINT = "/.well-known/oauth-authorization-server";
 
 	private IdentityProtocolResponses() { }
 

@@ -312,9 +312,9 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 		var server = AuthorizationServerContextHolder.getContext();
 		if (server == null || server.getAuthorizationServerSettings().getIssuer() == null
 				|| !server.getAuthorizationServerSettings().getIssuer().equals(server.getIssuer())) { throw failure("server_error", null); }
-		String issuer = server.getIssuer();
-		var uri = java.net.URI.create(issuer);
-		if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) { throw failure("server_error", null); }
+		String issuer;
+		try { issuer = IdentityTokenRequests.requireIssuer(server.getIssuer()); }
+		catch (IllegalArgumentException ex) { throw failure("server_error", null); }
 		String expected = (issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer) + server.getAuthorizationServerSettings().getAuthorizationEndpoint();
 		if (!expected.equals(authorizationUri)) { throw failure("invalid_request", null); }
 	}

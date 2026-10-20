@@ -19,6 +19,7 @@ import org.springframework.security.oauth2.server.authorization.settings.Authori
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
+import org.springframework.security.web.context.NullSecurityContextRepository;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
@@ -55,6 +56,19 @@ public class IdentityAuthorizationConfiguration {
 				.headers(headers -> headers.disable())
 				.addFilterBefore(new IdentityAuthorizationRequestFilter(endpoint, settings), SecurityContextHolderFilter.class)
 				.addFilterAfter(endpoint.filter(), AuthorizationFilter.class);
+		return http.build();
+	}
+
+	@Bean
+	@Order(4)
+	SecurityFilterChain discoverySecurity(HttpSecurity http, AuthorizationServerSettings settings) throws Exception {
+		var paths = PathPatternRequestMatcher.withDefaults();
+		http.securityMatcher(new OrRequestMatcher(paths.matcher(IdentityProtocolResponses.OIDC_DISCOVERY_ENDPOINT), paths.matcher(IdentityProtocolResponses.OAUTH_DISCOVERY_ENDPOINT)))
+				.securityContext(context -> context.securityContextRepository(new NullSecurityContextRepository()))
+				.sessionManagement(session -> session.disable()).requestCache(cache -> cache.disable()).httpBasic(basic -> basic.disable())
+				.csrf(csrf -> csrf.disable()).authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+				.headers(headers -> headers.disable())
+				.addFilterBefore(new IdentityDiscoveryRequestFilter(settings), SecurityContextHolderFilter.class);
 		return http.build();
 	}
 

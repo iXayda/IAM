@@ -38,7 +38,7 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 | `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | `NATIVE` 模式必填，匹配实际代理来源 IP 的正则 |
 | `IAM_TOTP_KEY_FILE` | 启用 TOTP 功能时必填，指向包含 32 个原始二进制字节的外部保护密钥文件 |
 | `IAM_SIGNING_KEY_FILE` | 签名私钥的保护密钥文件，包含 32 个原始二进制字节，须与 TOTP 使用不同的密钥 |
-| `IAM_PROTOCOL_ISSUER` | 启用协议入口时必填，显式配置 IAM 的 HTTPS issuer，不从请求 Host 或代理头推导 |
+| `IAM_PROTOCOL_ISSUER` | 启用协议入口时必填，显式配置 IAM 的 HTTPS 根地址（可带端口和末尾 `/`），不从请求 Host 或代理头推导 |
 | `IAM_PROTOCOL_IDENTITY_FRONTEND_URI` | 启用浏览器授权导航时必填，与 issuer 同源的固定 HTTPS 身份前端地址，不含查询串或片段 |
 | `IAM_AUTHORIZATION_KEY_FILE` | 启用协议入口时必填，指向包含 64 个原始二进制字节的独立授权状态保护文件；与签名及 TOTP 保护密钥分别保管 |
 

@@ -6,7 +6,7 @@
 
 身份前端负责 IAM 登录与账号交互，由接入方提供。它与 IAM 接口使用同一固定 HTTPS origin；入口代理可使用经过证书链及主机名验证的 HTTPS 回源，或在受保护内网使用显式受信的 HTTP 回源。入口清除并重设外来转发头，不开放跨源凭据访问。
 
-`IAM_PROTOCOL_ISSUER` 是固定 HTTPS issuer；`IAM_PROTOCOL_IDENTITY_FRONTEND_URI` 是与 issuer 同源且不含查询串或片段的前端地址。不要根据请求 Host 或参数选择 issuer、Token、JWKS 或身份前端。
+`IAM_PROTOCOL_ISSUER` 是固定 HTTPS 根地址，可带端口和末尾 `/`，不支持路径前缀；`IAM_PROTOCOL_IDENTITY_FRONTEND_URI` 是与 issuer 同源且不含查询串或片段的前端地址，可包含路径。不要根据请求 Host 或参数选择 issuer、Token、JWKS 或身份前端。
 
 应用接入前，由管理员登记资源、角色、用户绑定、保密客户端及精确 HTTPS 回调。客户端秘密仅提供给对应应用服务端。
 
@@ -89,6 +89,8 @@ Cookie `__Host-IAMSESSION` 使用 Secure、HttpOnly、Path=/ 和 SameSite=Lax。
 每次敏感写操作请求本次新动态码，明确展示目标及影响，提交期间防止重复操作。动态码不能自动复用于下一次写入。版本冲突时刷新服务器状态并重新确认，不自动覆盖；隐藏按钮不能代替后端授权。
 
 ## 保密 Web/BFF
+
+从固定 issuer 的 Discovery 获取协议元数据，限制为预期 issuer、RS256 和可信 JWKS。Token 内携带的取钥地址不能改变信任来源；客户端只使用元数据实际声明的端点。
 
 BFF 保存客户端秘密，使用 `client_secret_basic`、授权码和 S256 PKCE，并将 state、nonce 及 verifier 绑定到单次登录交易：
 
