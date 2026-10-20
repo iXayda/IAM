@@ -569,6 +569,24 @@ class IdentityBrowserIntegrationTests {
 		}
 	}
 
+	@ParameterizedTest
+	@ValueSource(strings = { "same", "different" })
+	void independentlyLoadedSnapshotsCanCreateTheSameAttributeWithoutOverwritingAnotherValue(String value) throws Exception {
+		activeUser("alice");
+		try (var client = client()) {
+			String cookie = login(client);
+			Session first = this.repository.findById(sessionId(cookie));
+			Session second = this.repository.findById(sessionId(cookie));
+			first.setAttribute("browser.test", "same");
+			second.setAttribute("browser.test", value);
+			save(first);
+			if (value.equals("same")) { save(second); }
+			else { assertThatThrownBy(() -> save(second)).isInstanceOf(IllegalStateException.class).hasMessageContaining("attribute was not stored"); }
+			assertThat(this.repository.findById(sessionId(cookie)).<String>getAttribute("browser.test")).isEqualTo("same");
+			assertThat(get(client, "/api/me", cookie).statusCode()).isEqualTo(200);
+		}
+	}
+
 	@Test
 	void explicitSameValueWriteStillDetectsASilentlyIgnoredUpdateAfterAConcurrentChange() throws Exception {
 		activeUser("alice");

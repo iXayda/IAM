@@ -16,12 +16,14 @@ import io.swagger.v3.oas.models.media.ObjectSchema;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.RequestBody;
+import io.swagger.v3.oas.models.parameters.QueryParameter;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 
 import org.springdoc.core.customizers.OpenApiCustomizer;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
@@ -34,7 +36,7 @@ import org.springframework.context.annotation.Configuration;
 class IdentityProtocolOpenApiConfiguration {
 
 	@Bean
-	OpenApiCustomizer protocolOpenApi() {
+	OpenApiCustomizer protocolOpenApi(ObjectProvider<IdentityAuthorizationEndpoint> authorization) {
 		return openApi -> {
 			openApi.getComponents().addSecuritySchemes("protocolClient", new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("basic")
 					.description("保密 Web/BFF 客户端使用 client_secret_basic；对客户端标识与秘密分别进行 form 编码，再拼接冒号并进行 Base64 编码。秘密仅由客户端服务端保存。"));
@@ -46,7 +48,45 @@ class IdentityProtocolOpenApiConfiguration {
 			openApi.path(IdentityProtocolResponses.TOKEN_ENDPOINT, new PathItem().post(token()));
 			openApi.path(IdentityProtocolResponses.JWK_SET_ENDPOINT, new PathItem().get(publicKeys()));
 			openApi.path(IdentityProtocolResponses.USER_INFO_ENDPOINT, new PathItem().get(userInfo("getUserInfo")).post(userInfo("postUserInfo")));
+			if (authorization.getIfAvailable() != null) {
+				openApi.path(IdentityProtocolResponses.AUTHORIZATION_ENDPOINT, new PathItem().get(authorize()));
+				openApi.getPaths().forEach((path, item) -> {
+					if (path.startsWith(IdentityProtocolResponses.INTERACTION_ENDPOINT + "/")) { item.readOperations().forEach(operation -> operation.setSecurity(List.of())); }
+				});
+			}
 		};
+	}
+
+	private static Operation authorize() {
+		var operation = new Operation().operationId("authorizeApplication").summary("发起应用的 OIDC 授权码请求").tags(List.of("protocol")).security(List.of())
+				.description("由应用导航浏览器到此 GET 入口，授权码流程要求 PKCE S256。使用当前有效 IAM Cookie 完成 SSO；需要登录、账号选择或确认时，导航到预配置的同源独立身份前端。"
+						+ "IAM 提供协议及交互 API，不提供登录页面。前端导航只携带短期交互句柄，原始回调、state、nonce 和 PKCE 保存在服务器。"
+						+ "仅接受查询参数，无请求体；重复参数拒绝，未知参数忽略，不支持请求对象、PAR、外部 resource/audience 或 DPoP。"
+						+ "回调必须与登记地址逐字匹配，不可用客户端或无效回调只返回本地错误。prompt=none 不打开交互界面；RP 必须比较 state，验证 ID Token 的 issuer、签名、audience、期限及 nonce。"
+						+ "应用服务端持有客户端秘密，前端不处理秘密或 Token 兑换。")
+				.responses(new ApiResponses().addApiResponse("302", new ApiResponse().description("导航到精确登记回调，或固定身份前端；回调携带 code/state 或 error/state")
+						.addHeaderObject("Location", new Header().schema(new StringSchema().format("uri"))))
+						.addApiResponse("400", error("invalid_request：无效客户端、回调、重复参数或请求格式；不向未验证地址重定向"))
+						.addApiResponse("405", error("只接受 GET").addHeaderObject("Allow", new Header().schema(new StringSchema()._enum(List.of("GET")))))
+						.addApiResponse("413", error("invalid_request：超过共享请求体上限"))
+						.addApiResponse("429", error("temporarily_unavailable：入口或待处理交互数量受限"))
+						.addApiResponse("503", error("server_error：持久化、签发或必需审计不可用")));
+		for (var item : List.of(
+				new String[] {"response_type", "code", "固定授权码响应类型", "true"},
+				new String[] {"client_id", "", "登记的保密客户端 UUID", "true"},
+				new String[] {"redirect_uri", "", "逐字匹配的 HTTPS 回调", "true"},
+				new String[] {"scope", "", "空格分隔，包含 openid；受客户端允许范围约束", "true"},
+				new String[] {"state", "", "应用生成且在回调比较的不可预测关联值，最多 512 个可见 ASCII 字符", "true"},
+				new String[] {"code_challenge", "", "SHA-256 的规范 base64url 编码，43 字符", "true"},
+				new String[] {"code_challenge_method", "S256", "仅支持 S256", "true"},
+				new String[] {"nonce", "", "可选，出现时最多 256 个可见 ASCII 字符；RP 与 ID Token 比较", "false"},
+				new String[] {"prompt", "", "none 或 login、consent、select_account 的不重复组合；none 必须单独使用", "false"},
+				new String[] {"max_age", "", "可选非负整数秒；0 要求新的登录", "false"},
+				new String[] {"response_mode", "query", "仅支持 query", "false"})) {
+			var schema = new StringSchema(); if (!item[1].isEmpty()) { schema._enum(List.of(item[1])); }
+			operation.addParametersItem(new QueryParameter().name(item[0]).required(Boolean.parseBoolean(item[3])).description(item[2]).schema(schema));
+		}
+		return operation;
 	}
 
 	private static Operation userInfo(String operationId) {

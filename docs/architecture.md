@@ -4,6 +4,18 @@ IAM 面向单个组织及其自有应用，提供身份认证、应用级授权�
 
 ## 系统与信任边界
 
+```mermaid
+flowchart LR
+    Browser[浏览器] --> Frontend[独立身份前端]
+    Frontend --> IAM[IAM 身份与管理接口]
+    Browser --> BFF[应用 BFF]
+    BFF -->|授权码与 PKCE| IAM
+    BFF -->|Access Token| Resource[应用资源服务]
+    IAM --> Database[专用 PostgreSQL]
+```
+
+身份前端与 IAM 使用同源 HTTPS，负责登录和管理交互。业务应用通过 OIDC 将用户导航到 IAM 的身份前端，不接收用户的 IAM 密码。BFF 保存协议凭据并建立自己的应用会话，资源服务验证访问令牌并执行业务授权。
+
 身份前端和后端可以独立部署，但浏览器访问使用同一固定 origin。入口到 IAM 可使用经过验证的 HTTPS，或在受保护内网使用显式受信的 HTTP 回源；不开放跨源凭据访问。
 
 ## 代码组织

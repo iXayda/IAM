@@ -98,7 +98,7 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 					if (this.interactions == null) { throw failure("server_error", null); }
 					pending = this.interactions.lockForUse(resumption.owner(), resumption.handle()).filter(resumption.interaction()::equals)
 							.filter(value -> value.request().equals(interactionRequest(normalized))).orElseThrow(() -> failure("invalid_request", null));
-					validateResumption(normalized, session, pending);
+					validateResumption(session.authenticatedAt(), pending);
 				}
 				var principal = this.bindings.projectPrincipal(session);
 				var projected = new OAuth2AuthorizationCodeRequestAuthenticationToken(normalized.getAuthorizationUri(), normalized.getClientId(), principal,
@@ -112,7 +112,7 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 				if (!nativeResult.getAuthorizationCode().getTokenValue().equals(savedCode.getTokenValue())) { throw failure("server_error", null); }
 				if (pending != null) {
 					this.interactions.complete(resumption.owner(), resumption.handle(), pending);
-					validateResumption(normalized, session, pending);
+					validateResumption(session.authenticatedAt(), pending);
 					if (!this.bindings.isBeforeDeadline(savedCode.getExpiresAt())) { throw new IdentityAuthorizationBindings.ExpiredAuthorizationException(); }
 				}
 				else { validateInteraction(normalized, session.authenticatedAt()); }
@@ -169,6 +169,49 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 				original.redirectUri(), original.state(), original.scopes(), new HashMap<>(original.parameters()));
 		request.setDetails(new Resumption(owner, handle, pending, details));
 		return (OAuth2AuthorizationCodeRequestAuthenticationToken) authenticate(request);
+	}
+
+	/** Cancellation proves browser binding only; it does not authenticate or assert a user subject. */
+	public Denial deny(String owner, String handle, UUID correlationId) {
+		if (TransactionSynchronizationManager.isActualTransactionActive()) { throw failure("server_error", null); }
+		var audit = new SecurityAuditContext("anonymous", "protocol:authorize:cancel", correlationId);
+		OAuth2AuthorizationCodeRequestAuthenticationToken safe = null;
+		try {
+			if (this.interactions == null) { throw failure("server_error", null); }
+			var pending = this.interactions.find(owner, handle).orElseThrow(() -> failure("invalid_request", null));
+			var original = pending.request();
+			var client = this.clients.findActiveById(original.clientId().toString()).orElseThrow(() -> failure("invalid_request", null));
+			if (!client.registration().getRedirectUris().contains(original.redirectUri())) { throw failure("invalid_request", null); }
+			validateAuthorizationUri(original.authorizationUri());
+			var request = new OAuth2AuthorizationCodeRequestAuthenticationToken(original.authorizationUri(), original.clientId().toString(),
+					UsernamePasswordAuthenticationToken.unauthenticated("anonymous", null), original.redirectUri(), original.state(), original.scopes(), new HashMap<>(original.parameters()));
+			safe = safeRequest(request); validate(request, client);
+			var denied = this.transaction.execute(status -> {
+				var locked = this.interactions.lockForUse(owner, handle).filter(pending::equals).orElseThrow(() -> failure("invalid_request", null));
+				this.audits.recordFailure(Action.AUTHORIZATION_REQUEST_REJECTED, null, audit);
+				this.interactions.complete(owner, handle, locked);
+				return new Denial(original.redirectUri(), original.state());
+			});
+			if (denied == null) { throw failure("server_error", null); }
+			return denied;
+		}
+		catch (OAuth2AuthorizationCodeRequestAuthenticationException ex) { throw rejected(ex.getError().getErrorCode(), safe, null, audit); }
+		catch (IdentityAuthorizationInteractions.ExpiredInteractionException ex) { throw rejected("invalid_request", safe, null, audit); }
+		catch (RuntimeException ex) { throw rejected("server_error", safe, null, audit); }
+	}
+
+	public record Denial(String redirectUri, String state) {
+		@Override public String toString() { return "AuthorizationDenial[REDACTED]"; }
+	}
+
+	/** Advisory frontend projection only; issuance independently repeats the locked persistent checks. */
+	boolean requiresLogin(IdentityAuthorizationInteraction pending, Instant authenticatedAt) {
+		if (authenticatedAt == null) { return true; }
+		try { validateResumption(authenticatedAt, pending); return false; }
+		catch (OAuth2AuthorizationCodeRequestAuthenticationException ex) {
+			if ("login_required".equals(ex.getError().getErrorCode())) { return true; }
+			throw ex;
+		}
 	}
 
 	/** Server-created hints only; all facts are rechecked against persistent storage before issuance. */
@@ -231,15 +274,15 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 		}
 	}
 
-	private void validateResumption(OAuth2AuthorizationCodeRequestAuthenticationToken request, IdentityAuthorizationSession session, IdentityAuthorizationInteraction pending) {
-		var parameters = request.getAdditionalParameters();
+	private void validateResumption(Instant authenticatedAt, IdentityAuthorizationInteraction pending) {
+		var parameters = pending.request().parameters();
 		var prompts = Set.copyOf(java.util.Arrays.asList(((String) parameters.getOrDefault("prompt", "")).split(" ")));
 		long age = parameters.containsKey("max_age") ? maxAge((String) parameters.get("max_age")) : Long.MAX_VALUE;
 		boolean freshRequired = prompts.contains("login") || pending.originalAuthenticatedAt() == 0 || age == 0
 				|| parameters.containsKey("max_age") && pending.createdAt().getEpochSecond() - pending.originalAuthenticatedAt() / 1000 >= age;
-		if (prompts.contains("none") || freshRequired && (!session.authenticatedAt().isAfter(pending.createdAt())
-				|| session.authenticatedAt().toEpochMilli() <= pending.originalAuthenticatedAt())
-				|| age > 0 && !withinAuthenticationAge(session.authenticatedAt(), age)) { throw failure("login_required", null); }
+		if (prompts.contains("none") || freshRequired && (!authenticatedAt.isAfter(pending.createdAt())
+				|| authenticatedAt.toEpochMilli() <= pending.originalAuthenticatedAt())
+				|| age > 0 && !withinAuthenticationAge(authenticatedAt, age)) { throw failure("login_required", null); }
 	}
 
 	private boolean withinAuthenticationAge(Instant authenticatedAt, long age) {
