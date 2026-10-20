@@ -1,0 +1,20 @@
+{
+  "name": "iam-oidc-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Confidential OIDC Web/BFF relying parties and an online-validated resource API",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "rp": "node rp.mjs",
+    "api": "node api.mjs",
+    "test": "node --test *.test.mjs",
+    "check": "node --check rp.mjs && node --check api.mjs && node --check sessions.mjs && node --check config.mjs && node --check http.mjs"
+  },
+  "dependencies": {
+    "jose": "6.2.13",
+    "openid-client": "6.8.8"
+  }
+}
