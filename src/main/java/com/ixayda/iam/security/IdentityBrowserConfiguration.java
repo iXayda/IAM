@@ -88,6 +88,7 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.POST, "/api/admin/resources/{resourceId}/roles", "/api/admin/resource-roles/{roleId}/name", "/api/admin/resource-roles/{roleId}/disable", "/api/admin/resource-roles/{roleId}/enable").access(management)
 						.requestMatchers(HttpMethod.POST, "/api/admin/resources", "/api/admin/resources/{resourceId}/name", "/api/admin/resources/{resourceId}/disable", "/api/admin/resources/{resourceId}/enable").access(management)
 						.requestMatchers(HttpMethod.POST, "/api/admin/users", "/api/admin/users/{userId}/disable", "/api/admin/users/{userId}/enable", "/api/admin/users/{userId}/profile").access(management)
+						.requestMatchers(HttpMethod.POST, "/api/admin/users/{userId}/sessions/revoke-all").access(management)
 						.requestMatchers(HttpMethod.POST, "/api/admin/users/{userId}/setup", "/api/admin/users/{userId}/setup/cancel").access(management)
 						.requestMatchers(HttpMethod.POST, "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/audits", "/api/admin/resources", "/api/admin/resources/{resourceId}", "/api/admin/resources/{resourceId}/roles", "/api/admin/resource-roles/{roleId}").access(management)
