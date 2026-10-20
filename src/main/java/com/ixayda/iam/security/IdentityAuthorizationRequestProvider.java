@@ -7,10 +7,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import com.ixayda.iam.model.IdentityAuthorizationInteraction;
 import com.ixayda.iam.model.IdentityAuthorizationSession;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
 import com.ixayda.iam.service.IdentityAuthorizationBindings;
+import com.ixayda.iam.service.IdentityAuthorizationInteractions;
 import com.ixayda.iam.service.IdentityAuthorizationSessions;
 import com.ixayda.iam.service.IdentityProtocolClients;
 import com.ixayda.iam.service.SecurityAudits;
@@ -48,14 +50,20 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 	private final IdentityProtocolClients clients;
 	private final IdentityAuthorizationSessions sessions;
 	private final IdentityAuthorizationBindings bindings;
+	private final IdentityAuthorizationInteractions interactions;
 	private final SecurityAudits audits;
 	private final TransactionTemplate transaction;
 
 	public IdentityAuthorizationRequestProvider(IdentityProtocolClients clients, IdentityAuthorizationSessions sessions,
 			IdentityAuthorizationBindings bindings, SecurityAudits audits, PlatformTransactionManager manager) {
+		this(clients, sessions, bindings, null, audits, manager);
+	}
+
+	public IdentityAuthorizationRequestProvider(IdentityProtocolClients clients, IdentityAuthorizationSessions sessions,
+			IdentityAuthorizationBindings bindings, IdentityAuthorizationInteractions interactions, SecurityAudits audits, PlatformTransactionManager manager) {
 		Assert.notNull(clients, "Protocol clients are required"); Assert.notNull(sessions, "Authorization sessions are required");
 		Assert.notNull(bindings, "Authorization bindings are required"); Assert.notNull(audits, "Audits are required"); Assert.notNull(manager, "Transactions are required");
-		this.clients = clients; this.sessions = sessions; this.bindings = bindings; this.audits = audits;
+		this.clients = clients; this.sessions = sessions; this.bindings = bindings; this.interactions = interactions; this.audits = audits;
 		this.transaction = new TransactionTemplate(manager);
 		this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 		this.transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -67,7 +75,8 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 		if (TransactionSynchronizationManager.isActualTransactionActive()) { throw failure("server_error", null); }
 		var browser = request.getPrincipal() instanceof Authentication principal ? principal : null;
 		UUID subject = browser != null && browser.isAuthenticated() && browser.getPrincipal() instanceof UUID id ? id : null;
-		var details = request.getDetails() instanceof BrowserEvidence evidence ? evidence : null;
+		var resumption = request.getDetails() instanceof Resumption evidence ? evidence : null;
+		var details = resumption != null ? resumption.browser() : request.getDetails() instanceof BrowserEvidence evidence ? evidence : null;
 		var audit = new SecurityAuditContext(subject == null ? "anonymous" : "user:" + subject, "protocol:authorize",
 				details == null ? UUID.randomUUID() : details.correlationId());
 		OAuth2AuthorizationCodeRequestAuthenticationToken safe = null;
@@ -83,7 +92,14 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 			var response = this.transaction.execute(status -> {
 				var session = this.sessions.projectForIssuance(subject, details.sessionId(), details.authenticatedAt(), details.credentialVersion(), client)
 						.orElseThrow(() -> failure("login_required", null));
-				validateInteraction(normalized, session.authenticatedAt());
+				IdentityAuthorizationInteraction pending = null;
+				if (resumption == null) { validateInteraction(normalized, session.authenticatedAt()); }
+				else {
+					if (this.interactions == null) { throw failure("server_error", null); }
+					pending = this.interactions.lockForUse(resumption.owner(), resumption.handle()).filter(resumption.interaction()::equals)
+							.filter(value -> value.request().equals(interactionRequest(normalized))).orElseThrow(() -> failure("invalid_request", null));
+					validateResumption(normalized, session, pending);
+				}
 				var principal = this.bindings.projectPrincipal(session);
 				var projected = new OAuth2AuthorizationCodeRequestAuthenticationToken(normalized.getAuthorizationUri(), normalized.getClientId(), principal,
 						normalized.getRedirectUri(), normalized.getState(), normalized.getScopes(), normalized.getAdditionalParameters());
@@ -94,7 +110,12 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 				if (store.saved == null || nativeResult == null || nativeResult.getAuthorizationCode() == null) { throw failure("server_error", null); }
 				var savedCode = store.saved.getToken(OAuth2AuthorizationCode.class).getToken();
 				if (!nativeResult.getAuthorizationCode().getTokenValue().equals(savedCode.getTokenValue())) { throw failure("server_error", null); }
-				validateInteraction(normalized, session.authenticatedAt());
+				if (pending != null) {
+					this.interactions.complete(resumption.owner(), resumption.handle(), pending);
+					validateResumption(normalized, session, pending);
+					if (!this.bindings.isBeforeDeadline(savedCode.getExpiresAt())) { throw new IdentityAuthorizationBindings.ExpiredAuthorizationException(); }
+				}
+				else { validateInteraction(normalized, session.authenticatedAt()); }
 				return new OAuth2AuthorizationCodeRequestAuthenticationToken(nativeResult.getAuthorizationUri(), nativeResult.getClientId(), principal,
 						savedCode, nativeResult.getRedirectUri(), nativeResult.getState(), nativeResult.getScopes());
 			});
@@ -103,16 +124,61 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 		}
 		catch (OAuth2AuthorizationCodeRequestAuthenticationException ex) { throw rejected(ex.getError().getErrorCode(), safe, subject, audit); }
 		catch (IdentityAuthorizationBindings.ExpiredAuthorizationException ex) { throw rejected("login_required", safe, subject, audit); }
+		catch (IdentityAuthorizationInteractions.ExpiredInteractionException ex) { throw rejected("invalid_request", safe, subject, audit); }
 		catch (RuntimeException ex) { throw rejected("server_error", safe, subject, audit); }
 	}
 
 	@Override
 	public boolean supports(Class<?> authentication) { return OAuth2AuthorizationCodeRequestAuthenticationToken.class.isAssignableFrom(authentication); }
 
+	/** Begin only after validating the original request; a pending handle never removes an interaction requirement. */
+	public IdentityAuthorizationInteractions.Ticket begin(OAuth2AuthorizationCodeRequestAuthenticationToken request, String owner) {
+		if (TransactionSynchronizationManager.isActualTransactionActive()) { throw failure("server_error", null); }
+		var details = request.getDetails() instanceof BrowserEvidence evidence ? evidence : null;
+		UUID subject = subject(request.getPrincipal());
+		var audit = audit(subject, details);
+		OAuth2AuthorizationCodeRequestAuthenticationToken safe = null;
+		try {
+			if (this.interactions == null) { throw failure("server_error", null); }
+			var client = this.clients.findActiveById(request.getClientId()).orElseThrow(() -> failure("invalid_request", null));
+			if (request.getRedirectUri() == null || !client.registration().getRedirectUris().contains(request.getRedirectUri())) { throw failure("invalid_request", null); }
+			validateAuthorizationUri(request.getAuthorizationUri()); safe = safeRequest(request);
+			var normalized = normalize(request); validate(normalized, client);
+			var original = interactionRequest(normalized);
+			return this.interactions.create(owner, original, subject != null && details != null ? details.authenticatedAt() : 0);
+		}
+		catch (OAuth2AuthorizationCodeRequestAuthenticationException ex) { throw rejected(ex.getError().getErrorCode(), safe, subject, audit); }
+		catch (IllegalArgumentException ex) { throw rejected("invalid_request", safe, subject, audit); }
+		catch (IdentityAuthorizationInteractions.InteractionLimitException ex) { throw rejected("temporarily_unavailable", safe, subject, audit); }
+		catch (RuntimeException ex) { throw rejected("server_error", safe, subject, audit); }
+	}
+
+	/** Calling this represents an explicit selection/confirmation in the CSRF-protected bound frontend workflow. */
+	public OAuth2AuthorizationCodeRequestAuthenticationToken resume(String owner, String handle, Authentication browser, BrowserEvidence details) {
+		if (TransactionSynchronizationManager.isActualTransactionActive()) { throw failure("server_error", null); }
+		IdentityAuthorizationInteraction pending;
+		try {
+			if (this.interactions == null) { throw failure("server_error", null); }
+			pending = this.interactions.find(owner, handle).orElseThrow(() -> failure("invalid_request", null));
+		}
+		catch (OAuth2AuthorizationCodeRequestAuthenticationException ex) { throw rejected(ex.getError().getErrorCode(), null, subject(browser), audit(subject(browser), details)); }
+		catch (RuntimeException ex) { throw rejected("server_error", null, subject(browser), audit(subject(browser), details)); }
+		var original = pending.request();
+		var principal = browser == null ? UsernamePasswordAuthenticationToken.unauthenticated("anonymous", null) : browser;
+		var request = new OAuth2AuthorizationCodeRequestAuthenticationToken(original.authorizationUri(), original.clientId().toString(), principal,
+				original.redirectUri(), original.state(), original.scopes(), new HashMap<>(original.parameters()));
+		request.setDetails(new Resumption(owner, handle, pending, details));
+		return (OAuth2AuthorizationCodeRequestAuthenticationToken) authenticate(request);
+	}
+
 	/** Server-created hints only; all facts are rechecked against persistent storage before issuance. */
 	public record BrowserEvidence(String sessionId, long authenticatedAt, long credentialVersion, UUID correlationId) {
 		public BrowserEvidence { Assert.notNull(correlationId, "Correlation id is required"); }
 		@Override public String toString() { return "BrowserEvidence[REDACTED]"; }
+	}
+
+	private record Resumption(String owner, String handle, IdentityAuthorizationInteraction interaction, BrowserEvidence browser) {
+		@Override public String toString() { return "AuthorizationResumption[REDACTED]"; }
 	}
 
 	private static OAuth2AuthorizationCodeRequestAuthenticationToken normalize(OAuth2AuthorizationCodeRequestAuthenticationToken request) {
@@ -152,7 +218,7 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 		}
 	}
 
-	private static void validateInteraction(OAuth2AuthorizationCodeRequestAuthenticationToken request, Instant authenticatedAt) {
+	private void validateInteraction(OAuth2AuthorizationCodeRequestAuthenticationToken request, Instant authenticatedAt) {
 		var parameters = request.getAdditionalParameters();
 		var prompts = Set.copyOf(java.util.Arrays.asList(((String) parameters.getOrDefault("prompt", "")).split(" ")));
 		// Interactive requests must be resumed by a separately bound interaction workflow, never silently ignored.
@@ -161,8 +227,37 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 		if (prompts.contains("consent")) { throw failure("consent_required", null); }
 		if (parameters.containsKey("max_age")) {
 			long age = maxAge((String) parameters.get("max_age"));
-			if (age == 0 || Instant.now().getEpochSecond() - authenticatedAt.getEpochSecond() >= age) { throw failure("login_required", null); }
+			if (age == 0 || !withinAuthenticationAge(authenticatedAt, age)) { throw failure("login_required", null); }
 		}
+	}
+
+	private void validateResumption(OAuth2AuthorizationCodeRequestAuthenticationToken request, IdentityAuthorizationSession session, IdentityAuthorizationInteraction pending) {
+		var parameters = request.getAdditionalParameters();
+		var prompts = Set.copyOf(java.util.Arrays.asList(((String) parameters.getOrDefault("prompt", "")).split(" ")));
+		long age = parameters.containsKey("max_age") ? maxAge((String) parameters.get("max_age")) : Long.MAX_VALUE;
+		boolean freshRequired = prompts.contains("login") || pending.originalAuthenticatedAt() == 0 || age == 0
+				|| parameters.containsKey("max_age") && pending.createdAt().getEpochSecond() - pending.originalAuthenticatedAt() / 1000 >= age;
+		if (prompts.contains("none") || freshRequired && (!session.authenticatedAt().isAfter(pending.createdAt())
+				|| session.authenticatedAt().toEpochMilli() <= pending.originalAuthenticatedAt())
+				|| age > 0 && !withinAuthenticationAge(session.authenticatedAt(), age)) { throw failure("login_required", null); }
+	}
+
+	private boolean withinAuthenticationAge(Instant authenticatedAt, long age) {
+		// A browser session lives at most eight hours, so larger max_age values need no unbounded timestamp arithmetic.
+		return this.bindings.isBeforeDeadline(authenticatedAt.plusSeconds(Math.min(age, 28_801)));
+	}
+
+	private static IdentityAuthorizationInteraction.Request interactionRequest(OAuth2AuthorizationCodeRequestAuthenticationToken request) {
+		var parameters = new HashMap<String, String>(); request.getAdditionalParameters().forEach((name, value) -> parameters.put(name, (String) value));
+		return new IdentityAuthorizationInteraction.Request(request.getAuthorizationUri(), UUID.fromString(request.getClientId()), request.getRedirectUri(), request.getState(), request.getScopes(), parameters);
+	}
+
+	private static UUID subject(Object principal) {
+		return principal instanceof Authentication current && current.isAuthenticated() && current.getPrincipal() instanceof UUID id ? id : null;
+	}
+
+	private static SecurityAuditContext audit(UUID subject, BrowserEvidence details) {
+		return new SecurityAuditContext(subject == null ? "anonymous" : "user:" + subject, "protocol:authorize", details == null ? UUID.randomUUID() : details.correlationId());
 	}
 
 	private static long maxAge(String value) {
@@ -214,6 +309,7 @@ public final class IdentityAuthorizationRequestProvider implements Authenticatio
 			case "login_required" -> "Authentication is required";
 			case "consent_required" -> "Consent interaction is required";
 			case "account_selection_required" -> "Account selection is required";
+			case "temporarily_unavailable" -> "Authorization is temporarily unavailable";
 			default -> { code = "server_error"; yield "Authorization is unavailable"; }
 		};
 		return new OAuth2AuthorizationCodeRequestAuthenticationException(new OAuth2Error(code, description, null), request);
