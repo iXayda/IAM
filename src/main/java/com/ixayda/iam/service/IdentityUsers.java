@@ -96,6 +96,9 @@ public class IdentityUsers {
 	}
 
 	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<IdentityUser> lockForAuthorization(UUID id) { return this.repository.lockForAuthorization(id); }
+
+	@Transactional(propagation = Propagation.MANDATORY)
 	Optional<IdentityUser> lockForStateChange(UUID id) {
 		return this.repository.lockById(id);
 	}

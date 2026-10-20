@@ -74,6 +74,12 @@ public class IdentityUserRepository {
 				""").param("id", id).query(IdentityUserRepository::mapUser).optional();
 	}
 
+	/** Protocol readers hold this lock through issuance; credential/state writers retain exclusive user locks. */
+	public Optional<IdentityUser> lockForAuthorization(UUID id) {
+		return this.jdbc.sql("SELECT id, username, display_name, status, created_at FROM iam_user WHERE id=:id FOR SHARE")
+				.param("id", id).query(IdentityUserRepository::mapUser).optional();
+	}
+
 	public Optional<IdentityUser> lockByUsername(String username) {
 		return this.jdbc.sql("""
 				SELECT id, username, display_name, status, created_at FROM iam_user WHERE username = :username FOR UPDATE
