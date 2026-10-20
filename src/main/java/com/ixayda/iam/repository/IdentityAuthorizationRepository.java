@@ -108,6 +108,11 @@ public class IdentityAuthorizationRepository {
 		return found.stream().findFirst();
 	}
 
+	/** Native use requires fresh snapshots after every lock wait. */
+	public boolean isWritableReadCommittedTransaction() {
+		return this.jdbc.sql("SELECT current_setting('transaction_isolation')='read committed' AND current_setting('transaction_read_only')='off'").query(Boolean.class).single();
+	}
+
 	/** Serializes a missing id too; existing rows are locked before a fresh statement reads their index snapshot. */
 	public Optional<StoredAuthorization> lockById(UUID id) {
 		this.jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(:id,762941))").param("id", id.toString()).query().singleRow();

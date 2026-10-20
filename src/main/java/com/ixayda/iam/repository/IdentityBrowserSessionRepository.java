@@ -22,6 +22,17 @@ public class IdentityBrowserSessionRepository {
 				.param("id", id).query(String.class).optional().isPresent();
 	}
 
+	/** Cookie rotation preserves this internal key. Callers read the current cookie id only after this lock. */
+	public boolean lockByPrimaryId(UUID id) {
+		return this.jdbc.sql("SELECT primary_id FROM iam_browser_session WHERE primary_id=:id FOR UPDATE")
+				.param("id", id.toString()).query(String.class).optional().isPresent();
+	}
+
+	public Optional<String> sessionIdByPrimaryId(UUID id) {
+		return this.jdbc.sql("SELECT session_id FROM iam_browser_session WHERE primary_id=:id")
+				.param("id", id.toString()).query(String.class).optional();
+	}
+
 	public Optional<UUID> userId(String id) {
 		return this.jdbc.sql("SELECT principal_name FROM iam_browser_session WHERE session_id = :id")
 				.param("id", id).query(String.class).optional().map(UUID::fromString);

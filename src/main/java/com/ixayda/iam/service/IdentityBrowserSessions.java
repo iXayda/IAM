@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.ixayda.iam.model.IdentityAuthorizationSession;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.PasswordAuthenticationResult;
 import com.ixayda.iam.model.SecurityAuditContext;
@@ -110,6 +111,20 @@ public class IdentityBrowserSessions {
 				|| !isWithinSessionDeadline(authenticatedAt, current.idleExpiry())) { return Optional.empty(); }
 		return Optional.of(new AuthorizationSession(current.id(), Instant.ofEpochMilli(authenticatedAt),
 				Instant.ofEpochMilli(current.idleExpiry()), Instant.ofEpochMilli(authenticatedAt).plus(this.absoluteTimeout)));
+	}
+
+	/** Code redemption follows the stable source key, and can never extend either original deadline. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	Optional<Instant> exchangeDeadline(IdentityAuthorizationSession original) {
+		if (!this.repository.lockByPrimaryId(original.browserSessionId())) { return Optional.empty(); }
+		var sessionId = this.repository.sessionIdByPrimaryId(original.browserSessionId());
+		if (sessionId.isEmpty()) { return Optional.empty(); }
+		var current = lockForAuthorization(original.access().userId(), sessionId.orElseThrow(),
+				original.authenticatedAt().toEpochMilli(), original.access().credentialVersion());
+		if (current.isEmpty() || !current.orElseThrow().id().equals(original.browserSessionId())
+				|| !this.repository.isBeforeExpiry(original.expiresAt().toEpochMilli())) { return Optional.empty(); }
+		return Optional.of(java.util.stream.Stream.of(original.expiresAt(), current.orElseThrow().idleExpiresAt(), current.orElseThrow().absoluteExpiresAt())
+				.min(Instant::compareTo).orElseThrow());
 	}
 
 	record AuthorizationSession(UUID id, Instant authenticatedAt, Instant idleExpiresAt, Instant absoluteExpiresAt) {

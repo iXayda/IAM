@@ -15,7 +15,9 @@ import org.springframework.security.oauth2.core.OAuth2DeviceCode;
 import org.springframework.security.oauth2.core.OAuth2UserCode;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.Assert;
 
 /** Trusted protocol persistence; the protocol workflow owns authorization, deadlines and mandatory audit. */
@@ -40,6 +42,15 @@ public class IdentityAuthorizations {
 		try { digest = this.secrets.digest(token); }
 		catch (IllegalArgumentException ex) { return Optional.empty(); }
 		return this.repository.findByDigest(digest, type).map(IdentityAuthorizations::snapshot);
+	}
+
+	/** The trusted workflow acquires key, subject, catalog and source-session locks before this native-state lock. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public Optional<Snapshot> lockForUse(UUID id) {
+		Assert.notNull(id, "Authorization id is required"); this.secrets.requireConfigured();
+		if (!TransactionSynchronizationManager.isActualTransactionActive() || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+				|| !this.repository.isWritableReadCommittedTransaction()) { throw new IllegalStateException("Protocol use requires a writable read committed transaction"); }
+		return this.repository.lockById(id).map(IdentityAuthorizations::snapshot);
 	}
 
 	@Transactional

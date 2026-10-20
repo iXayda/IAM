@@ -1,5 +1,6 @@
 package com.ixayda.iam.service;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -31,6 +32,12 @@ public class IdentityAuthorizationSessions {
 		return this.sessions.lockForAuthorization(userId, sessionId, authenticatedAt, credentialVersion)
 				.map(session -> new IdentityAuthorizationSession(access.orElseThrow(), session.id(), session.authenticatedAt(),
 						session.idleExpiresAt(), session.absoluteExpiresAt()));
+	}
+
+	/** Subject and catalog proof must already be locked; even an expired source is locked before native state. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public Optional<Instant> exchangeDeadline(IdentityAuthorizationSession original) {
+		return this.sessions.exchangeDeadline(original);
 	}
 
 }
