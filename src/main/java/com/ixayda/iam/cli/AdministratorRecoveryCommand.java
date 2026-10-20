@@ -30,7 +30,9 @@ public final class AdministratorRecoveryCommand {
 						throw new IllegalStateException("Administrator recovery requires a non-Web application");
 					}
 				}).run()) {
-			execute(console, context.getBean(IdentityAdministratorRecoveries.class));
+			var recoveries = context.getBean(IdentityAdministratorRecoveries.class);
+			recoveries.cleanUpExpiredRecoveries();
+			execute(console, recoveries);
 		}
 	}
 

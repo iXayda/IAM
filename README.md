@@ -42,12 +42,40 @@ IAM 负责账号、身份认证和应用级授权；业务对象及具体业务�
 | `IAM_PROTOCOL_IDENTITY_FRONTEND_URI` | 启用浏览器授权导航时必填，与 issuer 同源的固定 HTTPS 身份前端地址，不含查询串或片段 |
 | `IAM_AUTHORIZATION_KEY_FILE` | 启用协议入口时必填，指向包含 64 个原始二进制字节的独立授权状态保护文件；与签名及 TOTP 保护密钥分别保管 |
 
-数据库账号需要具备建表和执行迁移的权限。Flyway 在启动时创建或升级表结构。TOTP 保护密钥需要持久保存并限制读取权限，不应提交到仓库或在每次启动时重新生成。
+使用专用 IAM 数据库，并分别配置数据库所有者和受限运行账号。迁移、管理员初始化与部署维护使用所有者连接；Web 服务使用运行账号。两组凭据分别注入，运行进程不持有维护密码。保护密钥需要持久保存并限制读取权限，不应提交到仓库或在每次启动时重新生成。
 
-应用入口使用 HTTPS，可由 IAM 或受信代理终止 TLS。默认不信任转发头；HTTP 回源须显式启用受信代理模式，并限制 IAM 端口仅由代理访问。配置就绪后启动：
+数据库管理员在受控 `psql` 会话中创建独立角色和数据库，使用 `\password` 交互设置密码：
+
+```sql
+CREATE ROLE iam_owner LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+\password iam_owner
+CREATE ROLE iam_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+\password iam_runtime
+CREATE DATABASE iam OWNER iam_owner;
+```
+
+在维护环境注入 `iam_owner` 的 JDBC 连接，配置持久签名和 TOTP 保护文件，依次迁移、初始化签名身份和管理员。命令独立运行，不监听 HTTP：
 
 ```bash
-java -jar target/iam.jar
+java -jar target/iam.jar migrate
+java -jar target/iam.jar initialize-signing-key
+java -jar target/iam.jar bootstrap-admin
+```
+
+管理员初始化前，由组织授权人员核验本人，安排账号本人在受控的真实交互终端执行。按提示创建账号或选择已有活动账号，验证密码并完成 TOTP 绑定与验证。密码和动态码无回显输入，不接受附加参数或管道输入；不录屏或采集终端输出，安全保存一次性展示的恢复码。初始化仅允许完成一次，中断后可继续，完成后不能重复获取资格或恢复码。
+
+使用数据库所有者的 `psql` 连接应用权限清单。通过受保护的密码文件或部署秘密管理提供凭据；以下命令采用已配置的 `PGHOST`、`PGPORT`、`PGDATABASE` 和 `PGUSER`：
+
+```bash
+psql -X --set=runtime_role=iam_runtime --set=iam_schema=public --file=deploy/postgresql/grant-runtime.sql
+```
+
+清单显式授予业务所需权限，新增表不自动授权。运行账号不能建表、执行迁移、删改审计记录、变更管理员资格或签名密钥，也不能拥有对象或具备提权能力。默认使用 `public` schema；自定义 schema 和升级步骤见 [数据库安装与升级](docs/operations.md#数据库安装与升级)。
+
+应用入口使用 HTTPS，可由 IAM 或受信代理终止 TLS。默认不信任转发头；HTTP 回源须显式启用受信代理模式，并限制 IAM 端口仅由代理访问。切换到仅含 `iam_runtime` 凭据的运行环境，以 `runtime` profile 关闭启动迁移并在监听前核查数据库身份；误用所有者账号或出现受保护表权限扩大时拒绝启动：
+
+```bash
+java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
 ## 应用接入
@@ -63,7 +91,7 @@ IAM 会话与应用会话分别管理，IAM 会话不能作为业务 API 的访�
 接口规范由 springdoc 根据控制器和 DTO 生成，并补充 Spring Security 过滤器处理的登录、退出和协议端点。默认关闭文档入口；需要导出时，在完成数据库和 HTTPS 配置后启用 `documentation` profile：
 
 ```bash
-java -jar target/iam.jar --spring.profiles.active=documentation
+java -jar target/iam.jar --spring.profiles.active=runtime,documentation
 ```
 
 使用有效会话读取 `/v3/api-docs`（JSON）或 `/v3/api-docs.yaml`（YAML），导出规范到本地后，通过 [独立预览工具](tools/swagger/README.md)校验和查看。

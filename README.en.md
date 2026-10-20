@@ -42,12 +42,40 @@ Before starting the application, configure a dedicated PostgreSQL database and H
 | `IAM_PROTOCOL_IDENTITY_FRONTEND_URI` | Required for browser authorization navigation; a fixed HTTPS identity frontend URL on the same origin as the issuer, without a query string or fragment |
 | `IAM_AUTHORIZATION_KEY_FILE` | Required when protocol endpoints are enabled; path to a separate authorization state protection file containing 64 raw binary bytes, kept separately from the signing and TOTP protection keys |
 
-The database account needs permission to create tables and run migrations. Flyway creates or upgrades the schema at startup. Keep the TOTP protection key persistent and restrict read access. Do not commit it to the repository or regenerate it on every startup.
+Use a dedicated IAM database with separate owner and restricted runtime accounts. Migrations, administrator initialization, and deployment maintenance use the owner connection; the web service uses the runtime account. Supply each set of credentials separately so that the running service does not hold the maintenance password. Keep protection keys persistent and restrict read access. Do not commit them to the repository or regenerate them on every startup.
 
-The public entry point uses HTTPS, terminated by IAM or a trusted proxy. Forwarded headers are ignored by default; HTTP upstream connections require explicit proxy trust and network access restricted to those proxies. Start after configuration:
+As a database administrator, create the roles and database in a controlled `psql` session. Set passwords interactively with `\password`:
+
+```sql
+CREATE ROLE iam_owner LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+\password iam_owner
+CREATE ROLE iam_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+\password iam_runtime
+CREATE DATABASE iam OWNER iam_owner;
+```
+
+In the maintenance environment, supply the JDBC connection for `iam_owner` and the persistent signing and TOTP protection files. Run migrations, initialize the signing identity, and bootstrap the administrator in order. These commands run independently without an HTTP listener:
 
 ```bash
-java -jar target/iam.jar
+java -jar target/iam.jar migrate
+java -jar target/iam.jar initialize-signing-key
+java -jar target/iam.jar bootstrap-admin
+```
+
+Before administrator initialization, an organization-authorized operator verifies the account holder's identity and arranges for them to use a controlled, real interactive terminal. Follow the prompts to create an account or select an existing active account, verify the password, and enroll and verify TOTP. Passwords and codes are entered without echo; additional arguments and piped input are not accepted. Do not record the screen or collect terminal output. Securely save the recovery codes when they are shown once. Initialization can complete only once and can resume after interruption. Repeating it after completion cannot restore privileges or retrieve recovery codes.
+
+Apply the runtime privilege script through the owner's `psql` connection. Provide credentials through a protected password file or deployment secret management. The following command uses the configured `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER`:
+
+```bash
+psql -X --set=runtime_role=iam_runtime --set=iam_schema=public --file=deploy/postgresql/grant-runtime.sql
+```
+
+The script explicitly grants the permissions needed by the application; new tables receive no automatic grants. The runtime account cannot create tables, run migrations, modify or delete audit records, change administrator privileges or signing keys, own database objects, or escalate privileges. The default schema is `public`. See [database installation and upgrades](docs/operations.md#数据库安装与升级) for custom schema configuration and upgrades.
+
+The public entry point uses HTTPS, terminated by IAM or a trusted proxy. Forwarded headers are ignored by default; HTTP upstream connections require explicit proxy trust and network access restricted to those proxies. Switch to a runtime environment containing only the `iam_runtime` credentials. The `runtime` profile disables startup migrations and checks the database identity before opening the listener. Startup is rejected if the owner account is used or the runtime account has excessive privileges on protected tables:
+
+```bash
+java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
 ## Application integration
@@ -63,7 +91,7 @@ IAM and application sessions are managed separately. An IAM session cannot serve
 springdoc generates the API specification from controllers and DTOs, with additional descriptions for login, logout, and protocol endpoints handled by Spring Security filters. Documentation endpoints are disabled by default. After configuring the database and HTTPS, enable the `documentation` profile to export the specification:
 
 ```bash
-java -jar target/iam.jar --spring.profiles.active=documentation
+java -jar target/iam.jar --spring.profiles.active=runtime,documentation
 ```
 
 Use a valid session to read `/v3/api-docs` (JSON) or `/v3/api-docs.yaml` (YAML). Export the specification locally, then validate and view it with the [standalone preview tool](tools/swagger/README.md).

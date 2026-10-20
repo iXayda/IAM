@@ -4,6 +4,7 @@ import com.ixayda.iam.cli.AdministratorCredentialRecoveryCommand;
 
 import com.ixayda.iam.cli.AdministratorBootstrapCommand;
 import com.ixayda.iam.cli.AdministratorRecoveryCommand;
+import com.ixayda.iam.cli.DatabaseMaintenanceCommand;
 import com.ixayda.iam.cli.SigningKeyRotationCommand;
 import com.ixayda.iam.cli.SigningKeyIncidentCommand;
 
@@ -29,6 +30,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class IamApplication {
 
 	public static void main(String[] args) {
+		if (args.length > 0 && (args[0].equals("migrate") || args[0].equals("initialize-signing-key"))) {
+			DatabaseMaintenanceCommand.run(IamApplication.class, args);
+			return;
+		}
 		if (args.length > 0 && args[0].equals("bootstrap-admin")) {
 			AdministratorBootstrapCommand.run(IamApplication.class, args);
 			return;

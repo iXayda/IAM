@@ -40,6 +40,16 @@ public class IdentitySigningKeys {
 
 	/** Web startup calls this before admitting traffic. Existing state is validated, never replaced. */
 	public Optional<IdentitySigningKey> initialize() {
+		return initialize("system:startup");
+	}
+
+	/** Offline installation uses maintenance credentials before the restricted Web identity starts. */
+	public IdentitySigningKey initializeForInstallation() {
+		this.secrets.requireConfigured();
+		return initialize("system:installation").orElseThrow(() -> new IllegalStateException("Signing protection is required"));
+	}
+
+	private Optional<IdentitySigningKey> initialize(String actor) {
 		requireIndependentTransaction();
 		return this.transaction.execute(status -> {
 			var lifecycle = this.repository.lockLifecycle();
@@ -53,7 +63,7 @@ public class IdentitySigningKeys {
 				this.repository.completeInitialization(id);
 				// The first key and its initialization operation share the same correlation UUID.
 				this.audits.recordSuccess(Action.SIGNING_KEY_INITIALIZED, null,
-						new SecurityAuditContext("system:startup", "deployment:signing", id));
+						new SecurityAuditContext(actor, "deployment:signing", id));
 				stored = this.repository.findStoredKey();
 				lifecycle = this.repository.lockLifecycle();
 			}

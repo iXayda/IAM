@@ -16,10 +16,10 @@
 ./mvnw clean verify
 ```
 
-按 [运行说明](README.md#开发与运行)配置数据库及 HTTPS 后启动 Web 服务：
+按 [运行说明](README.md#开发与运行)完成隔离数据库安装、初始化及运行配置后启动 Web 服务：
 
 ```bash
-java -jar target/iam.jar
+java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
 ## 代码约定
@@ -52,6 +52,7 @@ java -jar target/iam.jar
 ## 安全注意点
 
 - 安全状态变更与必要成功审计保持事务原子性。
+- 涉及表或数据库访问时检查 `deploy/postgresql/grant-runtime.sql`，显式授予业务所需的最小权限，并同步相关权限校验；保持 Web 运行账号与维护身份隔离。
 - 不通过放宽 HTTPS issuer、认证、授权、CSRF、MFA、重放或尝试预算校验，或跳过断言使测试通过。
 - 验证使用隔离数据库、合成数据和临时凭据，不使用生产秘密，不提交日志、数据库归档或本地环境文件。
 
