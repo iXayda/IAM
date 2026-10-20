@@ -78,7 +78,8 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			}
 			boolean clientChange = request.getMethod().equals("POST") && (request.getServletPath().equals("/api/admin/clients")
 					|| request.getServletPath().matches("/api/admin/clients/[^/]+/(configuration|disable|enable|secret/rotate)"));
-			if (request.getMethod().equals("POST") && (request.getServletPath().equals("/login") || clientChange)
+			boolean resourceCredentialChange = request.getMethod().equals("POST") && request.getServletPath().matches("/api/admin/resources/[^/]+/validation-credential/(rotate|disable)");
+			if (request.getMethod().equals("POST") && (request.getServletPath().equals("/login") || clientChange || resourceCredentialChange)
 					&& (request.getContentType() == null || !request.getContentType().split(";", 2)[0].equalsIgnoreCase("application/json"))) {
 				reject(request, response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
@@ -117,7 +118,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 				reject(request, response, IdentityBrowserResponses.Error.UNSUPPORTED_MEDIA_TYPE);
 				return;
 			}
-			if ((accountChange || clientChange) && request.getQueryString() != null) {
+			if ((accountChange || clientChange || resourceCredentialChange) && request.getQueryString() != null) {
 				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
