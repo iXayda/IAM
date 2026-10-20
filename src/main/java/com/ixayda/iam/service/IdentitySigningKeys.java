@@ -69,12 +69,22 @@ public class IdentitySigningKeys {
 	public IdentitySigningMaterial signingMaterial() {
 		requireIndependentTransaction();
 		this.secrets.requireConfigured();
-		return this.transaction.execute(status -> {
-			var lifecycle = this.repository.lockLifecycle();
-			var stored = this.repository.findStoredKey().orElseThrow(() -> new IllegalStateException("Signing key is not initialized"));
-			requireConsistentState(lifecycle, stored);
-			return restore(stored);
-		});
+		return this.transaction.execute(status -> loadLockedMaterial(this.repository.lockLifecycle()));
+	}
+
+	/** Acquire first, before resource/client/user/session/authorization locks; retain through issuance and audit commit. */
+	public IdentitySigningMaterial lockForIssuance() {
+		if (!TransactionSynchronizationManager.isActualTransactionActive() || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+			throw new IllegalStateException("Token signing requires an active write transaction");
+		}
+		this.secrets.requireConfigured();
+		return loadLockedMaterial(this.repository.lockForIssuance());
+	}
+
+	private IdentitySigningMaterial loadLockedMaterial(IdentitySigningKeyRepository.Lifecycle lifecycle) {
+		var stored = this.repository.findStoredKey().orElseThrow(() -> new IllegalStateException("Signing key is not initialized"));
+		requireConsistentState(lifecycle, stored);
+		return restore(stored);
 	}
 
 	private IdentitySigningMaterial restore(StoredKey stored) {
