@@ -26,6 +26,7 @@ import com.ixayda.iam.security.BrowserHttpTestSupport;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
 import com.ixayda.iam.service.IdentityAdministrators;
 import com.ixayda.iam.service.IdentityBrowserSessions;
+import com.ixayda.iam.service.IdentityResources;
 import com.ixayda.iam.service.IdentityUserSetups;
 import com.ixayda.iam.service.IdentityUsers;
 import com.ixayda.iam.service.SecurityAudits;
@@ -70,6 +71,7 @@ class SecurityAuditControllerIntegrationTests extends BrowserHttpTestSupport {
 	@Autowired private IdentityAdministrators administrators;
 	@Autowired private IdentityUserSetups setups;
 	@Autowired private IdentityUsers users;
+	@Autowired private IdentityResources resources;
 	@Autowired private JdbcClient jdbc;
 	@MockitoSpyBean private SecurityAudits audits;
 
@@ -99,13 +101,32 @@ class SecurityAuditControllerIntegrationTests extends BrowserHttpTestSupport {
 			assertThat(body).containsOnlyKeys("items", "nextCursor");
 			List<Map<String, Object>> items = JsonPath.read(response.body(), "$.items");
 			assertThat(items).singleElement().satisfies(item -> assertThat(item)
-					.containsOnlyKeys("id", "action", "outcome", "targetUserId", "actor", "source", "correlationId", "recordedAt")
+					.containsOnlyKeys("id", "action", "outcome", "targetUserId", "actor", "source", "correlationId", "recordedAt", "targetType", "targetId")
+					.containsEntry("targetType", null).containsEntry("targetId", null)
 					.containsEntry("id", event.toString()).containsEntry("action", "PASSWORD_RECOVERY_THROTTLED")
 					.containsEntry("outcome", "FAILURE").containsEntry("targetUserId", null).containsEntry("actor", "anonymous")
 					.containsEntry("source", SOURCE).containsEntry("correlationId", correlation.toString()).containsEntry("recordedAt", RECORDED.toString()));
 			assertThat((Object) JsonPath.read(response.body(), "$.nextCursor")).isNull();
 			assertThat(response.body()).doesNotContain(PASSWORD, factor.secret(), factor.factorId().toString(), "password_hash", "credentialVersion", "secret", "token");
 			assertThat(events("admin_access_denied")).isZero();
+		}
+	}
+
+	@Test
+	void resourceAuditQueriesReturnTheTypedObjectWithoutPublishingResourceConfiguration() throws Exception {
+		var factor = administrator();
+		var resource = this.resources.create("urn:private:orders", "Private resource configuration",
+				new SecurityAuditContext("system:resource-fixture", SOURCE, UUID.randomUUID()));
+		try (var client = client()) {
+			String session = elevate(client, login(client, "alice"), factor);
+			var result = get(client, PATH + "?source=" + SOURCE + "&action=RESOURCE_CREATED", session);
+			assertThat(result.statusCode()).isEqualTo(200);
+			List<Map<String, Object>> items = JsonPath.read(result.body(), "$.items");
+			assertThat(items).singleElement().satisfies(item -> assertThat(item)
+					.containsEntry("targetUserId", null).containsEntry("targetType", "RESOURCE")
+					.containsEntry("targetId", resource.id().toString()).containsEntry("action", "RESOURCE_CREATED"));
+			assertThat(result.body()).doesNotContain(resource.audience(), resource.displayName());
+			assertSecurityHeaders(result);
 		}
 	}
 

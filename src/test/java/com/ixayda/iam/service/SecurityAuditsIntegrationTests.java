@@ -1,11 +1,5 @@
 package com.ixayda.iam.service;
 
-import org.springframework.transaction.support.TransactionTemplate;
-
-import org.springframework.transaction.PlatformTransactionManager;
-
-import org.junit.jupiter.params.provider.ValueSource;
-
 import java.sql.DriverManager;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -19,6 +13,7 @@ import com.ixayda.iam.credential.PasswordHasher;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent.Action;
+import com.ixayda.iam.model.SecurityAuditTarget;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -33,6 +29,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import static org.assertj.core.api.Assertions.*;
@@ -161,7 +159,7 @@ class SecurityAuditsIntegrationTests {
 		String body = switch (changed) {
 			case "actor" -> "NEW.actor='anonymous'; RETURN NEW;";
 			case "source" -> "NEW.source='altered'; RETURN NEW;";
-			case "action" -> "NEW.action='initial_password_set'; RETURN NEW;";
+			case "action" -> "NEW.action='user_enabled'; RETURN NEW;";
 			case "after-altered" -> "UPDATE iam_security_audit SET actor='anonymous' WHERE id=NEW.id; RETURN NEW;";
 			case "after-deleted" -> "DELETE FROM iam_security_audit WHERE id=NEW.id; RETURN NEW;";
 			default -> "NEW." + changed + "=gen_random_uuid(); RETURN NEW;";
@@ -173,6 +171,18 @@ class SecurityAuditsIntegrationTests {
 		}
 		finally { removeAuditFault(); }
 		this.users.create("alice", "Alice", this.audit); assertThat(auditCount()).isEqualTo(1);
+	}
+
+	@Test
+	void aChangedObjectTargetCannotBeAcceptedAsTheRequestedAudit() {
+		auditFault("BEFORE", "NEW.target_id=gen_random_uuid(); RETURN NEW;");
+		try {
+			var target = new SecurityAuditTarget(SecurityAuditTarget.Type.RESOURCE, UUID.randomUUID());
+			assertThatIllegalStateException().isThrownBy(() -> new TransactionTemplate(this.transactions).executeWithoutResult(tx ->
+					this.audits.recordTargetSuccess(Action.RESOURCE_CREATED, target, this.audit))).withMessage("Audit event does not match stored state");
+			assertThat(auditCount()).isZero();
+		}
+		finally { removeAuditFault(); }
 	}
 
 	@Test
@@ -197,7 +207,6 @@ class SecurityAuditsIntegrationTests {
 		this.jdbc.sql("DROP TRIGGER IF EXISTS audit_test_change ON iam_security_audit").update();
 		this.jdbc.sql("DROP FUNCTION IF EXISTS audit_test_change_insert()").update();
 	}
-
 
 	@Test
 	void refusesSuccessEventsOutsideTheBusinessTransaction() {

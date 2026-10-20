@@ -6,6 +6,7 @@ import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEvent;
 import com.ixayda.iam.model.SecurityAuditFilter;
 import com.ixayda.iam.model.SecurityAuditPage;
+import com.ixayda.iam.model.SecurityAuditTarget;
 import com.ixayda.iam.repository.SecurityAuditRepository;
 
 import org.springframework.stereotype.Service;
@@ -50,6 +51,15 @@ public class SecurityAudits {
 			throw new IllegalArgumentException("A success action is required");
 		}
 		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, targetUserId, context));
+	}
+
+	/** Object changes retain a typed target alongside the operation's trusted attribution. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void recordTargetSuccess(SecurityAuditEvent.Action action, SecurityAuditTarget target, SecurityAuditContext context) {
+		if (action == null || action.isFailure() || target == null) {
+			throw new IllegalArgumentException("A success action and object target are required");
+		}
+		this.repository.append(new SecurityAuditEvent(UUID.randomUUID(), action, null, context, target));
 	}
 
 	/** Failure belongs to a transaction that commits a rejected decision, not to a rolled-back success. */

@@ -82,7 +82,8 @@ public class SecurityAuditController {
 
 	private static SecurityAuditEntryResponse response(SecurityAuditEntry entry) {
 		return new SecurityAuditEntryResponse(entry.id(), entry.action(), entry.outcome(), entry.targetUserId(),
-				entry.context().actor(), entry.context().source(), entry.context().correlationId(), entry.recordedAt());
+				entry.context().actor(), entry.context().source(), entry.context().correlationId(), entry.recordedAt(),
+				entry.target() == null ? null : entry.target().type().name(), entry.target() == null ? null : entry.target().id());
 	}
 
 	private static Instant parseTime(String value) {

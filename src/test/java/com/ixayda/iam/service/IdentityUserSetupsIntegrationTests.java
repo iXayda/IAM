@@ -665,11 +665,11 @@ class IdentityUserSetupsIntegrationTests {
 						VALUES (:eventId, 'system:upgrade-test', 'internal:upgrade-test', :correlation, :userId, 'user_created', 'success')
 						""").param("eventId", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("userId", id).update();
 				var beforeUser = previous.sql("SELECT row_to_json(u)::text FROM iam_user u").query(String.class).single();
-				var beforeAudit = previous.sql("SELECT row_to_json(a)::text FROM iam_security_audit a").query(String.class).single();
+				var beforeAudit = previous.sql("SELECT (to_jsonb(a) - 'target_type' - 'target_id')::text FROM iam_security_audit a").query(String.class).single();
 				Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())
 						.schemas(schema).defaultSchema(schema).load().migrate();
 				assertThat(previous.sql("SELECT row_to_json(u)::text FROM iam_user u").query(String.class).single()).isEqualTo(beforeUser);
-				assertThat(previous.sql("SELECT row_to_json(a)::text FROM iam_security_audit a").query(String.class).single()).isEqualTo(beforeAudit);
+				assertThat(previous.sql("SELECT (to_jsonb(a) - 'target_type' - 'target_id')::text FROM iam_security_audit a").query(String.class).single()).isEqualTo(beforeAudit);
 				assertThat(previous.sql("SELECT password_hash FROM iam_password").query(String.class).single()).isEqualTo(hash);
 				assertThat(previous.sql("SELECT count(*) FROM iam_user_setup").query(Long.class).single()).isZero();
 				assertThat(previous.sql("SELECT count(*) FROM flyway_schema_history WHERE version IN ('1', '2', '3') AND success")

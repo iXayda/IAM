@@ -546,9 +546,9 @@ class IdentityPasswordRecoveryCompletionIntegrationTests extends BrowserHttpTest
 					.param("id", session.toString()).param("bytes", new byte[] {1,2,3}).update();
 			var tables = List.of("iam_user", "iam_password", "iam_password_recovery", "iam_account_setup_limit", "iam_browser_session", "iam_browser_session_attributes", "iam_security_audit");
 			var before = new java.util.LinkedHashMap<String, List<String>>();
-			for (String table : tables) { before.put(table, isolated.sql("SELECT to_jsonb(t)::text FROM " + table + " t").query(String.class).list()); }
+			for (String table : tables) { before.put(table, isolated.sql("SELECT (to_jsonb(t) - 'target_type' - 'target_id')::text FROM " + table + " t").query(String.class).list()); }
 			Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword()).schemas(schema).defaultSchema(schema).load().migrate();
-			for (String table : tables) { assertThat(isolated.sql("SELECT to_jsonb(t)::text FROM " + table + " t").query(String.class).list()).as(table).isEqualTo(before.get(table)); }
+			for (String table : tables) { assertThat(isolated.sql("SELECT (to_jsonb(t) - 'target_type' - 'target_id')::text FROM " + table + " t").query(String.class).list()).as(table).isEqualTo(before.get(table)); }
 			assertThat(isolated.sql("SELECT count(*) FROM iam_password_recovery_limit").query(Long.class).single()).isZero();
 			isolated.sql("INSERT INTO iam_security_audit(id,action,actor,source,outcome,correlation_id) VALUES (:event,'password_recovery_throttled','anonymous','browser:password-recovery','failure',:correlation)")
 					.param("event", UUID.randomUUID()).param("correlation", UUID.randomUUID()).update();

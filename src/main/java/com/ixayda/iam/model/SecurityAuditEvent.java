@@ -4,11 +4,21 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** An identity operation to append; PostgreSQL assigns its recording time. */
-public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, SecurityAuditContext context) {
+public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, SecurityAuditContext context, SecurityAuditTarget target) {
+
+	public SecurityAuditEvent(UUID id, Action action, UUID targetUserId, SecurityAuditContext context) {
+		this(id, action, targetUserId, context, null);
+	}
 
 	public SecurityAuditEvent {
 		Objects.requireNonNull(id, "Audit event id is required");
 		Objects.requireNonNull(action, "Audit action is required");
+		if (action.targetType() != null) {
+			if (target == null || target.type() != action.targetType() || targetUserId != null) {
+				throw new IllegalArgumentException("Audit object target is required and must match the action");
+			}
+		}
+		else if (target != null) { throw new IllegalArgumentException("Audit action does not accept an object target"); }
 		if (targetUserId == null && action.requiresTarget()) {
 			throw new IllegalArgumentException("Audit target user id is required");
 		}
@@ -31,7 +41,15 @@ public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, Secu
 		ADMIN_BOOTSTRAP_PREPARED, ADMIN_BOOTSTRAP_COMPLETED, ADMIN_BOOTSTRAP_REJECTED, ADMIN_BOOTSTRAP_THROTTLED, LAST_ADMINISTRATOR_PROTECTED,
 		ADMIN_MFA_AUTHENTICATED, ADMIN_MFA_REJECTED, ADMIN_ACCESS_DENIED,
 		ADMIN_RECOVERY_STARTED, ADMIN_RECOVERY_COMPLETED, ADMIN_RECOVERY_REJECTED, ADMIN_RECOVERY_THROTTLED,
-		SIGNING_KEY_INITIALIZED;
+		SIGNING_KEY_INITIALIZED,
+		RESOURCE_CREATED, RESOURCE_UPDATED, RESOURCE_DISABLED, RESOURCE_ENABLED;
+
+		public SecurityAuditTarget.Type targetType() {
+			return switch (this) {
+				case RESOURCE_CREATED, RESOURCE_UPDATED, RESOURCE_DISABLED, RESOURCE_ENABLED -> SecurityAuditTarget.Type.RESOURCE;
+				default -> null;
+			};
+		}
 
 		public boolean isFailure() {
 			return this == PASSWORD_AUTH_FAILED || this == PASSWORD_AUTH_THROTTLED || this == BROWSER_ENTRY_THROTTLED
@@ -48,7 +66,7 @@ public record SecurityAuditEvent(UUID id, Action action, UUID targetUserId, Secu
 		}
 
 		public boolean requiresTarget() {
-			return this != PASSWORD_AUTH_FAILED && this != PASSWORD_AUTH_THROTTLED && this != BROWSER_ENTRY_THROTTLED
+			return targetType() == null && this != PASSWORD_AUTH_FAILED && this != PASSWORD_AUTH_THROTTLED && this != BROWSER_ENTRY_THROTTLED
 					&& this != ACCOUNT_SETUP_FAILED && this != ACCOUNT_SETUP_THROTTLED
 					&& this != PASSWORD_RECOVERY_FAILED && this != PASSWORD_RECOVERY_THROTTLED && this != TOTP_ENROLLMENT_FAILED && this != TOTP_ENROLLMENT_THROTTLED
 					&& this != TOTP_AUTH_FAILED && this != TOTP_AUTH_THROTTLED

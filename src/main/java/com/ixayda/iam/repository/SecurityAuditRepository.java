@@ -16,6 +16,7 @@ import com.ixayda.iam.model.SecurityAuditEntry;
 import com.ixayda.iam.model.SecurityAuditEvent;
 import com.ixayda.iam.model.SecurityAuditFilter;
 import com.ixayda.iam.model.SecurityAuditPage;
+import com.ixayda.iam.model.SecurityAuditTarget;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -31,7 +32,7 @@ public class SecurityAuditRepository {
 
 	public List<SecurityAuditEntry> search(SecurityAuditFilter filter, int limit, SecurityAuditPage.Cursor after) {
 		var sql = new StringBuilder("""
-				SELECT id, actor, source, correlation_id, target_user_id, action, outcome, recorded_at
+				SELECT id, actor, source, correlation_id, target_user_id, action, outcome, recorded_at, target_type, target_id
 				FROM iam_security_audit WHERE 1 = 1
 				""");
 		var parameters = new HashMap<String, Object>();
@@ -88,29 +89,31 @@ public class SecurityAuditRepository {
 				SecurityAuditEntry.Outcome.valueOf(result.getString("outcome").toUpperCase(Locale.ROOT)),
 				result.getObject("target_user_id", UUID.class),
 				new SecurityAuditContext(result.getString("actor"), result.getString("source"), result.getObject("correlation_id", UUID.class)),
-				result.getObject("recorded_at", OffsetDateTime.class).toInstant());
+				result.getObject("recorded_at", OffsetDateTime.class).toInstant(),
+				result.getString("target_type") == null ? null : new SecurityAuditTarget(
+						SecurityAuditTarget.Type.valueOf(result.getString("target_type").toUpperCase(Locale.ROOT)),
+						result.getObject("target_id", UUID.class)));
 	}
 
 	public void append(SecurityAuditEvent event) {
 		int inserted = this.jdbc.sql("""
-				INSERT INTO iam_security_audit (id, actor, source, correlation_id, target_user_id, action, outcome)
-				VALUES (:id, :actor, :source, :correlationId, :targetUserId, :action, :outcome)
+				INSERT INTO iam_security_audit (id, actor, source, correlation_id, target_user_id, action, outcome, target_type, target_id)
+				VALUES (:id, :actor, :source, :correlationId, :targetUserId, :action, :outcome, :targetType, :targetId)
 				""").param("id", event.id()).param("actor", event.context().actor())
 				.param("source", event.context().source()).param("correlationId", event.context().correlationId())
 				.param("targetUserId", event.targetUserId()).param("action", event.action().name().toLowerCase(Locale.ROOT))
 				.param("outcome", event.action().isFailure() ? "failure" : "success")
+				.param("targetType", event.target() == null ? null : event.target().type().name().toLowerCase(Locale.ROOT))
+				.param("targetId", event.target() == null ? null : event.target().id())
 				.update();
 		if (inserted != 1) {
 			throw new IllegalStateException("Audit event was not stored");
 		}
-		boolean matches = this.jdbc.sql("""
-				SELECT EXISTS (SELECT 1 FROM iam_security_audit
-				    WHERE id=:id AND actor=:actor AND source=:source AND correlation_id=:correlationId
-				      AND target_user_id IS NOT DISTINCT FROM :targetUserId AND action=:action AND outcome=:outcome)
-				""").param("id", event.id()).param("actor", event.context().actor()).param("source", event.context().source())
-				.param("correlationId", event.context().correlationId()).param("targetUserId", event.targetUserId())
-				.param("action", event.action().name().toLowerCase(Locale.ROOT)).param("outcome", event.action().isFailure() ? "failure" : "success").query(Boolean.class).single();
-		if (!matches) { throw new IllegalStateException("Audit event does not match stored state"); }
+		var stored = this.jdbc.sql("SELECT * FROM iam_security_audit WHERE id=:id").param("id", event.id()).query(SecurityAuditRepository::mapEntry).optional();
+		if (stored.filter(entry -> new SecurityAuditEvent(entry.id(), entry.action(), entry.targetUserId(), entry.context(), entry.target()).equals(event)
+				&& entry.outcome() == (event.action().isFailure() ? SecurityAuditEntry.Outcome.FAILURE : SecurityAuditEntry.Outcome.SUCCESS)).isEmpty()) {
+			throw new IllegalStateException("Audit event does not match stored state");
+		}
 	}
 
 }

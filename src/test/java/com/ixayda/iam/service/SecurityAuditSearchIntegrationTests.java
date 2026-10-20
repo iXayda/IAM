@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import com.ixayda.iam.PostgreSqlTestConfiguration;
+import com.ixayda.iam.model.SecurityAuditTarget;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.SecurityAuditEntry;
 import com.ixayda.iam.model.SecurityAuditEntry.Outcome;
@@ -39,6 +40,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import static com.ixayda.iam.PostgreSqlMigrationTestSupport.copyRows;
 import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -319,7 +321,7 @@ class SecurityAuditSearchIntegrationTests {
 		this.jdbc.sql("CREATE ROLE " + role + " NOLOGIN").update();
 		try {
 			this.jdbc.sql("GRANT USAGE ON SCHEMA public TO " + role).update();
-			this.jdbc.sql("GRANT SELECT (id, actor, source, correlation_id, target_user_id, action, outcome, recorded_at) ON iam_security_audit TO " + role).update();
+			this.jdbc.sql("GRANT SELECT (id, actor, source, correlation_id, target_user_id, action, outcome, recorded_at, target_type, target_id) ON iam_security_audit TO " + role).update();
 			var read = new TransactionTemplate(this.transactions);
 			read.setReadOnly(true);
 			read.executeWithoutResult(tx -> {
@@ -363,7 +365,7 @@ class SecurityAuditSearchIntegrationTests {
 			try (var connection = DriverManager.getConnection(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())) {
 				connection.setSchema(schema);
 				var previous = JdbcClient.create(new SingleConnectionDataSource(connection, true));
-				for (String table : TABLES) { previous.sql("INSERT INTO " + table + " SELECT * FROM public." + table).update(); }
+				for (String table : TABLES) { copyRows(previous, table); }
 				var before = snapshot(previous);
 				flyway(schema, "11").migrate();
 				assertThat(snapshot(previous)).isEqualTo(before);
@@ -399,12 +401,15 @@ class SecurityAuditSearchIntegrationTests {
 	private SecurityAuditEntry seed(UUID id, Action action, UUID target, String actor, String source, UUID correlation, Instant time) {
 		Outcome outcome = action.isFailure() ? Outcome.FAILURE : Outcome.SUCCESS;
 		this.jdbc.sql("""
-				INSERT INTO iam_security_audit (id, actor, source, correlation_id, target_user_id, action, outcome, recorded_at)
-				VALUES (:id, :actor, :source, :correlation, :target, :action, :outcome, :time)
+				INSERT INTO iam_security_audit (id, actor, source, correlation_id, target_user_id, action, outcome, recorded_at, target_type, target_id)
+				VALUES (:id, :actor, :source, :correlation, :target, :action, :outcome, :time, :targetType, :targetId)
 				""").param("id", id).param("actor", actor).param("source", source).param("correlation", correlation)
 				.param("target", target).param("action", action.name().toLowerCase(Locale.ROOT))
-				.param("outcome", outcome.name().toLowerCase(Locale.ROOT)).param("time", OffsetDateTime.ofInstant(time, ZoneOffset.UTC)).update();
-		return new SecurityAuditEntry(id, action, outcome, target, new SecurityAuditContext(actor, source, correlation), time);
+				.param("outcome", outcome.name().toLowerCase(Locale.ROOT)).param("time", OffsetDateTime.ofInstant(time, ZoneOffset.UTC))
+				.param("targetType", action.targetType() == null ? null : action.targetType().name().toLowerCase(Locale.ROOT))
+				.param("targetId", action.targetType() == null ? null : TARGET).update();
+		return new SecurityAuditEntry(id, action, outcome, target, new SecurityAuditContext(actor, source, correlation), time,
+				action.targetType() == null ? null : new SecurityAuditTarget(action.targetType(), TARGET));
 	}
 
 	private List<List<String>> snapshot(JdbcClient client) {

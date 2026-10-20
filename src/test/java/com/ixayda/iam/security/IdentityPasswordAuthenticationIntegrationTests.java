@@ -595,10 +595,10 @@ class IdentityPasswordAuthenticationIntegrationTests {
 						VALUES (:event, 'system:upgrade-test', 'internal:test', :correlation, :user, 'user_created', 'success')
 						""").param("event", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("user", id).update();
 				var tables = List.of("iam_user", "iam_password", "iam_user_setup", "iam_security_audit");
-				var before = tables.stream().map(t -> previous.sql("SELECT (to_jsonb(t) - 'credential_version')::text FROM " + t + " t").query(String.class).single()).toList();
+				var before = tables.stream().map(t -> previous.sql("SELECT (to_jsonb(t) - 'credential_version' - 'target_type' - 'target_id')::text FROM " + t + " t").query(String.class).single()).toList();
 				Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())
 						.schemas(schema).defaultSchema(schema).load().migrate();
-				var after = tables.stream().map(t -> previous.sql("SELECT (to_jsonb(t) - 'credential_version')::text FROM " + t + " t").query(String.class).single()).toList();
+				var after = tables.stream().map(t -> previous.sql("SELECT (to_jsonb(t) - 'credential_version' - 'target_type' - 'target_id')::text FROM " + t + " t").query(String.class).single()).toList();
 				assertThat(after).isEqualTo(before);
 				assertThat(previous.sql("SELECT credential_version FROM iam_password").query(Long.class).single()).isEqualTo(1);
 				assertThat(previous.sql("SELECT count(*) FROM iam_password_authentication_limit").query(Long.class).single()).isZero();
