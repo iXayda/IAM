@@ -15,6 +15,7 @@ import java.util.UUID;
 
 import com.ixayda.iam.model.IdentityApplicationAccess;
 import com.ixayda.iam.model.IdentityAuthorizationBinding;
+import com.ixayda.iam.model.IdentityAuthorizationPage;
 import com.ixayda.iam.model.IdentityAuthorizationSession;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -49,6 +50,25 @@ public class IdentityAuthorizationBindingRepository {
 		return Optional.of(new IdentityAuthorizationBinding(id, new IdentityAuthorizationSession(access, first.browserSessionId(), first.authenticatedAt(),
 				first.idleExpiresAt(), first.absoluteExpiresAt()), first.scopes(), first.issuedAt(), first.codeExpiresAt()));
 	}
+
+	/** Ownership is established before taking any native lock on a caller-supplied identifier. */
+	public boolean isOwnedBy(UUID id, UUID userId) {
+		return this.jdbc.sql("SELECT EXISTS(SELECT 1 FROM iam_authorization_binding WHERE authorization_id=:id AND user_id=:user)")
+				.param("id", id.toString()).param("user", userId).query(Boolean.class).single();
+	}
+
+	public List<Listing> searchForUser(UUID userId, int limit, IdentityAuthorizationPage.Cursor after) {
+		String position = after == null ? "" : " AND (b.issued_at,b.authorization_id) > (:issued,:id)";
+		var query = this.jdbc.sql("""
+				SELECT b.authorization_id,b.issued_at,c.client_name,r.display_name AS resource_name
+				FROM iam_authorization_binding b JOIN oauth2_registered_client c ON c.id=b.client_id
+				JOIN iam_resource r ON r.id=b.resource_id WHERE b.user_id=:user
+				""" + position + " ORDER BY b.issued_at,b.authorization_id LIMIT :limit").param("user", userId).param("limit", limit);
+		if (after != null) { query.param("issued", timestamp(after.issuedAt())).param("id", after.id().toString()); }
+		return query.query((row, index) -> new Listing(UUID.fromString(row.getString("authorization_id")), time(row, "issued_at"), row.getString("client_name"), row.getString("resource_name"))).list();
+	}
+
+	public record Listing(UUID id, Instant issuedAt, String clientName, String resourceName) { }
 
 	/** Parent locks held by the mutation serialize issuance; selectors deliberately have no pagination limit. */
 	public List<UUID> findIdsForUser(UUID userId) { return selectIds("b.user_id=:user", Map.of("user", userId)); }

@@ -249,8 +249,8 @@ class SecurityAuditsIntegrationTests {
 	}
 
 	@ParameterizedTest
-	@CsvSource({ "31,user_info_rejected,protocol:userinfo", "34,introspection_rejected,protocol:introspection" })
-	void protocolRejectionAuditUpgradePreservesExistingDecisionsAndOnlyAllowsTheNewFailureOutcome(String version, String action, String source) throws Exception {
+	@CsvSource({ "31,user_info_rejected,protocol:userinfo,false", "34,introspection_rejected,protocol:introspection,false", "35,authorization_access_denied,browser:account-authorizations,true" })
+	void rejectionAuditUpgradePreservesExistingDecisionsAndOnlyAllowsTheNewFailureOutcome(String version, String action, String source, boolean requiresUser) throws Exception {
 		String schema = "protocol_audit_upgrade_" + UUID.randomUUID().toString().replace("-", "");
 		this.jdbc.sql("CREATE SCHEMA " + schema).update();
 		try {
@@ -267,11 +267,16 @@ class SecurityAuditsIntegrationTests {
 						.schemas(schema).defaultSchema(schema).load().migrate();
 				assertThat(previous.sql("SELECT row_to_json(r)::text FROM iam_security_audit r").query(String.class).single()).isEqualTo(legacy);
 				for (boolean identified : new boolean[] { false, true }) {
+					if (!identified && requiresUser) {
+						assertThatThrownBy(() -> previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,action,outcome) VALUES (:id,'anonymous',:source,:correlation,:action,'failure')")
+								.param("id", UUID.randomUUID()).param("source", source).param("action", action).param("correlation", UUID.randomUUID()).update()).isInstanceOf(DataIntegrityViolationException.class);
+						continue;
+					}
 					UUID subject = identified ? UUID.randomUUID() : null;
 					previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,target_user_id,action,outcome) VALUES (:id,:actor,:source,:correlation,:subject,:action,'failure')")
 							.param("id", UUID.randomUUID()).param("actor", identified ? "user:" + subject : "anonymous").param("source", source).param("action", action).param("correlation", UUID.randomUUID()).param("subject", subject).update();
 				}
-				assertThat(previous.sql("SELECT count(*) FROM iam_security_audit").query(Long.class).single()).isEqualTo(3);
+				assertThat(previous.sql("SELECT count(*) FROM iam_security_audit").query(Long.class).single()).isEqualTo(requiresUser ? 2 : 3);
 				assertThatThrownBy(() -> previous.sql("UPDATE iam_security_audit SET outcome='success' WHERE action=:action").param("action", action).update()).isInstanceOf(DataIntegrityViolationException.class);
 			}
 		}

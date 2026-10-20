@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 /** Shared TLS transport only; each feature test supplies its own accounts and assertions. */
 public abstract class BrowserHttpTestSupport {
 
-	protected static final Path KEY_STORE = createKeyStore();
+	public static final Path KEY_STORE = createKeyStore();
 
 	@LocalServerPort
 	protected int port;
@@ -39,7 +39,7 @@ public abstract class BrowserHttpTestSupport {
 		properties.add("iam.password-authentication.cleanup-ms", () -> 3_600_000);
 	}
 
-	protected static void assertSecurityHeaders(HttpResponse<?> response) {
+	public static void assertSecurityHeaders(HttpResponse<?> response) {
 		assertThat(response.headers().firstValue("Strict-Transport-Security").orElseThrow()).contains("max-age=");
 		assertThat(response.headers().firstValue("Content-Security-Policy").orElseThrow()).contains("frame-ancestors 'none'", "form-action 'self'");
 		assertThat(response.headers().firstValue("X-Frame-Options")).contains("DENY");
@@ -89,9 +89,9 @@ public abstract class BrowserHttpTestSupport {
 		return client.send(builder.POST(HttpRequest.BodyPublishers.ofString(request.body())).build(), HttpResponse.BodyHandlers.ofString());
 	}
 
-	protected static String encode(String value) { return URLEncoder.encode(value, StandardCharsets.UTF_8); }
+	public static String encode(String value) { return URLEncoder.encode(value, StandardCharsets.UTF_8); }
 
-	protected static HttpClient client() throws Exception {
+	public static HttpClient client() throws Exception {
 		KeyStore store = KeyStore.getInstance("PKCS12");
 		try (InputStream input = Files.newInputStream(KEY_STORE)) { store.load(input, "test-store-password".toCharArray()); }
 		var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
