@@ -126,7 +126,7 @@ public class IdentityClientController {
 				context -> this.management.create(context, configuration(command.configuration()), command.code(), save(response)));
 	}
 
-	@Operation(operationId = "updateClientConfiguration", summary = "替换客户端配置", description = "JSON 完整提供 configuration、最近版本 version 与本次新 TOTP code。相同配置仍消费 TOTP，保持版本和变更审计不变；目标缺失、版本或配置冲突回滚本次 TOTP 消费。")
+	@Operation(operationId = "updateClientConfiguration", summary = "替换客户端配置", description = "JSON 完整提供 configuration、最近版本 version 与本次新 TOTP code。实际变更同时撤销该客户端全部应用授权。相同配置仍消费 TOTP，保持版本和变更审计不变；目标缺失、版本或配置冲突回滚本次 TOTP 消费。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true, schema = @Schema(type = "string"))
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientUpdateRequest.class)))
 	@ApiResponse(responseCode = "200", description = "当前客户端公开配置及版本", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientResponse.class)))
@@ -140,7 +140,7 @@ public class IdentityClientController {
 				context -> this.management.updateConfiguration(context, id, command.version(), configuration(command.configuration()), command.code(), save(response)));
 	}
 
-	@Operation(operationId = "disableClient", summary = "禁用客户端", description = "JSON 提供最近版本 version 与本次新 TOTP code；重复禁用仍消费 TOTP，保持版本和变更审计不变。")
+	@Operation(operationId = "disableClient", summary = "禁用客户端", description = "JSON 提供最近版本 version 与本次新 TOTP code；实际禁用同时撤销该客户端全部应用授权；重复禁用仍消费 TOTP，保持版本和变更审计不变。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true, schema = @Schema(type = "string"))
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientChangeRequest.class)))
 	@ApiResponse(responseCode = "200", description = "当前客户端公开配置及版本", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientResponse.class)))
@@ -151,7 +151,7 @@ public class IdentityClientController {
 		return setEnabled(actorId, IdentityClientRequests.id(clientId), false, IdentityClientRequests.change(request), request, response);
 	}
 
-	@Operation(operationId = "enableClient", summary = "启用客户端", description = "JSON 提供最近版本 version 与本次新 TOTP code，所属资源必须启用。重复启用仍消费 TOTP，保持版本和变更审计不变。")
+	@Operation(operationId = "enableClient", summary = "启用客户端", description = "JSON 提供最近版本 version 与本次新 TOTP code，所属资源必须启用。实际启用撤销旧应用授权；重复启用仍消费 TOTP，保持版本和变更审计不变。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true, schema = @Schema(type = "string"))
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientChangeRequest.class)))
 	@ApiResponse(responseCode = "200", description = "当前客户端公开配置及版本", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientResponse.class)))
@@ -162,7 +162,7 @@ public class IdentityClientController {
 		return setEnabled(actorId, IdentityClientRequests.id(clientId), true, IdentityClientRequests.change(request), request, response);
 	}
 
-	@Operation(operationId = "rotateClientSecret", summary = "轮换并交付客户端秘密", description = "JSON 提供最近版本 version 与本次新 TOTP code。立即替换旧秘密，仅本次响应交付新秘密；不改变客户端标识，也不自动启用禁用客户端。")
+	@Operation(operationId = "rotateClientSecret", summary = "轮换并交付客户端秘密", description = "JSON 提供最近版本 version 与本次新 TOTP code。立即替换旧秘密并撤销该客户端全部应用授权，仅本次响应交付新秘密；不改变客户端标识，也不自动启用禁用客户端。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, required = true, schema = @Schema(type = "string"))
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientChangeRequest.class)))
 	@ApiResponse(responseCode = "200", description = "当前客户端与仅本次交付的新秘密", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityClientSecretResponse.class)))

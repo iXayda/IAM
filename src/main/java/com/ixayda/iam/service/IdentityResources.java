@@ -22,10 +22,12 @@ import org.springframework.util.Assert;
 public class IdentityResources {
 
 	private final IdentityResourceRepository repository;
+	private final IdentityAuthorizationRevocations revocations;
 	private final SecurityAudits audits;
 
-	IdentityResources(IdentityResourceRepository repository, SecurityAudits audits) {
+	IdentityResources(IdentityResourceRepository repository, IdentityAuthorizationRevocations revocations, SecurityAudits audits) {
 		this.repository = repository;
+		this.revocations = revocations;
 		this.audits = audits;
 	}
 
@@ -63,6 +65,7 @@ public class IdentityResources {
 		var current = lockCurrent(id, version);
 		if (current.displayName().equals(normalized)) { return current; }
 		var changed = this.repository.update(current, normalized, current.status());
+		this.revocations.revokeForResource(id, audit);
 		record(Action.RESOURCE_UPDATED, id, audit);
 		return changed;
 	}
@@ -74,6 +77,7 @@ public class IdentityResources {
 		var next = enabled ? IdentityResource.Status.ACTIVE : IdentityResource.Status.DISABLED;
 		if (current.status() == next) { return current; }
 		var changed = this.repository.update(current, current.displayName(), next);
+		this.revocations.revokeForResource(id, audit);
 		record(enabled ? Action.RESOURCE_ENABLED : Action.RESOURCE_DISABLED, id, audit);
 		return changed;
 	}

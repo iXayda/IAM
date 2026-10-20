@@ -181,8 +181,9 @@ class IdentityRefreshTokenProviderIntegrationTests extends IdentityProtocolTestS
 	@ValueSource(strings = { "user-disabled", "credential", "client-secret", "client-disabled", "client-transferred", "resource", "resource-disabled", "role", "role-disabled", "assignment" })
 	void currentUserClientCredentialResourceAndCompleteRolesMustStillMatchTheOriginalGrant(String mutation) {
 		String code = offlineCode(); var initial = exchange(request(code, authenticatedClient(code))); var request = refreshRequest(initial.getRefreshToken().getTokenValue(), Set.of());
-		var before = stored(code); mutate(mutation);
+		mutate(mutation); var before = stored(code);
 		refreshRejection(request, "invalid_grant"); assertUnrotated(code, before.version(), initial.getRefreshToken().getTokenValue());
+		assertThat(stored(code)).isEqualTo(before);
 	}
 
 	@Test
@@ -190,7 +191,7 @@ class IdentityRefreshTokenProviderIntegrationTests extends IdentityProtocolTestS
 		String code = offlineCode(); var initial = exchange(request(code, authenticatedClient(code)));
 		var role = this.roles.create(this.resourceId, "writer", "Writer", AUDIT); this.assignments.change(this.userId, role.id(), 1, true, AUDIT);
 		refreshRejection(refreshRequest(initial.getRefreshToken().getTokenValue(), Set.of()), "invalid_grant");
-		assertUnrotated(code, 2, initial.getRefreshToken().getTokenValue());
+		assertUnrotated(code, 3, initial.getRefreshToken().getTokenValue());
 	}
 
 	@Test
@@ -207,7 +208,7 @@ class IdentityRefreshTokenProviderIntegrationTests extends IdentityProtocolTestS
 				var reader = executor.submit(() -> { serverContext("https://iam.example"); try { return refreshRejection(request, "invalid_grant"); } finally { AuthorizationServerContextHolder.resetContext(); } });
 				await().atMost(Duration.ofSeconds(10)).until(() -> this.jdbc.sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%FROM iam_user WHERE id%FOR SHARE%')").query(Boolean.class).single());
 				change.countDown(); writer.get(10, TimeUnit.SECONDS); assertThat(reader.get(10, TimeUnit.SECONDS)).isNotNull();
-				assertUnrotated(code, 2, initial.getRefreshToken().getTokenValue());
+				assertUnrotated(code, 3, initial.getRefreshToken().getTokenValue());
 			}
 			finally { change.countDown(); }
 		}

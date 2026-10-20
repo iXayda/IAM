@@ -83,9 +83,9 @@ class IdentityAccessTokensIntegrationTests extends IdentityProtocolTestSupport {
 	@ParameterizedTest
 	@ValueSource(strings = { "user-disabled", "credential", "client-secret", "client-disabled", "client-transferred", "resource", "resource-disabled", "role", "role-disabled", "assignment" })
 	void oldAccessIsRejectedAfterAnyBoundSecurityVersionOrAvailabilityChanges(String mutation) {
-		String code = code(Set.of("openid", "offline_access")); var initial = exchange(request(code, authenticatedClient(code))); mutate(mutation);
+		String code = code(Set.of("openid", "offline_access")); var initial = exchange(request(code, authenticatedClient(code))); mutate(mutation); var afterMutation = stored(code);
 		assertThat(accepted(initial.getAccessToken().getTokenValue())).isEmpty();
-		assertThat(stored(code).version()).isEqualTo(2);
+		assertThat(stored(code)).isEqualTo(afterMutation);
 	}
 
 	@Test

@@ -23,11 +23,13 @@ public class IdentityResourceRoles {
 
 	private final IdentityResources resources;
 	private final IdentityResourceRoleRepository repository;
+	private final IdentityAuthorizationRevocations revocations;
 	private final SecurityAudits audits;
 
-	IdentityResourceRoles(IdentityResources resources, IdentityResourceRoleRepository repository, SecurityAudits audits) {
+	IdentityResourceRoles(IdentityResources resources, IdentityResourceRoleRepository repository, IdentityAuthorizationRevocations revocations, SecurityAudits audits) {
 		this.resources = resources;
 		this.repository = repository;
+		this.revocations = revocations;
 		this.audits = audits;
 	}
 
@@ -74,6 +76,7 @@ public class IdentityResourceRoles {
 		var current = lockCurrent(id, expectedVersion).role();
 		if (current.displayName().equals(normalized)) { return current; }
 		var changed = this.repository.update(current, normalized, current.status());
+		this.revocations.revokeForRole(id, audit);
 		record(Action.RESOURCE_ROLE_UPDATED, id, audit);
 		return changed;
 	}
@@ -87,6 +90,7 @@ public class IdentityResourceRoles {
 		var next = enabled ? IdentityResourceRole.Status.ACTIVE : IdentityResourceRole.Status.DISABLED;
 		if (current.status() == next) { return current; }
 		var changed = this.repository.update(current, current.displayName(), next);
+		this.revocations.revokeForRole(id, audit);
 		record(enabled ? Action.RESOURCE_ROLE_ENABLED : Action.RESOURCE_ROLE_DISABLED, id, audit);
 		return changed;
 	}

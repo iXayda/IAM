@@ -121,8 +121,8 @@ public class IdentityResourceRoleController {
 				context -> this.management.create(context, parentId, command.roleCode(), command.displayName(), command.code(), save(response)), true);
 	}
 
-	@ApiResponse(responseCode = "200", description = "资源当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceRoleResponse.class)))
-	@Operation(operationId = "updateResourceRoleName", summary = "修改角色显示名", description = "需要本次操作的新 TOTP，携带最近查询到的正整数角色 version。仅接受 version、displayName、code 和 CSRF；不接受查询参数。版本过期返回 409，不修改资源或消费验证码；无变化操作保持版本但消费本次验证码。")
+	@ApiResponse(responseCode = "200", description = "角色当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceRoleResponse.class)))
+	@Operation(operationId = "updateResourceRoleName", summary = "修改角色显示名", description = "需要本次操作的新 TOTP，携带最近查询到的正整数角色 version。仅接受 version、displayName、code 和 CSRF；不接受查询参数。实际改名同时撤销受影响的应用授权。版本过期返回 409，不修改角色或消费验证码；无变化操作保持版本但消费本次验证码。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "404", description = "资源角色或所属资源不存在；仅在本次 TOTP 验证后返回", content = @Content)
 	@ApiResponse(responseCode = "409", description = "角色版本冲突或操作状态不允许", content = @Content(mediaType = "text/plain"))
@@ -137,8 +137,8 @@ public class IdentityResourceRoleController {
 				context -> this.management.updateDisplayName(context, id, version(command.version()), command.displayName(), command.code(), save(response)), false);
 	}
 
-	@ApiResponse(responseCode = "200", description = "资源当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceRoleResponse.class)))
-	@Operation(operationId = "disableResourceRole", summary = "禁用资源角色", description = "需要本次操作的新 TOTP 和最近查询到的正整数角色 version。仅接受 version、code 和 CSRF；不接受查询参数。禁用保留不可变角色身份。无变化操作保持版本，但消费验证码。")
+	@ApiResponse(responseCode = "200", description = "角色当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceRoleResponse.class)))
+	@Operation(operationId = "disableResourceRole", summary = "禁用资源角色", description = "需要本次操作的新 TOTP 和最近查询到的正整数角色 version。仅接受 version、code 和 CSRF；不接受查询参数。禁用保留不可变角色身份。实际变更同时撤销受影响的应用授权；无变化操作保持版本，但消费验证码。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "404", description = "资源角色或所属资源不存在；仅在本次 TOTP 验证后返回", content = @Content)
 	@ApiResponse(responseCode = "409", description = "角色版本冲突或操作状态不允许", content = @Content(mediaType = "text/plain"))
@@ -151,8 +151,8 @@ public class IdentityResourceRoleController {
 		return setEnabled(actorId, roleId, command, false, request, response);
 	}
 
-	@ApiResponse(responseCode = "200", description = "资源当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceRoleResponse.class)))
-	@Operation(operationId = "enableResourceRole", summary = "启用资源角色", description = "所属资源须启用。需要本次操作的新 TOTP 和最近查询到的正整数角色 version。仅接受 version、code 和 CSRF；不接受查询参数。启用不重新创建身份，也不恢复已撤销授权。无变化操作保持版本，但消费验证码。")
+	@ApiResponse(responseCode = "200", description = "角色当前状态", content = @Content(mediaType = "application/json", schema = @Schema(implementation = IdentityResourceRoleResponse.class)))
+	@Operation(operationId = "enableResourceRole", summary = "启用资源角色", description = "所属资源须启用。需要本次操作的新 TOTP 和最近查询到的正整数角色 version。仅接受 version、code 和 CSRF；不接受查询参数。启用不重新创建身份，也不恢复已撤销授权。实际变更同时撤销受影响的应用授权；无变化操作保持版本，但消费验证码。")
 	@Parameter(name = "X-CSRF-TOKEN", in = ParameterIn.HEADER, schema = @Schema(type = "string"))
 	@ApiResponse(responseCode = "404", description = "资源角色或所属资源不存在；仅在本次 TOTP 验证后返回", content = @Content)
 	@ApiResponse(responseCode = "409", description = "角色版本冲突或操作状态不允许", content = @Content(mediaType = "text/plain"))
