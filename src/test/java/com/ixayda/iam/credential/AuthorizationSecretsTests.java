@@ -79,6 +79,22 @@ class AuthorizationSecretsTests {
 		assertThatThrownBy(() -> secrets.refreshHistorySeal("\ud800")).isInstanceOf(IllegalArgumentException.class);
 	}
 
+	@Test
+	void interactionOwnersHandlesAndAuthenticatedBoundsHaveIndependentPurposes() throws Exception {
+		Path path = key(64); var secrets = new AuthorizationSecrets(path.toString()); var reloaded = new AuthorizationSecrets(path.toString());
+		String first = secrets.generateInteractionSecret(), second = secrets.generateInteractionSecret();
+		assertThat(first).matches("[A-Za-z0-9_-]{43}").isNotEqualTo(second);
+		assertThat(secrets.interactionDigest(first)).isEqualTo(reloaded.interactionDigest(first))
+				.isNotEqualTo(secrets.interactionOwnerDigest(first)).isNotEqualTo(secrets.interactionBinding(first))
+				.isNotEqualTo(secrets.digest(first)).isNotEqualTo(secrets.refreshDigest(first));
+		assertThat(secrets.interactionOwnerDigest(first)).isEqualTo(reloaded.interactionOwnerDigest(first));
+		assertThat(secrets.interactionBinding(first)).isEqualTo(reloaded.interactionBinding(first));
+		assertThatThrownBy(() -> secrets.interactionDigest(first + "x")).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> secrets.interactionOwnerDigest("x".repeat(44))).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> secrets.interactionBinding("x".repeat(1025))).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new AuthorizationSecrets("").generateInteractionSecret()).isInstanceOf(IllegalStateException.class);
+	}
+
 	@ParameterizedTest
 	@ValueSource(ints = { 0, 32, 63, 65, 1024 })
 	void filesMustContainBothCompleteIndependentKeys(int bytes) throws Exception {

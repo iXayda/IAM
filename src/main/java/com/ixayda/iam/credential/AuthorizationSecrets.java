@@ -99,6 +99,18 @@ public final class AuthorizationSecrets {
 		return seal != null && seal.matches("[0-9a-f]{64}") && MessageDigest.isEqual(HexFormat.of().parseHex(seal), HexFormat.of().parseHex(refreshHistorySeal(canonical)));
 	}
 
+	/** Opaque browser owners and one-time interaction handles are separate from OAuth credentials. */
+	public String generateInteractionSecret() {
+		requireConfigured();
+		byte[] bytes = new byte[32]; this.random.nextBytes(bytes);
+		try { return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes); }
+		finally { Arrays.fill(bytes, (byte) 0); }
+	}
+
+	public String interactionDigest(String value) { return lookup("iam:interaction-handle:v1:", value, 43); }
+	public String interactionOwnerDigest(String value) { return lookup("iam:interaction-owner:v1:", value, 43); }
+	public String interactionBinding(String canonical) { return lookup("iam:interaction-binding:v1:", canonical, 1024); }
+
 	private String lookup(String domain, String value, int maximum) {
 		requireConfigured();
 		if (value == null || value.isEmpty() || value.length() > maximum) { throw new IllegalArgumentException("Protocol token is invalid"); }
