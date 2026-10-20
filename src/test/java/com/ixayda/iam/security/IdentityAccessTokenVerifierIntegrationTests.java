@@ -204,7 +204,7 @@ class IdentityAccessTokenVerifierIntegrationTests extends IdentityProtocolTestSu
 	@ParameterizedTest
 	@ValueSource(strings = { "", "http://iam.example", "https://iam.example?query=1", "https://iam.example#fragment", "https://user:secret@iam.example", "https://iam.example:", "https://iam.example:0", "https://iam.example:65536" })
 	void issuerMustBeAnExplicitValidHttpsConfiguration(String issuer) {
-		assertThatIllegalArgumentException().isThrownBy(() -> new IdentityAccessTokenVerifier(this.online, issuer)).withMessage("An explicit HTTPS issuer is required");
+		assertThatIllegalArgumentException().isThrownBy(() -> new IdentityAccessTokenVerifier(this.online, issuer)).withMessage("An explicit HTTPS issuer at the root path is required");
 		assertThatIllegalArgumentException().isThrownBy(() -> new IdentityAccessTokenVerifier(this.online, null));
 	}
 

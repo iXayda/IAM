@@ -371,7 +371,7 @@ class IdentityAuthorizationHttpIntegrationTests extends IdentityProtocolTestSupp
 						.isEqualTo("#/components/schemas/IdentityProtocolError");
 			}
 		}
-		assertThat(spec.has("/.well-known/openid-configuration")).isFalse();
+		assertThat(spec.path("/.well-known/openid-configuration").path("get").path("operationId").asText()).isEqualTo("getOpenIdConfiguration");
 	}
 
 	private Started start(Map<String, String> extras, String browser) throws Exception {

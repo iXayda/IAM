@@ -38,7 +38,7 @@ Before starting the application, configure a dedicated PostgreSQL database and H
 | `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | Required with `NATIVE`; a regular expression matching actual proxy source IPs |
 | `IAM_TOTP_KEY_FILE` | Required when TOTP is enabled; path to an external protection key file containing 32 raw binary bytes |
 | `IAM_SIGNING_KEY_FILE` | Protection key file for the signing private key, containing 32 raw binary bytes; use a different key from the TOTP protection key |
-| `IAM_PROTOCOL_ISSUER` | Required when protocol endpoints are enabled; an explicit HTTPS issuer, never inferred from the request Host or proxy headers |
+| `IAM_PROTOCOL_ISSUER` | Required when protocol endpoints are enabled; an explicit HTTPS root URL (port and trailing `/` allowed), never inferred from the request Host or proxy headers |
 | `IAM_PROTOCOL_IDENTITY_FRONTEND_URI` | Required for browser authorization navigation; a fixed HTTPS identity frontend URL on the same origin as the issuer, without a query string or fragment |
 | `IAM_AUTHORIZATION_KEY_FILE` | Required when protocol endpoints are enabled; path to a separate authorization state protection file containing 64 raw binary bytes, kept separately from the signing and TOTP protection keys |
 

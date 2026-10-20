@@ -52,14 +52,16 @@ class IdentityProtocolStartupIntegrationTests {
 	void dropIsolatedSchema() { this.jdbc.sql("DROP SCHEMA " + this.schema + " CASCADE").update(); }
 
 	@ParameterizedTest
-	@ValueSource(strings = { "", "http://iam.example", "https://operator:secret@iam.example", "https://iam.example?query=private", "https://iam.example#private", "https://iam.example:0", "https://iam.example:65536", "https://iam.example:" })
+	@ValueSource(strings = { "", "http://iam.example", "https://operator:secret@iam.example", "https://iam.example?query=private", "https://iam.example#private", "https://iam.example:0", "https://iam.example:65536", "https://iam.example:",
+			"https://iam.example/tenant", "https://iam.example/tenant/" })
 	void invalidIssuerStopsWebStartupEvenWithLazyInitialization(String issuer) {
 		var started = new AtomicInteger();
 		assertThatThrownBy(() -> {
 			try (var ignored = start(WebApplicationType.SERVLET, issuer, this.signing.toString(), this.authorization.toString(), true, started)) {
 				fail("An invalid issuer must not admit requests");
 			}
-		}).isInstanceOf(RuntimeException.class);
+		}).isInstanceOf(RuntimeException.class).hasRootCauseInstanceOf(IllegalArgumentException.class)
+				.hasRootCauseMessage("An explicit HTTPS issuer at the root path is required");
 		assertThat(started).hasValue(0);
 	}
 

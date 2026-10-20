@@ -39,14 +39,23 @@ final class IdentityTokenRequests {
 
 	static String requireIssuer(String value) {
 		try {
+			var uri = requireHttpsUri(value);
+			if (!uri.getRawPath().isEmpty() && !"/".equals(uri.getRawPath())) { throw new IllegalArgumentException(); }
+			return value;
+		}
+		catch (IllegalArgumentException ex) { throw new IllegalArgumentException("An explicit HTTPS issuer at the root path is required"); }
+	}
+
+	static java.net.URI requireHttpsUri(String value) {
+		try {
 			var uri = java.net.URI.create(value);
 			if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
 					|| uri.getPort() == 0 || uri.getPort() > 65535 || uri.getPort() < -1 || uri.getRawAuthority().endsWith(":")) {
-				throw new IllegalArgumentException("An explicit HTTPS issuer is required");
+				throw new IllegalArgumentException();
 			}
-			return value;
+			return uri;
 		}
-		catch (IllegalArgumentException | NullPointerException ex) { throw new IllegalArgumentException("An explicit HTTPS issuer is required"); }
+		catch (IllegalArgumentException | NullPointerException ex) { throw new IllegalArgumentException("An explicit HTTPS URI is required"); }
 	}
 
 	static OAuth2AuthenticationException failure(String code) {

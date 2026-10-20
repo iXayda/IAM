@@ -504,6 +504,20 @@ class IdentityAuthorizationRequestProviderIntegrationTests {
 		rejection(request, invalid.equals("host") ? "invalid_request" : "server_error"); assertNoGrants();
 	}
 
+	@ParameterizedTest
+	@ValueSource(strings = { "https://iam.example/tenant", "https://iam.example/tenant/", "https://iam.example:0" })
+	void unsupportedIssuerConfigurationCannotIssueAuthorizationCodes(String issuer) {
+		var settings = AuthorizationServerSettings.builder().issuer(issuer).build();
+		AuthorizationServerContextHolder.setContext(new AuthorizationServerContext() {
+			@Override public String getIssuer() { return issuer; }
+			@Override public AuthorizationServerSettings getAuthorizationServerSettings() { return settings; }
+		});
+		var request = new OAuth2AuthorizationCodeRequestAuthenticationToken(issuer.replaceFirst("/$", "") + "/oauth2/authorize",
+				this.clientId.toString(), browser(), REDIRECT, STATE, Set.of("openid"), parameters());
+		request.setDetails(evidence());
+		rejection(request, "server_error"); assertNoGrants();
+	}
+
 	private OAuth2AuthorizationCodeRequestAuthenticationToken request() {
 		return request(this.clientId.toString(), REDIRECT, STATE, Set.of("openid", "profile", "offline_access"), parameters(), browser(), evidence());
 	}

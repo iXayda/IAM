@@ -50,11 +50,47 @@ class IdentityProtocolOpenApiConfiguration {
 			openApi.path(IdentityProtocolResponses.USER_INFO_ENDPOINT, new PathItem().get(userInfo("getUserInfo")).post(userInfo("postUserInfo")));
 			if (authorization.getIfAvailable() != null) {
 				openApi.path(IdentityProtocolResponses.AUTHORIZATION_ENDPOINT, new PathItem().get(authorize()));
+				openApi.path(IdentityProtocolResponses.OIDC_DISCOVERY_ENDPOINT, new PathItem().get(discovery(true)));
+				openApi.path(IdentityProtocolResponses.OAUTH_DISCOVERY_ENDPOINT, new PathItem().get(discovery(false)));
 				openApi.getPaths().forEach((path, item) -> {
 					if (path.startsWith(IdentityProtocolResponses.INTERACTION_ENDPOINT + "/")) { item.readOperations().forEach(operation -> operation.setSecurity(List.of())); }
 				});
 			}
 		};
+	}
+
+	private static Operation discovery(boolean oidc) {
+		var configuration = new ObjectSchema().addProperty("issuer", new StringSchema().format("uri"))
+				.addProperty("authorization_endpoint", new StringSchema().format("uri"))
+				.addProperty("token_endpoint", new StringSchema().format("uri"))
+				.addProperty("jwks_uri", new StringSchema().format("uri"));
+		for (var item : Map.of("token_endpoint_auth_methods_supported", List.of("client_secret_basic"), "response_types_supported", List.of("code"),
+				"response_modes_supported", List.of("query"), "grant_types_supported", List.of("authorization_code", "refresh_token"),
+				"code_challenge_methods_supported", List.of("S256"), "scopes_supported", List.of("openid", "profile", "offline_access")).entrySet()) {
+			configuration.addProperty(item.getKey(), new ArraySchema().items(new StringSchema()._enum(item.getValue())));
+		}
+		if (oidc) {
+			configuration.addProperty("userinfo_endpoint", new StringSchema().format("uri"));
+			configuration.addProperty("subject_types_supported", new ArraySchema().items(new StringSchema()._enum(List.of("public"))));
+			configuration.addProperty("id_token_signing_alg_values_supported", new ArraySchema().items(new StringSchema()._enum(List.of("RS256"))));
+			configuration.addProperty("claims_supported", new ArraySchema().items(new StringSchema()));
+			for (String name : List.of("claims_parameter_supported", "request_parameter_supported", "request_uri_parameter_supported")) {
+				configuration.addProperty(name, new io.swagger.v3.oas.models.media.BooleanSchema()._enum(List.of(false)));
+			}
+		}
+		return new Operation().operationId(oidc ? "getOpenIdConfiguration" : "getAuthorizationServerMetadata")
+				.summary(oidc ? "查询 OpenID Provider 配置" : "查询 OAuth 授权服务器元数据").tags(List.of("protocol")).security(List.of())
+				.description("公开 HTTPS GET，无需 Cookie 或客户端认证；不接受查询串或正文，不读取或更新浏览器会话。"
+						+ "issuer 与端点固定取自配置；只声明已启用的授权码、刷新、PKCE S256、client_secret_basic 及 RS256 能力。"
+						+ "不声明未开放的注册、设备授权、PAR、Token Exchange、Introspection、协议退出、DPoP 或 mTLS。"
+						+ "客户端必须核对返回 issuer 与预配置信任值逐字一致；元数据可访问不代表当前签发或验证依赖健康。")
+				.responses(new ApiResponses().addApiResponse("200", new ApiResponse().description("固定 issuer 的实际协议能力")
+						.content(new Content().addMediaType("application/json", new MediaType().schema(configuration))))
+						.addApiResponse("400", error("invalid_request：不接受查询串或请求体"))
+						.addApiResponse("405", error("只接受 GET").addHeaderObject("Allow", new Header().schema(new StringSchema()._enum(List.of("GET")))))
+						.addApiResponse("413", error("invalid_request：超过共享请求体上限"))
+						.addApiResponse("429", error("temporarily_unavailable：共享入口限流"))
+						.addApiResponse("503", error("server_error：元数据响应不可用")));
 	}
 
 	private static Operation authorize() {
