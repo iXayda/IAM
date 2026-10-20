@@ -26,7 +26,7 @@ class IdentitySigningKeyRotationIntegrationTests extends IdentityProtocolTestSup
 
 	@AfterEach
 	void resetSigningState() {
-		this.jdbc.sql("TRUNCATE iam_signing_key,iam_signing_key_state").update();
+		this.jdbc.sql("TRUNCATE iam_restore_release,iam_signing_key,iam_signing_key_state").update();
 		this.jdbc.sql("INSERT INTO iam_signing_key_state(singleton) VALUES(1)").update();
 	}
 

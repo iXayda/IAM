@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import com.ixayda.iam.IamApplication;
 import com.ixayda.iam.IdentityRestoreTestSupport;
+import com.ixayda.iam.TotpTestSupport;
 import com.ixayda.iam.credential.ClientSecrets;
 import com.ixayda.iam.model.IdentityResourceCredential;
 import com.ixayda.iam.model.IdentityRestore;
@@ -71,7 +72,7 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 			this.jdbc.sql("DROP TRIGGER IF EXISTS restore_test_fault ON " + table).update();
 		}
 		this.jdbc.sql("DROP FUNCTION IF EXISTS restore_test_fault()").update();
-		this.jdbc.sql("TRUNCATE iam_restore_administrator,iam_restore_state,iam_restore,iam_signing_key_state,iam_signing_key").update();
+		this.jdbc.sql("TRUNCATE iam_restore_release,iam_restore_administrator,iam_restore_state,iam_restore,iam_signing_key_state,iam_signing_key").update();
 		this.jdbc.sql("INSERT INTO iam_restore_state(singleton) VALUES(1)").update();
 		this.jdbc.sql("INSERT INTO iam_signing_key_state(singleton) VALUES(1)").update();
 	}
@@ -144,7 +145,7 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 
 	@Test
 	void aSnapshotTakenBeforeInitialAdministratorAndSigningSetupStillPermanentlyClosesBootstrap() {
-		this.jdbc.sql("TRUNCATE iam_signing_key,iam_signing_key_state").update();
+		this.jdbc.sql("TRUNCATE iam_restore_release,iam_signing_key,iam_signing_key_state").update();
 		this.jdbc.sql("INSERT INTO iam_signing_key_state(singleton) VALUES(1)").update();
 		assertThat(this.administrators.candidateId()).isEmpty();
 		quarantine(this.postgres.getDatabaseName(), CHECKSUM, restoreAudit());
@@ -197,7 +198,7 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 	}
 
 	@Test
-	void rejectsAnUnconfirmedDatabaseDifferentArchiveAmbientTransactionAndOtherConnectedClients() throws Exception {
+	void rejectsUnsafeOfflineInvocationsAndRecordsEachNewArchiveIndependently() throws Exception {
 		assertThatIllegalStateException().isThrownBy(() -> quarantine("wrong-database", CHECKSUM, restoreAudit()));
 		new TransactionTemplate(this.transactions).executeWithoutResult(tx -> assertThatIllegalStateException()
 				.isThrownBy(() -> this.restores.quarantine(this.postgres.getDatabaseName(), CHECKSUM, restoreAudit()))
@@ -212,7 +213,9 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 				.param("pid", otherPid).query(Boolean.class).single());
 		assertThat(count("iam_restore")).isZero();
 		quarantine(this.postgres.getDatabaseName(), CHECKSUM, restoreAudit());
-		assertThatIllegalStateException().isThrownBy(() -> quarantine(this.postgres.getDatabaseName(), "b".repeat(64), restoreAudit()));
+		var next = quarantine(this.postgres.getDatabaseName(), "b".repeat(64), restoreAudit());
+		assertThat(next.archiveSha256()).isEqualTo("b".repeat(64));
+		assertThat(count("iam_restore")).isEqualTo(2);
 	}
 
 	@Test
@@ -278,6 +281,43 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 				} }).isInstanceOf(RuntimeException.class).hasStackTraceContaining("Restored database remains quarantined");
 				assertThat(servers).hasValue(0);
 			}
+			String restoredPassword = "meadow violet lighthouse harbor 493";
+			IdentityTotpEnrollment restoredEnrollment;
+			UUID restoredSigningKey;
+			try (var maintenance = recoveryContext(url, owner, "isolated-owner-password")) {
+				var recovery = maintenance.getBean(IdentityRestoreAdministrators.class);
+				var recoveryAudit = new SecurityAuditContext("deployment:operator-1", "deployment:restore-admin:CHANGE-124", UUID.randomUUID());
+				restoredEnrollment = TotpTestSupport.distinctEnrollment(() ->
+						recovery.prepare(name, restored.id(), this.userId, restoredPassword, recoveryAudit));
+				assertThat(recovery.complete(name, restored.id(), this.userId, restoredEnrollment.factorId(), restoredPassword, otp(restoredEnrollment, -1), recoveryAudit)).isPresent();
+				restoredSigningKey = maintenance.getBean(IdentitySigningKeys.class).recover(this.signing.id(), restoreAudit()).id();
+				assertThat(maintenance.getBean(IdentityRestoreReleases.class).release(name, restored.id(), this.userId, restoredSigningKey, restoredPassword, otp(restoredEnrollment),
+						new SecurityAuditContext("deployment:operator-2", "deployment:restore-release:CHANGE-125", UUID.randomUUID()))).isPresent();
+			}
+			var servers = new AtomicInteger();
+			try (var runtime = restoredContext(url, role, "isolated-runtime-password", true, true, servers)) {
+				assertThat(servers).hasValue(1); runtime.getBean(IdentityReadiness.class).requireReady();
+				assertThat(runtime.getBean(IdentitySigningKeys.class).findPublicKey().orElseThrow().id()).isEqualTo(restoredSigningKey);
+				new RestoredBrowser(((org.springframework.boot.web.server.context.WebServerApplicationContext) runtime).getWebServer().getPort())
+						.verifyAdministratorLogin(restoredPassword, restoredEnrollment);
+			}
+			// A later archive contains immutable old approval records. It still requires a new quarantine after actual restore.
+			String laterArchive = archive + ".released";
+			try {
+				checked(this.postgres.execInContainer("pg_dump", "-U", owner, "--format=custom", "--file=" + laterArchive, name));
+				String laterChecksum = this.postgres.execInContainer("sha256sum", laterArchive).getStdout().split(" ")[0];
+				restoredJdbc.sql("DROP SCHEMA public CASCADE").update(); restoredJdbc.sql("CREATE SCHEMA public").update();
+				checked(this.postgres.execInContainer("pg_restore", "-U", owner, "--single-transaction", "--no-owner", "--no-privileges", "--dbname=" + name, laterArchive));
+				assertThat(restoredJdbc.sql("SELECT count(*) FROM iam_restore_release").query(Long.class).single()).isEqualTo(1);
+				try (var maintenance = restoredContext(url, owner, "isolated-owner-password", false, false, null)) {
+					var next = maintenance.getBean(IdentityRestores.class).quarantine(name, laterChecksum, restoreAudit());
+					assertThat(next.id()).isNotEqualTo(restored.id()); assertThatIllegalStateException().isThrownBy(maintenance.getBean(IdentityRestores.class)::requireAvailable);
+				}
+				assertThat(restoredJdbc.sql("SELECT count(*) FROM iam_restore_release").query(Long.class).single()).isEqualTo(1);
+				assertThat(restoredJdbc.sql("SELECT count(*) FROM iam_administrator").query(Long.class).single()).isZero();
+				assertThat(restoredJdbc.sql("SELECT count(*) FROM iam_user_totp").query(Long.class).single()).isZero();
+			}
+			finally { checked(this.postgres.execInContainer("rm", "-f", laterArchive)); }
 			System.out.printf("Isolated pg_dump/pg_restore and quarantine: %.3f seconds; audit gap unresolved%n", (System.nanoTime() - started) / 1_000_000_000d);
 		}
 		finally {
@@ -310,6 +350,7 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 		properties.put("iam.database.restricted-runtime", restricted);
 		if (web) {
 			properties.put("iam.signing.key-file", SIGNING_KEY.toString()); properties.put("iam.authorization.key-file", AUTHORIZATION_KEY.toString());
+			properties.put("iam.totp.key-file", TOTP_KEY.toString());
 			properties.put("server.port", 0); properties.put("server.ssl.enabled", true);
 			properties.put("server.ssl.key-store", BrowserHttpTestSupport.KEY_STORE.toUri().toString()); properties.put("server.ssl.key-store-password", "test-store-password");
 			properties.put("iam.protocol.issuer", "https://iam.example"); properties.put("iam.protocol.identity-frontend-uri", "https://iam.example/identity");
@@ -317,6 +358,32 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 		var builder = new SpringApplicationBuilder(IamApplication.class).web(web ? WebApplicationType.SERVLET : WebApplicationType.NONE).properties(properties);
 		if (servers != null) { builder.listeners((ApplicationListener<WebServerInitializedEvent>) event -> servers.incrementAndGet()); }
 		return builder.run();
+	}
+
+	private ConfigurableApplicationContext recoveryContext(String url, String owner, String password) {
+		return new SpringApplicationBuilder(IamApplication.class).web(WebApplicationType.NONE).properties(java.util.Map.of(
+				"spring.datasource.url", url, "spring.datasource.username", owner, "spring.datasource.password", password,
+				"spring.datasource.hikari.maximum-pool-size", 1, "spring.datasource.hikari.minimum-idle", 0,
+				"spring.flyway.enabled", false, "spring.main.banner-mode", "off", "iam.signing.key-file", SIGNING_KEY.toString(),
+				"iam.authorization.key-file", AUTHORIZATION_KEY.toString(), "iam.totp.key-file", TOTP_KEY.toString())).run();
+	}
+
+	private static final class RestoredBrowser extends BrowserHttpTestSupport {
+		RestoredBrowser(int port) { this.port = port; }
+		void verifyAdministratorLogin(String password, IdentityTotpEnrollment enrollment) throws Exception {
+			try (var http = client()) {
+				assertThat(get(http, "/readyz", null).statusCode()).isEqualTo(200);
+				var anonymous = get(http, "/api/csrf", null);
+				var login = post(http, "/login", cookie(anonymous), credentials("alice", password, csrf(anonymous)));
+				assertThat(login.statusCode()).isEqualTo(204); String authenticated = cookie(login);
+				assertThat(get(http, "/api/me", authenticated).statusCode()).isEqualTo(200);
+				assertThat(get(http, "/api/admin/users", authenticated).statusCode()).isEqualTo(403);
+				var csrf = get(http, "/api/csrf", authenticated);
+				var mfa = post(http, "/admin/mfa", authenticated, "code=" + otp(enrollment, 1) + "&_csrf=" + encode(csrf(csrf)));
+				assertThat(mfa.statusCode()).isEqualTo(204);
+				assertThat(get(http, "/api/admin/users", cookie(mfa)).statusCode()).isEqualTo(200);
+			}
+		}
 	}
 
 	private IdentityRestore quarantine(String database, String checksum, SecurityAuditContext audit) {
@@ -336,7 +403,10 @@ class IdentityRestoresIntegrationTests extends IdentityRestoreTestSupport {
 		catch (java.io.IOException ex) { throw new ExceptionInInitializerError(ex); }
 	}
 	private static String otp(IdentityTotpEnrollment enrollment) {
-		long step = Math.floorDiv(Instant.now().getEpochSecond(), 30); byte[] counter = java.nio.ByteBuffer.allocate(8).putLong(step).array();
+		return otp(enrollment, 0);
+	}
+	private static String otp(IdentityTotpEnrollment enrollment, int stepOffset) {
+		long step = Math.floorDiv(Instant.now().getEpochSecond(), 30) + stepOffset; byte[] counter = java.nio.ByteBuffer.allocate(8).putLong(step).array();
 		HMac mac = new HMac(new SHA1Digest()); mac.init(new KeyParameter(Base32.decode(enrollment.secret()))); mac.update(counter, 0, counter.length);
 		byte[] hash = new byte[mac.getMacSize()]; mac.doFinal(hash, 0); int offset = hash[hash.length - 1] & 15;
 		return String.format(java.util.Locale.ROOT, "%06d", (java.nio.ByteBuffer.wrap(hash).getInt(offset) & 0x7fff_ffff) % 1_000_000);

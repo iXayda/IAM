@@ -46,7 +46,7 @@ class IdentitySigningKeyIncidentIntegrationTests extends IdentityProtocolTestSup
 	@AfterEach
 	void cleanSigningStateAndFaults() {
 		for (String table : List.of("iam_signing_key", "iam_signing_key_state")) { this.jdbc.sql("DROP TRIGGER IF EXISTS exchange_test_fault ON " + table).update(); }
-		this.jdbc.sql("TRUNCATE iam_signing_key,iam_signing_key_state").update();
+		this.jdbc.sql("TRUNCATE iam_restore_release,iam_signing_key,iam_signing_key_state").update();
 		this.jdbc.sql("INSERT INTO iam_signing_key_state(singleton) VALUES(1)").update();
 	}
 

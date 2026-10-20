@@ -307,7 +307,7 @@ class IdentityJwtSigningIntegrationTests {
 		assertThatThrownBy(action).isInstanceOf(JwtEncodingException.class).hasMessage("Token signing is unavailable").hasNoCause();
 	}
 	private void reset() {
-		this.jdbc.sql("TRUNCATE iam_signing_key,iam_signing_key_state,iam_security_audit").update();
+		this.jdbc.sql("TRUNCATE iam_restore_release,iam_signing_key,iam_signing_key_state,iam_security_audit").update();
 		this.jdbc.sql("INSERT INTO iam_signing_key_state(singleton) VALUES(1)").update();
 	}
 	private List<List<String>> snapshot() {
