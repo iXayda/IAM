@@ -9,10 +9,14 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
+import com.ixayda.iam.model.IdentityResource;
+import com.ixayda.iam.model.IdentityResourcePage;
 import com.ixayda.iam.model.IdentityUser;
 import com.ixayda.iam.model.IdentityUserPage;
 import com.ixayda.iam.model.SecurityAuditPage;
 import com.ixayda.iam.service.IdentityAdministratorSessions;
+import com.ixayda.iam.service.IdentityResourceManagement;
+import com.ixayda.iam.service.IdentityResources;
 import com.ixayda.iam.service.IdentityUserCreations;
 import com.ixayda.iam.service.IdentityUserProfileManagement;
 import com.ixayda.iam.service.IdentityUserStateChanges;
@@ -97,6 +101,12 @@ class IdentityQueryControllerTests {
 	private static Endpoint endpoint(Route route) {
 		var administrators = mock(IdentityAdministratorSessions.class);
 		return switch (route) {
+			case RESOURCES, RESOURCE -> {
+				var service = mock(IdentityResources.class); var management = mock(IdentityResourceManagement.class);
+				when(service.search(isNull(), eq(20), isNull())).thenReturn(new IdentityResourcePage(List.of(), null));
+				when(service.findById(ID)).thenReturn(Optional.of(new IdentityResource(ID, "urn:example:orders", "Orders", IdentityResource.Status.ACTIVE, 1, Instant.EPOCH, Instant.EPOCH)));
+				yield endpoint(new IdentityResourceController(service, management, administrators), service, management, administrators);
+			}
 			case USERS, USER -> {
 				var service = mock(IdentityUsers.class); var creations = mock(IdentityUserCreations.class);
 				var profiles = mock(IdentityUserProfileManagement.class); var states = mock(IdentityUserStateChanges.class);
@@ -119,6 +129,8 @@ class IdentityQueryControllerTests {
 	private record Endpoint(MockMvc mvc, Object[] services) { }
 
 	private enum Route {
+		RESOURCES("/api/admin/resources", "Invalid resource request"),
+		RESOURCE("/api/admin/resources/" + ID, "Invalid resource request"),
 		USERS("/api/admin/users", "Invalid user request"),
 		USER("/api/admin/users/" + ID, "Invalid user request"),
 		AUDITS("/api/admin/audits", "Invalid audit query");

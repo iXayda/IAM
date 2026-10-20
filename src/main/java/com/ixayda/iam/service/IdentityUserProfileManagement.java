@@ -1,5 +1,7 @@
 package com.ixayda.iam.service;
 
+import com.ixayda.iam.model.IdentityAdministratorContext;
+
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,9 +42,11 @@ public class IdentityUserProfileManagement {
 	}
 
 	/** Authentication evidence, operation target and attribution are supplied by the trusted HTTP adapter. */
-	public Status updateDisplayName(UUID actorId, String sessionId, long credentialVersion, long authenticatedAt,
-			IdentityAdministratorAuthentication management, UUID targetId, String displayName, String code,
-			TotpAuthenticationContext context, Runnable persistSession) {
+	public Status updateDisplayName(IdentityAdministratorContext evidence, UUID targetId, String displayName, String code, Runnable persistSession) {
+		Assert.notNull(evidence, "Administrator context is required");
+		UUID actorId = evidence.actorId(); String sessionId = evidence.sessionId();
+		long credentialVersion = evidence.credentialVersion(); long authenticatedAt = evidence.authenticatedAt();
+		var management = evidence.management(); var context = evidence.authentication();
 		Assert.notNull(actorId, "Authenticated user id is required");
 		Assert.hasText(sessionId, "Authenticated session id is required");
 		Assert.notNull(targetId, "Target user id is required");

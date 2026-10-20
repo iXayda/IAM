@@ -90,14 +90,14 @@ public class IdentityResources {
 		this.audits.recordTargetSuccess(action, new SecurityAuditTarget(SecurityAuditTarget.Type.RESOURCE, id), context);
 	}
 
-	private static String requireAudience(String audience) {
+	static String requireAudience(String audience) {
 		if (audience == null || !audience.matches("[\\x21-\\x7e]{1,256}")) {
 			throw new IllegalArgumentException("Resource audience requires 1 to 256 visible ASCII characters");
 		}
 		return audience;
 	}
 
-	private static String normalizeDisplayName(String value) {
+	static String normalizeDisplayName(String value) {
 		if (value == null || value.length() > 65_536) { throw new IllegalArgumentException("Resource display name is invalid"); }
 		for (int i = 0; i < value.length(); i++) {
 			char character = value.charAt(i);
