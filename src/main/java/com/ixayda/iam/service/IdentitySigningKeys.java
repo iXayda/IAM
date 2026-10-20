@@ -133,7 +133,7 @@ public class IdentitySigningKeys {
 	public IdentitySigningMaterial signingMaterial() {
 		requireIndependentTransaction();
 		this.secrets.requireConfigured();
-		return this.transaction.execute(status -> loadLockedMaterial(this.repository.lockLifecycle()));
+		return this.transaction.execute(status -> loadLockedMaterial(this.repository.lockForIssuance()));
 	}
 
 	/**

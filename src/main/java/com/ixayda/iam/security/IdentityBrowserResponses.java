@@ -36,6 +36,7 @@ public final class IdentityBrowserResponses {
 		INVALID_CREDENTIALS(401, "账号或密码错误"),
 		FORBIDDEN(403, "无权执行此操作"),
 		CSRF_INVALID(403, "安全凭据缺失或已失效，请重试"),
+		METHOD_NOT_ALLOWED(405, "不支持的请求方法"),
 		PAYLOAD_TOO_LARGE(413, "请求体超过允许的大小"),
 		UNSUPPORTED_MEDIA_TYPE(415, "请求内容类型不受支持"),
 		TOO_MANY_REQUESTS(429, "请求过于频繁，请稍后重试"),

@@ -62,6 +62,9 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 	}
 
 	@Override
+	protected boolean shouldNotFilter(HttpServletRequest request) { return IdentityHealthRequestFilter.PATHS.contains(request.getServletPath()); }
+
+	@Override
 	protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
 			throws ServletException, IOException {
 		boolean admitted = false;

@@ -447,6 +447,9 @@ class IdentitySigningKeysIntegrationTests {
 			}));
 			try {
 				assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+				// Readiness must complete while issuance or validation still holds the shared row lock.
+				var probe = executor.submit(this.keys::signingMaterial);
+				assertThat(probe.get(5, TimeUnit.SECONDS).key()).isEqualTo(original);
 				var rotation = executor.submit(() -> this.keys.rotate(original.id(), rotationAudit()));
 				await().atMost(Duration.ofSeconds(5)).until(() -> this.jdbc.sql("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT initial_key_id%FROM iam_signing_key_state%FOR UPDATE'").query(Long.class).single() > 0);
 				assertThat(rotation.isDone()).isFalse(); assertThat(this.keys.findPublicKey()).contains(original);
