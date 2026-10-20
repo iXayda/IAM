@@ -22,6 +22,44 @@ import static org.mockito.Mockito.*;
 
 class IdentityBrowserBoundaryFilterTests {
 
+	@ParameterizedTest
+	@ValueSource(strings = { "tls", "size", "rate", "rate-audit", "dependency" })
+	void introspectionAdmissionFailuresAreAuditedWithoutRunningItsAuthentication(String failure) throws Exception {
+		var sessions = mock(IdentityBrowserSessions.class); var audits = mock(IdentityIntrospectionFailures.class);
+		if (failure.equals("rate-audit")) { doThrow(new IllegalStateException("private throttle audit")).when(sessions).recordEntryThrottle(); }
+		var filter = new IdentityBrowserBoundaryFilter(sessions, 100, 1, headers(), audits);
+		var request = request(); request.setServletPath(IdentityProtocolResponses.INTROSPECTION_ENDPOINT); request.setRequestURI(IdentityProtocolResponses.INTROSPECTION_ENDPOINT);
+		var response = new MockHttpServletResponse();
+		if (failure.equals("tls")) { request.setSecure(false); }
+		else if (failure.equals("size")) { request.setContent(new byte[8193]); }
+		if (failure.startsWith("rate")) {
+			var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+			try (var executor = Executors.newSingleThreadExecutor()) {
+				var running = executor.submit(() -> { filter.doFilter(request(), new MockHttpServletResponse(), (req, res) -> {
+					entered.countDown(); try { assertThat(release.await(10, TimeUnit.SECONDS)).isTrue(); }
+					catch (InterruptedException ex) { Thread.currentThread().interrupt(); throw new IOException(ex); }
+				}); return true; });
+				try { assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue(); filter.doFilter(request, response, (req, res) -> fail("Throttled introspection admitted")); }
+				finally { release.countDown(); }
+				assertThat(running.get(10, TimeUnit.SECONDS)).isTrue();
+			}
+		}
+		else { filter.doFilter(request, response, (req, res) -> { if (failure.equals("dependency")) { throw new IllegalStateException("private dependency"); } fail("Rejected introspection admitted"); }); }
+		assertThat(response.getStatus()).isEqualTo(switch (failure) { case "tls" -> 400; case "size" -> 413; case "rate" -> 429; default -> 503; });
+		if (failure.startsWith("rate")) { verifyNoInteractions(audits); verify(sessions).recordEntryThrottle(); }
+		else { verify(audits).record(request); }
+		assertThat(response.getContentAsString()).doesNotContain("private dependency");
+	}
+
+	@Test
+	void introspectionAdmissionCannotPublishAnUnauditedRejection() throws Exception {
+		var audits = mock(IdentityIntrospectionFailures.class); doThrow(new IllegalStateException("private audit failure")).when(audits).record(any());
+		var filter = new IdentityBrowserBoundaryFilter(mock(IdentityBrowserSessions.class), 100, 1, headers(), audits);
+		var request = request(); request.setServletPath(IdentityProtocolResponses.INTROSPECTION_ENDPOINT); request.setSecure(false);
+		var response = new MockHttpServletResponse(); filter.doFilter(request, response, (req, res) -> fail("Insecure introspection admitted"));
+		assertThat(response.getStatus()).isEqualTo(503); assertThat(response.getContentAsString()).doesNotContain("private audit failure");
+	}
+
 	@Test
 	void rejectsPlainHttpEvenWhenForwardedHeadersClaimHttps() throws Exception {
 		var sessions = mock(IdentityBrowserSessions.class);

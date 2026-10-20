@@ -582,7 +582,7 @@ class IdentityProtocolHttpIntegrationTests extends IdentityProtocolTestSupport {
 	@Test
 	void unsupportedProtocolEndpointsAreNotPublishedByTheNativeConfigurer() throws Exception {
 		for (String path : List.of("/.well-known/openid-configuration", "/.well-known/oauth-authorization-server", "/oauth2/authorize",
-				"/oauth2/introspect", "/oauth2/revoke", "/connect/register", "/oauth2/device_authorization")) {
+				"/oauth2/revoke", "/connect/register", "/oauth2/device_authorization")) {
 			var response = send(path, "GET", null, basic(), "", Map.of());
 			assertThat(response.statusCode()).as(path).isIn(401, 403); assertThat(response.headers().firstValue("Location")).isEmpty();
 		}

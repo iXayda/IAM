@@ -31,16 +31,25 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 	private final Semaphore permits;
 	private final LongSupplier nanoTime;
 	private final HeaderWriter securityHeaders;
+	private final IdentityIntrospectionFailures introspectionFailures;
 	private long window;
 	private int requests;
 	private boolean throttleAudited;
 	private boolean throttleAuditInProgress;
 
 	IdentityBrowserBoundaryFilter(IdentityBrowserSessions sessions, int requestsPerSecond, int concurrency, HeaderWriter securityHeaders) {
-		this(sessions, requestsPerSecond, concurrency, securityHeaders, System::nanoTime);
+		this(sessions, requestsPerSecond, concurrency, securityHeaders, System::nanoTime, null);
+	}
+
+	IdentityBrowserBoundaryFilter(IdentityBrowserSessions sessions, int requestsPerSecond, int concurrency, HeaderWriter securityHeaders, IdentityIntrospectionFailures failures) {
+		this(sessions, requestsPerSecond, concurrency, securityHeaders, System::nanoTime, failures);
 	}
 
 	IdentityBrowserBoundaryFilter(IdentityBrowserSessions sessions, int requestsPerSecond, int concurrency, HeaderWriter securityHeaders, LongSupplier nanoTime) {
+		this(sessions, requestsPerSecond, concurrency, securityHeaders, nanoTime, null);
+	}
+
+	private IdentityBrowserBoundaryFilter(IdentityBrowserSessions sessions, int requestsPerSecond, int concurrency, HeaderWriter securityHeaders, LongSupplier nanoTime, IdentityIntrospectionFailures failures) {
 		if (requestsPerSecond < 1 || requestsPerSecond > 10_000 || concurrency < 1 || concurrency > 128) {
 			throw new IllegalArgumentException("Browser admission limits are invalid");
 		}
@@ -49,6 +58,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 		this.permits = new Semaphore(concurrency);
 		this.nanoTime = nanoTime;
 		this.securityHeaders = securityHeaders;
+		this.introspectionFailures = failures;
 	}
 
 	@Override
@@ -58,18 +68,18 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 		var stage = IdentityBrowserDiagnostics.Stage.ADMISSION;
 		try {
 			this.securityHeaders.writeHeaders(request, response);
-			if (!request.isSecure()) {
-				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
-				return;
-			}
 			admitted = admit();
 			if (!admitted) {
 				if (!auditThrottle()) {
-					reject(request, response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE);
+					reject(request, response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE, false);
 					return;
 				}
 				response.setHeader("Retry-After", "1");
-				reject(request, response, IdentityBrowserResponses.Error.TOO_MANY_REQUESTS);
+				reject(request, response, IdentityBrowserResponses.Error.TOO_MANY_REQUESTS, false);
+				return;
+			}
+			if (!request.isSecure()) {
+				reject(request, response, IdentityBrowserResponses.Error.BAD_REQUEST);
 				return;
 			}
 			if (request.getContentLengthLong() > 8192) {
@@ -198,7 +208,7 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 			IdentityBrowserDiagnostics.recordFailure(request, stage, ex);
 			response.reset();
 			this.securityHeaders.writeHeaders(request, response);
-			reject(request, response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE);
+			reject(request, response, IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE, admitted);
 		}
 		finally {
 			if (admitted) {
@@ -256,10 +266,19 @@ final class IdentityBrowserBoundaryFilter extends OncePerRequestFilter {
 		response.setHeader("Referrer-Policy", "no-referrer");
 	}
 
-	private static void reject(HttpServletRequest request, HttpServletResponse response, IdentityBrowserResponses.Error error) throws IOException {
+	private void reject(HttpServletRequest request, HttpServletResponse response, IdentityBrowserResponses.Error error) throws IOException {
+		reject(request, response, error, true);
+	}
+
+	private void reject(HttpServletRequest request, HttpServletResponse response, IdentityBrowserResponses.Error error, boolean auditIntrospection) throws IOException {
 		headers(response);
+		// Rejected admission already has a bounded aggregate throttle audit; do not create per-request database work outside its permit.
+		if (auditIntrospection && this.introspectionFailures != null && request.getServletPath().equals(IdentityProtocolResponses.INTROSPECTION_ENDPOINT)) {
+			try { this.introspectionFailures.record(request); }
+			catch (RuntimeException ex) { error = IdentityBrowserResponses.Error.SERVICE_UNAVAILABLE; }
+		}
 		if (Set.of(IdentityProtocolResponses.TOKEN_ENDPOINT, IdentityProtocolResponses.JWK_SET_ENDPOINT, IdentityProtocolResponses.USER_INFO_ENDPOINT, IdentityProtocolResponses.AUTHORIZATION_ENDPOINT,
-				IdentityProtocolResponses.OIDC_DISCOVERY_ENDPOINT, IdentityProtocolResponses.OAUTH_DISCOVERY_ENDPOINT).contains(request.getServletPath())
+				IdentityProtocolResponses.INTROSPECTION_ENDPOINT, IdentityProtocolResponses.OIDC_DISCOVERY_ENDPOINT, IdentityProtocolResponses.OAUTH_DISCOVERY_ENDPOINT).contains(request.getServletPath())
 				|| request.getServletPath().startsWith(IdentityProtocolResponses.INTERACTION_ENDPOINT + "/")) {
 			int status = switch (error) {
 				case PAYLOAD_TOO_LARGE -> 413;

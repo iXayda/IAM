@@ -57,7 +57,9 @@ class IdentityDiscoveryHttpIntegrationTests extends IdentityProtocolTestSupport 
 		assertThat(values(metadata, "response_modes_supported")).containsExactly("query");
 		assertThat(values(metadata, "code_challenge_methods_supported")).containsExactly("S256");
 		assertThat(values(metadata, "scopes_supported")).containsExactly("openid", "profile", "offline_access");
-		assertThat(metadata.has("introspection_endpoint")).isFalse(); assertThat(metadata.has("revocation_endpoint")).isFalse();
+		assertThat(metadata.path("introspection_endpoint").asText()).isEqualTo("https://iam.example/oauth2/introspect");
+		assertThat(values(metadata, "introspection_endpoint_auth_methods_supported")).containsExactly("client_secret_basic");
+		assertThat(metadata.has("revocation_endpoint")).isFalse();
 		assertThat(metadata.has("end_session_endpoint")).isFalse(); assertThat(metadata.has("registration_endpoint")).isFalse();
 		assertThat(metadata.has("device_authorization_endpoint")).isFalse(); assertThat(metadata.has("pushed_authorization_request_endpoint")).isFalse();
 		assertThat(metadata.has("dpop_signing_alg_values_supported")).isFalse(); assertThat(metadata.has("tls_client_certificate_bound_access_tokens")).isFalse();

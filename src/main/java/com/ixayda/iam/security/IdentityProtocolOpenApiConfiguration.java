@@ -42,12 +42,15 @@ class IdentityProtocolOpenApiConfiguration {
 					.description("保密 Web/BFF 客户端使用 client_secret_basic；对客户端标识与秘密分别进行 form 编码，再拼接冒号并进行 Base64 编码。秘密仅由客户端服务端保存。"));
 			openApi.getComponents().addSecuritySchemes("applicationBearer", new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("bearer").bearerFormat("JWT")
 					.description("IAM 签发的有效业务 Access Token，必须实际获授 openid；不能使用 ID Token、刷新凭据或 IAM Cookie。"));
+			openApi.getComponents().addSecuritySchemes("resourceValidator", new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("basic")
+					.description("仅供一个资源在线校验的独立身份；用户名为资源规范 UUID，密码为该资源的校验秘密。使用 client_secret_basic 的 form 编码规则；不能使用应用客户端秘密或 IAM Cookie。"));
 			openApi.getComponents().addSchemas("IdentityProtocolError", new ObjectSchema()
 					.addProperty("error", new StringSchema().description("OAuth 错误标识，不包含请求值或内部异常详情"))
 					.required(List.of("error")).additionalProperties(false));
 			openApi.path(IdentityProtocolResponses.TOKEN_ENDPOINT, new PathItem().post(token()));
 			openApi.path(IdentityProtocolResponses.JWK_SET_ENDPOINT, new PathItem().get(publicKeys()));
 			openApi.path(IdentityProtocolResponses.USER_INFO_ENDPOINT, new PathItem().get(userInfo("getUserInfo")).post(userInfo("postUserInfo")));
+			openApi.path(IdentityProtocolResponses.INTROSPECTION_ENDPOINT, new PathItem().post(introspect()));
 			if (authorization.getIfAvailable() != null) {
 				openApi.path(IdentityProtocolResponses.AUTHORIZATION_ENDPOINT, new PathItem().get(authorize()));
 				openApi.path(IdentityProtocolResponses.OIDC_DISCOVERY_ENDPOINT, new PathItem().get(discovery(true)));
@@ -63,7 +66,9 @@ class IdentityProtocolOpenApiConfiguration {
 		var configuration = new ObjectSchema().addProperty("issuer", new StringSchema().format("uri"))
 				.addProperty("authorization_endpoint", new StringSchema().format("uri"))
 				.addProperty("token_endpoint", new StringSchema().format("uri"))
-				.addProperty("jwks_uri", new StringSchema().format("uri"));
+				.addProperty("jwks_uri", new StringSchema().format("uri"))
+				.addProperty("introspection_endpoint", new StringSchema().format("uri"))
+				.addProperty("introspection_endpoint_auth_methods_supported", new ArraySchema().items(new StringSchema()._enum(List.of("client_secret_basic"))));
 		for (var item : Map.of("token_endpoint_auth_methods_supported", List.of("client_secret_basic"), "response_types_supported", List.of("code"),
 				"response_modes_supported", List.of("query"), "grant_types_supported", List.of("authorization_code", "refresh_token"),
 				"code_challenge_methods_supported", List.of("S256"), "scopes_supported", List.of("openid", "profile", "offline_access")).entrySet()) {
@@ -82,7 +87,7 @@ class IdentityProtocolOpenApiConfiguration {
 				.summary(oidc ? "查询 OpenID Provider 配置" : "查询 OAuth 授权服务器元数据").tags(List.of("protocol")).security(List.of())
 				.description("公开 HTTPS GET，无需 Cookie 或客户端认证；不接受查询串或正文，不读取或更新浏览器会话。"
 						+ "issuer 与端点固定取自配置；只声明已启用的授权码、刷新、PKCE S256、client_secret_basic 及 RS256 能力。"
-						+ "不声明未开放的注册、设备授权、PAR、Token Exchange、Introspection、协议退出、DPoP 或 mTLS。"
+						+ "Introspection 仅供资源独立校验身份使用；不声明未开放的注册、设备授权、PAR、Token Exchange、协议退出、DPoP 或 mTLS。"
 						+ "客户端必须核对返回 issuer 与预配置信任值逐字一致；元数据可访问不代表当前签发或验证依赖健康。")
 				.responses(new ApiResponses().addApiResponse("200", new ApiResponse().description("固定 issuer 的实际协议能力")
 						.content(new Content().addMediaType("application/json", new MediaType().schema(configuration))))
@@ -91,6 +96,40 @@ class IdentityProtocolOpenApiConfiguration {
 						.addApiResponse("413", error("invalid_request：超过共享请求体上限"))
 						.addApiResponse("429", error("temporarily_unavailable：共享入口限流"))
 						.addApiResponse("503", error("server_error：元数据响应不可用")));
+	}
+
+	private static Operation introspect() {
+		var request = new ObjectSchema().addProperty("token", secret("待校验的业务 Access Token"))
+				.addProperty("token_type_hint", new StringSchema().maxLength(128).description("可选提示；未知值不改变校验范围，不能凭提示使用 ID Token 或刷新凭据"))
+				.required(List.of("token")).additionalProperties(false);
+		var inactive = new ObjectSchema().addProperty("active", new io.swagger.v3.oas.models.media.BooleanSchema()._enum(List.of(false)))
+				.required(List.of("active")).additionalProperties(false);
+		var active = new ObjectSchema().addProperty("active", new io.swagger.v3.oas.models.media.BooleanSchema()._enum(List.of(true)))
+				.addProperty("token_type", new StringSchema()._enum(List.of("Bearer"))).addProperty("iss", new StringSchema().format("uri"))
+				.addProperty("sub", new StringSchema().format("uuid")).addProperty("client_id", new StringSchema().format("uuid"))
+				.addProperty("aud", new ArraySchema().items(new StringSchema()).minItems(1).maxItems(1))
+				.addProperty("scope", new StringSchema().description("实际获授的空格分隔 scope"))
+				.addProperty("roles", new ArraySchema().items(new StringSchema().pattern("^[a-z][a-z0-9_]{0,63}$")))
+				.required(List.of("active", "token_type", "iss", "sub", "client_id", "aud", "scope", "iat", "nbf", "exp", "roles")).additionalProperties(false);
+		for (String name : List.of("iat", "nbf", "exp")) { active.addProperty(name, new IntegerSchema().format("int64").description("JWT NumericDate，Unix 秒")); }
+		return new Operation().operationId("introspectResourceToken").summary("在线校验本资源的 Access Token").tags(List.of("protocol"))
+				.security(List.of(new SecurityRequirement().addList("resourceValidator")))
+				.description("仅支持 HTTPS POST、UTF-8 form 和独立资源 client_secret_basic 身份；请求体最多 8192 字节。"
+						+ "仅接受 token 与可选 token_type_hint，拒绝查询串、重复或额外字段、正文认证、重复认证头和 DPoP；不读取或更新浏览器会话。"
+						+ "资源 UUID 固定来自校验凭据，不能由 Token audience 或外部参数指定。严格验签并在线复核用户、客户端、原始授权、scope、角色和密钥状态，同时在持锁事务中复核资源凭据版本。"
+						+ "错误资源、未知、过期、已撤销、错误用途或无效签名的 Token 只返回 active=false，不返回身份资料；无效资源凭据返回 401，依赖或必需审计故障返回 503。"
+						+ "资源服务自身仍须严格验证 JWT，逐请求执行业务权限及所有权检查。正结果仅可在该资源内缓存至多 5 秒，且不超过 exp；在线依赖故障时拒绝新的受保护操作，不能自动离线放行。"
+						+ "业务 Token 与此校验身份均不授予 IAM 管理权限，管理权限不得使用该缓存；HTTP 响应禁止共享缓存。")
+				.requestBody(new RequestBody().required(true).content(new Content().addMediaType("application/x-www-form-urlencoded", new MediaType().schema(request))))
+				.responses(new ApiResponses().addApiResponse("200", new ApiResponse().description("本资源有效投影或仅包含 active=false 的响应")
+						.content(new Content().addMediaType("application/json", new MediaType().schema(new ComposedSchema().oneOf(List.of(active, inactive))))))
+						.addApiResponse("400", error("invalid_request：参数或认证格式无效"))
+						.addApiResponse("401", error("invalid_client：资源凭据无效、已轮换或不可用").addHeaderObject("WWW-Authenticate", new Header().schema(new StringSchema()).description("Basic realm=\"iam/introspection\"")))
+						.addApiResponse("405", error("只支持 POST").addHeaderObject("Allow", new Header().schema(new StringSchema()._enum(List.of("POST")))))
+						.addApiResponse("413", error("invalid_request：正文超过 8192 字节"))
+						.addApiResponse("415", error("invalid_request：需要 UTF-8 application/x-www-form-urlencoded"))
+						.addApiResponse("429", error("temporarily_unavailable：共享入口限流"))
+						.addApiResponse("503", error("server_error：在线依赖或必需审计不可用")));
 	}
 
 	private static Operation authorize() {

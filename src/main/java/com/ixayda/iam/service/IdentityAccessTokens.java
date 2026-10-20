@@ -62,14 +62,14 @@ public class IdentityAccessTokens {
 		var client = this.clients.findActiveById(binding.session().access().clientId().toString());
 		if (client.isEmpty()) { return Optional.empty(); }
 		try {
-			var result = this.transaction.execute(status -> validate(token, keyId, binding, client.orElseThrow(), validation));
+			var result = this.transaction.execute(status -> validate(token, keyId, binding, client.orElseThrow(), resourceId != null, validation));
 			if (result == null) { throw new IllegalStateException("Token validation transaction returned no result"); }
 			return result;
 		}
 		catch (ExpiredAccessException ex) { return Optional.empty(); }
 	}
 
-	private <T> Optional<T> validate(String token, UUID keyId, IdentityAuthorizationBinding original, IdentityProtocolClients.Snapshot client, Function<Context, T> validation) {
+	private <T> Optional<T> validate(String token, UUID keyId, IdentityAuthorizationBinding original, IdentityProtocolClients.Snapshot client, boolean resourceValidation, Function<Context, T> validation) {
 		var key = this.keys.lockForValidation(keyId);
 		if (key.isEmpty()) { return Optional.empty(); }
 		var access = this.applications.projectForUse(original.session().access().userId(), original.session().access().credentialVersion(), client);
@@ -94,10 +94,12 @@ public class IdentityAccessTokens {
 		}
 		else if (!original.scopes().equals(scopes) || original.scopes().contains("offline_access")) { throw new IllegalStateException("Access token is missing its refresh bounds"); }
 		var projected = new IdentityAccessToken(original.id(), access.orElseThrow(), scopes, actual.getIssuedAt(), actual.getExpiresAt());
-		if (!this.bindings.isWithinLifetime(projected.issuedAt(), projected.expiresAt())) { return Optional.empty(); }
+		// Resource caches and introspection must stop at the signed NumericDate, even when native storage retains microseconds.
+		var expiry = resourceValidation ? projected.expiresAt().truncatedTo(ChronoUnit.SECONDS) : projected.expiresAt();
+		if (!this.bindings.isWithinLifetime(projected.issuedAt(), expiry)) { return Optional.empty(); }
 		T accepted = validation.apply(new Context(projected, key.orElseThrow()));
 		if (accepted == null) { throw new IllegalStateException("Token validation returned no result"); }
-		if (!this.bindings.isWithinLifetime(projected.issuedAt(), projected.expiresAt())) { throw new ExpiredAccessException(); }
+		if (!this.bindings.isWithinLifetime(projected.issuedAt(), expiry)) { throw new ExpiredAccessException(); }
 		return Optional.of(accepted);
 	}
 

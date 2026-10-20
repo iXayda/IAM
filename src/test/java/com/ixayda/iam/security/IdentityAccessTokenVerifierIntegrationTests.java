@@ -186,6 +186,16 @@ class IdentityAccessTokenVerifierIntegrationTests extends IdentityProtocolTestSu
 	}
 
 	@Test
+	void resourceValidationStopsAtSignedNumericDateEvenWhenNativeExpiryHasLaterMicroseconds() throws Exception {
+		String code = code(Set.of("openid")); exchange(request(code, authenticatedClient(code)));
+		long expiry = Instant.now().getEpochSecond() + 2;
+		String token = rewrite(code, claims -> claims.put("exp", expiry), headers -> { }, false, Instant.ofEpochSecond(expiry, 999_999_000));
+		org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(4)).pollInterval(java.time.Duration.ofMillis(5))
+				.until(() -> this.jdbc.sql("SELECT extract(epoch FROM clock_timestamp()) >= :expiry").param("expiry", expiry).query(Boolean.class).single());
+		assertThat(this.verifier.verifyForResource(token, this.resourceId)).isEmpty();
+	}
+
+	@Test
 	void storageOutagesPropagateAndCannotBecomeSuccessfulOfflineOrInactiveFallbacks() {
 		String code = code(Set.of("openid")); var issued = exchange(request(code, authenticatedClient(code)));
 		this.jdbc.sql("ALTER TABLE iam_authorization_token_index RENAME TO verifier_unavailable_index").update();

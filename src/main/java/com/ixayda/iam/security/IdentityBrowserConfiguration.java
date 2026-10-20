@@ -211,8 +211,9 @@ public class IdentityBrowserConfiguration {
 	@Bean
 	FilterRegistrationBean<IdentityBrowserBoundaryFilter> browserBoundary(IdentityBrowserSessions sessions,
 			@Value("${iam.browser.requests-per-second:100}") int requestsPerSecond,
-			@Value("${iam.browser.concurrent-requests:8}") int concurrentRequests, HeaderWriter browserSecurityHeaders) {
-		var registration = new FilterRegistrationBean<>(new IdentityBrowserBoundaryFilter(sessions, requestsPerSecond, concurrentRequests, browserSecurityHeaders));
+			@Value("${iam.browser.concurrent-requests:8}") int concurrentRequests, HeaderWriter browserSecurityHeaders,
+			ObjectProvider<IdentityIntrospectionFailures> introspectionFailures) {
+		var registration = new FilterRegistrationBean<>(new IdentityBrowserBoundaryFilter(sessions, requestsPerSecond, concurrentRequests, browserSecurityHeaders, introspectionFailures.getIfAvailable()));
 		registration.setOrder(SessionRepositoryFilter.DEFAULT_ORDER - 1);
 		registration.setDispatcherTypes(DispatcherType.REQUEST);
 		registration.setAsyncSupported(false);

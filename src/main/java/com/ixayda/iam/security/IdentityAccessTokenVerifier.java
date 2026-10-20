@@ -48,6 +48,12 @@ public final class IdentityAccessTokenVerifier {
 		Assert.notNull(resourceId, "Authenticated resource is required"); return verify(raw, resourceId, Function.identity());
 	}
 
+	/** Resource credential revalidation runs inside the same locked transaction as signature and grant validation. */
+	<T> Optional<T> useForResource(String raw, UUID resourceId, Function<IdentityAccessToken, T> projection) {
+		Assert.notNull(resourceId, "Authenticated resource is required"); Assert.notNull(projection, "Trusted resource projection is required");
+		return verify(raw, resourceId, projection);
+	}
+
 	private <T> Optional<T> verify(String raw, UUID resourceId, Function<IdentityAccessToken, T> projection) {
 		var candidate = parse(raw); if (candidate.isEmpty()) { return Optional.empty(); }
 		var parsed = candidate.orElseThrow();

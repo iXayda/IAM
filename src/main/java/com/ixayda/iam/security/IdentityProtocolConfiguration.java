@@ -9,6 +9,7 @@ import com.ixayda.iam.service.IdentityAuthorizationSessions;
 import com.ixayda.iam.service.IdentityAuthorizations;
 import com.ixayda.iam.service.IdentityProtocolClients;
 import com.ixayda.iam.service.IdentityRefreshTokens;
+import com.ixayda.iam.service.IdentityResourceCredentials;
 import com.ixayda.iam.service.IdentitySigningKeys;
 import com.ixayda.iam.service.IdentityUsers;
 import com.ixayda.iam.service.SecurityAudits;
@@ -89,6 +90,22 @@ public class IdentityProtocolConfiguration {
 				.addFilterBefore(new IdentityUserInfoRequestFilter(provider, audits, transactions), SecurityContextHolderFilter.class);
 		return http.build();
 	}
+
+	@Bean
+	@Order(5)
+	SecurityFilterChain introspectionSecurity(HttpSecurity http, AuthorizationServerSettings settings, IdentityAccessTokens tokens,
+			IdentityResourceCredentials credentials, SecurityAudits audits, PlatformTransactionManager transactions, IdentityIntrospectionFailures failures) throws Exception {
+		var provider = new IdentityIntrospectionProvider(new IdentityAccessTokenVerifier(tokens, settings.getIssuer()), credentials, audits, transactions, settings.getIssuer());
+		http.securityMatcher(PathPatternRequestMatcher.withDefaults().matcher(IdentityProtocolResponses.INTROSPECTION_ENDPOINT))
+				.securityContext(context -> context.securityContextRepository(new NullSecurityContextRepository()))
+				.sessionManagement(session -> session.disable()).requestCache(cache -> cache.disable()).httpBasic(basic -> basic.disable())
+				.csrf(csrf -> csrf.disable()).authorizeHttpRequests(authorize -> authorize.anyRequest().authenticated())
+				.headers(headers -> headers.disable()).addFilterBefore(new IdentityIntrospectionRequestFilter(provider, failures), SecurityContextHolderFilter.class);
+		return http.build();
+	}
+
+	@Bean
+	IdentityIntrospectionFailures introspectionFailures(SecurityAudits audits, PlatformTransactionManager transactions) { return new IdentityIntrospectionFailures(audits, transactions); }
 
 	@Bean
 	@Order(1)

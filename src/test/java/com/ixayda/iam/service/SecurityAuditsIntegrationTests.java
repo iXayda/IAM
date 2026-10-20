@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -247,30 +248,31 @@ class SecurityAuditsIntegrationTests {
 				Arguments.of("action", "unknown"), Arguments.of("action", "user_info_rejected"), Arguments.of("outcome", "failure"));
 	}
 
-	@Test
-	void userInfoAuditUpgradePreservesExistingDecisionsAndOnlyAllowsTheNewFailureOutcome() throws Exception {
-		String schema = "userinfo_audit_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+	@ParameterizedTest
+	@CsvSource({ "31,user_info_rejected,protocol:userinfo", "34,introspection_rejected,protocol:introspection" })
+	void protocolRejectionAuditUpgradePreservesExistingDecisionsAndOnlyAllowsTheNewFailureOutcome(String version, String action, String source) throws Exception {
+		String schema = "protocol_audit_upgrade_" + UUID.randomUUID().toString().replace("-", "");
 		this.jdbc.sql("CREATE SCHEMA " + schema).update();
 		try {
 			Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())
-					.schemas(schema).defaultSchema(schema).target("31").load().migrate();
+					.schemas(schema).defaultSchema(schema).target(version).load().migrate();
 			try (var connection = DriverManager.getConnection(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())) {
 				connection.setSchema(schema); var previous = JdbcClient.create(new SingleConnectionDataSource(connection, true));
 				previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,action,outcome) VALUES (:id,'anonymous','protocol:token',:correlation,'token_request_rejected','failure')")
 						.param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).update();
 				String legacy = previous.sql("SELECT row_to_json(r)::text FROM iam_security_audit r").query(String.class).single();
-				assertThatThrownBy(() -> previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,action,outcome) VALUES (:id,'anonymous','protocol:userinfo',:correlation,'user_info_rejected','failure')")
-						.param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).update()).isInstanceOf(DataIntegrityViolationException.class);
+				assertThatThrownBy(() -> previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,action,outcome) VALUES (:id,'anonymous',:source,:correlation,:action,'failure')")
+						.param("id", UUID.randomUUID()).param("source", source).param("action", action).param("correlation", UUID.randomUUID()).update()).isInstanceOf(DataIntegrityViolationException.class);
 				Flyway.configure().dataSource(this.postgres.getJdbcUrl(), this.postgres.getUsername(), this.postgres.getPassword())
 						.schemas(schema).defaultSchema(schema).load().migrate();
 				assertThat(previous.sql("SELECT row_to_json(r)::text FROM iam_security_audit r").query(String.class).single()).isEqualTo(legacy);
 				for (boolean identified : new boolean[] { false, true }) {
 					UUID subject = identified ? UUID.randomUUID() : null;
-					previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,target_user_id,action,outcome) VALUES (:id,:actor,'protocol:userinfo',:correlation,:subject,'user_info_rejected','failure')")
-							.param("id", UUID.randomUUID()).param("actor", identified ? "user:" + subject : "anonymous").param("correlation", UUID.randomUUID()).param("subject", subject).update();
+					previous.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,target_user_id,action,outcome) VALUES (:id,:actor,:source,:correlation,:subject,:action,'failure')")
+							.param("id", UUID.randomUUID()).param("actor", identified ? "user:" + subject : "anonymous").param("source", source).param("action", action).param("correlation", UUID.randomUUID()).param("subject", subject).update();
 				}
 				assertThat(previous.sql("SELECT count(*) FROM iam_security_audit").query(Long.class).single()).isEqualTo(3);
-				assertThatThrownBy(() -> previous.sql("UPDATE iam_security_audit SET outcome='success' WHERE action='user_info_rejected'").update()).isInstanceOf(DataIntegrityViolationException.class);
+				assertThatThrownBy(() -> previous.sql("UPDATE iam_security_audit SET outcome='success' WHERE action=:action").param("action", action).update()).isInstanceOf(DataIntegrityViolationException.class);
 			}
 		}
 		finally { this.jdbc.sql("DROP SCHEMA " + schema + " CASCADE").update(); }
