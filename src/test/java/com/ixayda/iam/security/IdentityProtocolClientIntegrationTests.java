@@ -55,6 +55,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.Mockito.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Import(PostgreSqlTestConfiguration.class)
@@ -144,6 +145,77 @@ class IdentityProtocolClientIntegrationTests {
 		assertInvalidClient(() -> authenticate(id, result.secret()));
 		assertThat(authenticate(id, rotated.secret()).isAuthenticated()).isTrue();
 		assertThat(revalidate(previous)).isEmpty();
+	}
+
+	@Test
+	void trustedNativeAuthenticationRemovesPresentedCredentialsAndCarriesTheExactClientSnapshot() {
+		var result = this.clients.create(configuration(this.resourceId, Set.of(this.roleId)), AUDIT);
+		String id = result.client().id().toString();
+		var before = databaseSnapshot();
+		var provider = new IdentityClientAuthenticationProvider(this.protocol, NO_GRANTS);
+		var request = new OAuth2ClientAuthenticationToken(id, ClientAuthenticationMethod.CLIENT_SECRET_BASIC, result.secret(), Map.of());
+		request.setDetails("private-transport-marker");
+		var authenticated = (OAuth2ClientAuthenticationToken) provider.authenticate(request);
+		assertThat(authenticated.isAuthenticated()).isTrue();
+		assertThat(authenticated.getCredentials()).isNull();
+		assertThat(authenticated.getAuthorities()).isEmpty();
+		assertThat(authenticated.getDetails()).isEqualTo(this.protocol.findActiveById(id).orElseThrow());
+		assertThat(authenticated.toString()).doesNotContain(result.secret(), "private-transport-marker", authenticated.getRegisteredClient().getClientSecret());
+		assertThat(databaseSnapshot()).isEqualTo(before);
+		assertThat(this.application.getBeansOfType(IdentityClientAuthenticationProvider.class)).isEmpty();
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "transfer", "secret" })
+	void aSecretProofKeepsItsOriginalEpochsWhenManagementChangesDuringAuthentication(String mutation) {
+		var result = this.clients.create(configuration(this.resourceId, Set.of()), AUDIT);
+		String id = result.client().id().toString();
+		var previous = this.protocol.findActiveById(id).orElseThrow();
+		var another = this.resources.create("urn:example:other", "Other", AUDIT);
+		var watched = spy(this.protocol);
+		doAnswer(call -> {
+			var snapshot = call.callRealMethod();
+			if (mutation.equals("transfer")) { this.clients.updateConfiguration(result.client().id(), 1, configuration(another.id(), Set.of()), AUDIT); }
+			else { this.clients.rotateSecret(result.client().id(), 1, AUDIT); }
+			return snapshot;
+		}).when(watched).findActiveById(id);
+		var provider = new IdentityClientAuthenticationProvider(watched, NO_GRANTS);
+		var authenticated = (OAuth2ClientAuthenticationToken) provider.authenticate(new OAuth2ClientAuthenticationToken(id, ClientAuthenticationMethod.CLIENT_SECRET_BASIC, result.secret(), Map.of()));
+		verify(watched, times(1)).findActiveById(id);
+		assertThat(authenticated.getDetails()).isEqualTo(previous);
+		assertThat(revalidate((Snapshot) authenticated.getDetails())).isEmpty();
+		if (mutation.equals("transfer")) {
+			assertThat(authenticated.getRegisteredClient()).isEqualTo(this.adapter.findById(id));
+			assertThat(this.protocol.findActiveById(id).orElseThrow().resource().id()).isEqualTo(another.id());
+		}
+	}
+
+	@Test
+	void trustedClientAuthenticationHasUniformCredentialFailuresAndSanitizedStoreFailures() {
+		var result = this.clients.create(configuration(this.resourceId, Set.of()), AUDIT);
+		String id = result.client().id().toString();
+		var provider = new IdentityClientAuthenticationProvider(this.protocol, NO_GRANTS);
+		for (var request : List.of(
+				new OAuth2ClientAuthenticationToken(id, ClientAuthenticationMethod.CLIENT_SECRET_BASIC, "private-invalid-secret", Map.of()),
+				new OAuth2ClientAuthenticationToken(UUID.randomUUID().toString(), ClientAuthenticationMethod.CLIENT_SECRET_BASIC, result.secret(), Map.of()),
+				new OAuth2ClientAuthenticationToken(id, ClientAuthenticationMethod.CLIENT_SECRET_POST, result.secret(), Map.of()),
+				new OAuth2ClientAuthenticationToken(id, ClientAuthenticationMethod.NONE, null, Map.of()))) {
+			assertThatThrownBy(() -> provider.authenticate(request)).isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> {
+				assertThat(ex.getError().getErrorCode()).isEqualTo("invalid_client");
+				assertThat(ex.getError().getDescription()).isEqualTo("Client authentication failed");
+				assertThat(ex).hasNoCause();
+			});
+		}
+		assertThat(provider.supports(OAuth2ClientAuthenticationToken.class)).isTrue();
+		assertThat(provider.supports(org.springframework.security.authentication.UsernamePasswordAuthenticationToken.class)).isFalse();
+		assertThat(provider.authenticate(org.springframework.security.authentication.UsernamePasswordAuthenticationToken.unauthenticated("user", "private-secret"))).isNull();
+		this.jdbc.sql("UPDATE oauth2_registered_client SET token_settings='private-store-marker' WHERE id=:id").param("id", id).update();
+		assertThatThrownBy(() -> provider.authenticate(new OAuth2ClientAuthenticationToken(id, ClientAuthenticationMethod.CLIENT_SECRET_BASIC, result.secret(), Map.of())))
+				.isInstanceOfSatisfying(OAuth2AuthenticationException.class, ex -> {
+					assertThat(ex.getError().getErrorCode()).isEqualTo("server_error");
+					assertThat(ex.getError().getDescription()).isEqualTo("Client authentication is unavailable");
+					assertThat(ex).hasNoCause();
+				});
 	}
 
 	@Test

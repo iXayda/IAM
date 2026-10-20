@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.ixayda.iam.model.IdentityApplicationAccess;
 import com.ixayda.iam.model.IdentityUserRole;
 import com.ixayda.iam.model.IdentityUserRolePage;
 
@@ -87,7 +88,31 @@ public class IdentityUserRoleRepository {
 		return new PageSnapshot(rows.getFirst().version(), List.copyOf(items));
 	}
 
+	/** One statement captures the revision and all matching roles; pagination never truncates authorization. */
+	public RoleProjection projectForClient(UUID userId, UUID resourceId, UUID clientId) {
+		var rows = this.jdbc.sql("""
+				WITH revision AS (
+				    SELECT coalesce((SELECT version FROM iam_user_resource_role_revision WHERE user_id=:user AND resource_id=:resource),0) AS version
+				), permitted AS (
+				    SELECT r.id,r.code,r.version FROM iam_user_role b
+				    JOIN iam_resource_role r ON r.id=b.role_id AND r.resource_id=b.resource_id AND r.status='active'
+				    JOIN iam_client_allowed_role a ON a.role_id=b.role_id AND a.resource_id=b.resource_id
+				    JOIN iam_client c ON c.id=a.client_id AND c.resource_id=b.resource_id AND c.status='active'
+				    JOIN iam_resource p ON p.id=b.resource_id AND p.status='active'
+				    JOIN iam_user u ON u.id=b.user_id AND u.status='active'
+				    WHERE b.user_id=:user AND b.resource_id=:resource AND c.id=:client
+				)
+				SELECT revision.version,permitted.id AS role_id,permitted.code,permitted.version AS role_version
+				FROM revision LEFT JOIN permitted ON true ORDER BY permitted.code,permitted.id
+				""").param("user", userId).param("resource", resourceId).param("client", clientId.toString())
+				.query((row, index) -> new ProjectionRow(row.getLong("version"), row.getObject("role_id", UUID.class), row.getString("code"), row.getLong("role_version"))).list();
+		var roles = rows.stream().filter(row -> row.roleId() != null).map(row -> new IdentityApplicationAccess.Role(row.roleId(), row.code(), row.roleVersion())).toList();
+		return new RoleProjection(rows.getFirst().version(), roles);
+	}
+
 	public record PageSnapshot(long version, List<IdentityUserRole> items) { }
+	public record RoleProjection(long version, List<IdentityApplicationAccess.Role> roles) { }
 	private record SnapshotRow(long version, UUID roleId, OffsetDateTime createdAt) { }
+	private record ProjectionRow(long version, UUID roleId, String code, long roleVersion) { }
 
 }
