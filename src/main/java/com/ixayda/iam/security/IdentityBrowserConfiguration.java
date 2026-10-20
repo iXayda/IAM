@@ -92,6 +92,8 @@ public class IdentityBrowserConfiguration {
 						.requestMatchers(HttpMethod.POST, "/api/admin/users/{userId}/password-recovery", "/api/admin/users/{userId}/password-recovery/cancel").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/admin/me", "/api/admin/users", "/api/admin/users/{userId}", "/api/admin/audits", "/api/admin/resources", "/api/admin/resources/{resourceId}", "/api/admin/resources/{resourceId}/roles", "/api/admin/resource-roles/{roleId}").access(management)
 						.requestMatchers(HttpMethod.GET, "/api/me", "/v3/api-docs", "/v3/api-docs.yaml").authenticated()
+						.requestMatchers(HttpMethod.GET, "/api/me/authorizations").authenticated()
+						.requestMatchers(HttpMethod.POST, "/api/me/authorizations/{authorizationId}/revoke").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/profile", "/api/me/password", "/api/me/mfa/recovery-codes").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/mfa/totp/enrollment", "/api/me/mfa/totp/enrollment/confirm", "/api/me/mfa/totp/enrollment/cancel").authenticated()
 						.requestMatchers(HttpMethod.POST, "/api/me/mfa/totp/replacement", "/api/me/mfa/totp/replacement/complete").authenticated()
