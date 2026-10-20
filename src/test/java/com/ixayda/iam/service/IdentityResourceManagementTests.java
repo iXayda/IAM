@@ -50,7 +50,7 @@ class IdentityResourceManagementTests {
 	void configureCurrentAdministrator() {
 		when(this.manager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
 		when(this.limits.lock(this.actor, this.attribution)).thenReturn(new TotpAuthenticationLimits.Attempt("source", "account", true));
-		when(this.users.lockForTotp(this.actor)).thenReturn(Optional.of(
+		when(this.users.lockForStateChange(this.actor)).thenReturn(Optional.of(
 				new IdentityUser(this.actor, "alice", "Alice", IdentityUser.Status.ACTIVE, Instant.EPOCH)));
 		when(this.sessions.lockOwnedSessionExpiry(this.actor, "session")).thenReturn(Optional.of(ORIGINAL_EXPIRY));
 		when(this.sessions.isAuthenticationCurrent(this.actor, 1L, 1L)).thenReturn(true);
@@ -59,8 +59,9 @@ class IdentityResourceManagementTests {
 		when(this.totps.verifyInTransaction(this.actor, "123456", this.attribution)).thenReturn(Optional.of(
 				new IdentityTotpVerification(this.actor, UUID.randomUUID(), 1L, 1L, Instant.EPOCH, UUID.randomUUID())));
 		when(this.resources.create(eq("urn:orders"), eq("Orders"), any())).thenReturn(this.resource);
-		this.management = new IdentityResourceManagement(this.resources, this.users, this.sessions,
-				this.administrators, this.totps, this.limits, this.audits, this.manager);
+		var operations = new IdentityAdministratorOperations(this.users, this.sessions, this.administrators,
+				this.totps, this.limits, this.audits, this.manager);
+		this.management = new IdentityResourceManagement(this.resources, operations);
 	}
 
 	@Test
