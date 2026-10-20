@@ -249,7 +249,7 @@ class SecurityAuditsIntegrationTests {
 	}
 
 	@ParameterizedTest
-	@CsvSource({ "31,user_info_rejected,protocol:userinfo,false", "34,introspection_rejected,protocol:introspection,false", "35,authorization_access_denied,browser:account-authorizations,true" })
+	@CsvSource({ "31,user_info_rejected,protocol:userinfo,false", "34,introspection_rejected,protocol:introspection,false", "35,authorization_access_denied,browser:account-authorizations,true", "36,browser_session_access_denied,browser:account-sessions,true" })
 	void rejectionAuditUpgradePreservesExistingDecisionsAndOnlyAllowsTheNewFailureOutcome(String version, String action, String source, boolean requiresUser) throws Exception {
 		String schema = "protocol_audit_upgrade_" + UUID.randomUUID().toString().replace("-", "");
 		this.jdbc.sql("CREATE SCHEMA " + schema).update();
@@ -281,6 +281,17 @@ class SecurityAuditsIntegrationTests {
 			}
 		}
 		finally { this.jdbc.sql("DROP SCHEMA " + schema + " CASCADE").update(); }
+	}
+
+	@Test
+	void browserRevocationAuditRequiresTheSubjectAndItsTypedManagementTarget() {
+		UUID user = UUID.randomUUID(); UUID session = UUID.randomUUID();
+		this.jdbc.sql("INSERT INTO iam_security_audit(id,actor,source,correlation_id,target_user_id,target_type,target_id,action,outcome) VALUES (:id,'system:test','internal:test',:correlation,:user,'browser_session',:session,'browser_session_revoked','success')")
+				.param("id", UUID.randomUUID()).param("correlation", UUID.randomUUID()).param("user", user).param("session", session).update();
+		for (String mutation : new String[] { "target_user_id=NULL", "target_type=NULL", "target_id=NULL", "target_type='authorization'", "outcome='failure'" }) {
+			assertThatThrownBy(() -> this.jdbc.sql("UPDATE iam_security_audit SET " + mutation + " WHERE action='browser_session_revoked'").update()).isInstanceOf(DataIntegrityViolationException.class);
+		}
+		assertThat(this.jdbc.sql("SELECT target_id FROM iam_security_audit WHERE action='browser_session_revoked'").query(UUID.class).single()).isEqualTo(session);
 	}
 
 	@Test

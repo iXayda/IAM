@@ -76,6 +76,8 @@ public class IdentityBrowserSessions {
 		return this.idleTimeout;
 	}
 
+	public Duration absoluteTimeout() { return this.absoluteTimeout; }
+
 	public boolean isAuthenticationCurrent(UUID userId, Object authenticatedAt, Object credentialVersion) {
 		return withinAbsoluteLifetime(authenticatedAt) && credentialVersion instanceof Long version
 				&& this.users.hasCurrentPasswordVersion(userId, version);
