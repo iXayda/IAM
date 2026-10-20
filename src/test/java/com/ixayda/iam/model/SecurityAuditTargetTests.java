@@ -13,9 +13,9 @@ class SecurityAuditTargetTests {
 	private static final SecurityAuditContext CONTEXT = new SecurityAuditContext("system:test", "internal:test", UUID.randomUUID());
 
 	@ParameterizedTest
-	@EnumSource(value = SecurityAuditEvent.Action.class, names = { "RESOURCE_CREATED", "RESOURCE_UPDATED", "RESOURCE_DISABLED", "RESOURCE_ENABLED" })
-	void resourceActionsRequireTheObjectTargetAndCannotMasqueradeAsUserActions(SecurityAuditEvent.Action action) {
-		var target = new SecurityAuditTarget(SecurityAuditTarget.Type.RESOURCE, UUID.randomUUID());
+	@EnumSource(value = SecurityAuditEvent.Action.class, names = { "RESOURCE_CREATED", "RESOURCE_UPDATED", "RESOURCE_DISABLED", "RESOURCE_ENABLED", "RESOURCE_ROLE_CREATED", "RESOURCE_ROLE_UPDATED", "RESOURCE_ROLE_DISABLED", "RESOURCE_ROLE_ENABLED" })
+	void objectActionsRequireTheObjectTargetAndCannotMasqueradeAsUserActions(SecurityAuditEvent.Action action) {
+		var target = new SecurityAuditTarget(action.targetType(), UUID.randomUUID());
 		assertThat(new SecurityAuditEvent(UUID.randomUUID(), action, null, CONTEXT, target).target()).isEqualTo(target);
 		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, null, CONTEXT));
 		assertThatIllegalArgumentException().isThrownBy(() -> new SecurityAuditEvent(UUID.randomUUID(), action, target.id(), CONTEXT, target));

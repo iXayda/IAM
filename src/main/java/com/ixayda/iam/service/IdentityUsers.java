@@ -1,6 +1,5 @@
 package com.ixayda.iam.service;
 
-import java.text.Normalizer;
 import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -201,27 +200,7 @@ public class IdentityUsers {
 	}
 
 	private static String normalizeUserText(String value, String error) {
-		if (value == null || value.length() > 65_536) {
-			throw new IllegalArgumentException(error);
-		}
-		for (int i = 0; i < value.length(); i++) {
-			char current = value.charAt(i);
-			if (Character.isHighSurrogate(current)) {
-				if (++i >= value.length() || !Character.isLowSurrogate(value.charAt(i))) {
-					throw new IllegalArgumentException(error);
-				}
-			}
-			else if (Character.isLowSurrogate(current)) {
-				throw new IllegalArgumentException(error);
-			}
-		}
-		String normalized = Normalizer.normalize(value, Normalizer.Form.NFC);
-		int length = normalized.codePointCount(0, normalized.length());
-		if (length < 1 || length > 128 || normalized.codePoints().anyMatch(Character::isISOControl)
-				|| normalized.codePoints().allMatch(cp -> Character.isWhitespace(cp) || Character.isSpaceChar(cp))) {
-			throw new IllegalArgumentException(error);
-		}
-		return normalized;
+		return IdentityDisplayNames.normalize(value, error);
 	}
 
 }
