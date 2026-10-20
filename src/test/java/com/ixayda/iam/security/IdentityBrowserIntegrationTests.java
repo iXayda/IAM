@@ -940,7 +940,7 @@ class IdentityBrowserIntegrationTests {
 					"/api/admin/users/{userId}/resources/{resourceId}/roles", "/api/admin/users/{userId}/roles/{roleId}/grant", "/api/admin/users/{userId}/roles/{roleId}/revoke",
 					"/api/admin/clients", "/api/admin/clients/{clientId}", "/api/admin/clients/{clientId}/configuration", "/api/admin/clients/{clientId}/disable", "/api/admin/clients/{clientId}/enable", "/api/admin/clients/{clientId}/secret/rotate",
 					"/api/admin/resources/{resourceId}/validation-credential", "/api/admin/resources/{resourceId}/validation-credential/rotate", "/api/admin/resources/{resourceId}/validation-credential/disable",
-					"/api/me/authorizations", "/api/me/authorizations/{authorizationId}/revoke", "/api/me/sessions", "/api/me/sessions/{sessionId}/revoke", "/api/me/sessions/revoke-all");
+					"/api/me/authorizations", "/api/me/authorizations/{authorizationId}/revoke", "/api/me/sessions", "/api/me/sessions/{sessionId}/revoke", "/api/me/sessions/revoke-all", "/api/admin/users/{userId}/sessions/revoke-all");
 			assertThat(specification.path("paths").path("/api/me").propertyNames()).containsExactly("get");
 			assertBrowserAuthenticationContract(specification);
 			var search = specification.path("paths").path("/api/admin/users").path("get");

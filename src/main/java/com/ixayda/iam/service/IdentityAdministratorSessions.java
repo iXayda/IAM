@@ -69,6 +69,12 @@ public class IdentityAdministratorSessions {
 				&& verified.verifiedAt().toEpochMilli() >= verified.passwordAuthenticatedAt();
 	}
 
+	/** Verifies the same factor and membership after this operation intentionally advanced only the password epoch. */
+	boolean isCurrentAfterInvalidation(IdentityAdministratorAuthentication verified, long expectedVersion) {
+		return verified != null && expectedVersion == Math.addExact(verified.credentialVersion(), 1) && withinLifetime(verified)
+				&& this.administrators.hasCurrentAuthentication(verified.userId(), verified.factorId(), expectedVersion);
+	}
+
 	/** Called inside the authentication transaction, after the HTTP adapter has flushed the official session repository. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	void requireStored(String originalId, String sessionId, IdentityAdministratorAuthentication evidence) {

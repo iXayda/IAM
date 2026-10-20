@@ -46,6 +46,18 @@ class IdentityAdministratorOperations {
 
 	<T> Result<T> execute(IdentityAdministratorContext context, UUID targetUserId, String code, Runnable persistSession,
 			Function<SecurityAuditContext, T> operation) {
+		return execute(context, targetUserId, code, persistSession, operation, false);
+	}
+
+	/** Only the target's authentication epoch may change; self-targeting saves before the intentional invalidation. */
+	<T> Result<T> executeRevokingSessions(IdentityAdministratorContext context, UUID targetUserId, String code, Runnable persistSession,
+			Function<SecurityAuditContext, T> operation) {
+		Assert.notNull(targetUserId, "Session revocation target is required");
+		return execute(context, targetUserId, code, persistSession, operation, true);
+	}
+
+	private <T> Result<T> execute(IdentityAdministratorContext context, UUID targetUserId, String code, Runnable persistSession,
+			Function<SecurityAuditContext, T> operation, boolean revokesSessions) {
 		Assert.notNull(context, "Administrator context is required");
 		Assert.notNull(persistSession, "Session persistence is required");
 		Assert.notNull(operation, "Administrator operation is required");
@@ -60,10 +72,11 @@ class IdentityAdministratorOperations {
 						new SecurityAuditContext("anonymous", attribution.source(), attribution.correlationId()));
 				return rejected(Status.THROTTLED);
 			}
-			if (lockUsers(context.actorId(), targetUserId).filter(user -> user.status() == IdentityUser.Status.ACTIVE).isEmpty()) { return rejected(Status.INVALID_SESSION); }
+			if (lockUsers(context.actorId(), targetUserId).filter(user -> user.status() == IdentityUser.Status.ACTIVE).isEmpty()) {
+				return rejected(Status.INVALID_SESSION);
+			}
 			var expiry = this.sessions.lockOwnedSessionExpiry(context.actorId(), context.sessionId());
-			if (expiry.isEmpty()
-					|| !this.sessions.isAuthenticationCurrent(context.actorId(), context.authenticatedAt(), context.credentialVersion())) {
+			if (expiry.isEmpty() || !this.sessions.isAuthenticationCurrent(context.actorId(), context.authenticatedAt(), context.credentialVersion())) {
 				return rejected(Status.INVALID_SESSION);
 			}
 			var audit = new SecurityAuditContext("user:" + context.actorId(), attribution.source(), attribution.correlationId());
@@ -76,11 +89,15 @@ class IdentityAdministratorOperations {
 			if (verified.orElseThrow().credentialVersion() != context.credentialVersion()) {
 				throw new IllegalStateException("Password authentication is no longer current");
 			}
+			boolean selfRevocation = revokesSessions && context.actorId().equals(targetUserId);
+			if (selfRevocation) { persistSession.run(); }
 			var result = operation.apply(audit);
-			persistSession.run();
-			if (!this.sessions.isAuthenticationCurrent(context.actorId(), context.authenticatedAt(), context.credentialVersion())
-					|| this.administrators.authorities(context.actorId(), context.authenticatedAt(), context.management()).isEmpty()
-					|| !this.sessions.isWithinSessionDeadline(context.authenticatedAt(), expiry.orElseThrow())) {
+			if (!selfRevocation) { persistSession.run(); }
+			boolean current = selfRevocation
+					? this.administrators.isCurrentAfterInvalidation(context.management(), Math.addExact(context.credentialVersion(), 1))
+					: this.sessions.isAuthenticationCurrent(context.actorId(), context.authenticatedAt(), context.credentialVersion())
+							&& !this.administrators.authorities(context.actorId(), context.authenticatedAt(), context.management()).isEmpty();
+			if (!current || !this.sessions.isWithinSessionDeadline(context.authenticatedAt(), expiry.orElseThrow())) {
 				throw new IllegalStateException("Administrator authentication is no longer current");
 			}
 			return new Result<>(Status.COMPLETED, result);
