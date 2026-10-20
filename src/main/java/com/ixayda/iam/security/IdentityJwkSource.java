@@ -23,7 +23,7 @@ public final class IdentityJwkSource implements JWKSource<SecurityContext> {
 	@Override
 	public List<JWK> get(JWKSelector selector, SecurityContext context) throws KeySourceException {
 		try {
-			List<JWK> available = this.keys.findPublicKey().stream().map(key -> (JWK) new RSAKey.Builder(key.publicKey())
+			List<JWK> available = this.keys.verificationKeys().stream().map(key -> (JWK) new RSAKey.Builder(key.publicKey())
 					.keyID(key.id().toString()).keyUse(KeyUse.SIGNATURE).algorithm(JWSAlgorithm.RS256).build()).toList();
 			return selector.select(new JWKSet(available));
 		}

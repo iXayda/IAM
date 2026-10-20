@@ -4,6 +4,7 @@ import com.ixayda.iam.cli.AdministratorCredentialRecoveryCommand;
 
 import com.ixayda.iam.cli.AdministratorBootstrapCommand;
 import com.ixayda.iam.cli.AdministratorRecoveryCommand;
+import com.ixayda.iam.cli.SigningKeyRotationCommand;
 
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
@@ -42,6 +43,10 @@ public class IamApplication {
 		}
 		if (args.length > 0 && args[0].equals("recover-admin")) {
 			AdministratorRecoveryCommand.run(IamApplication.class, args);
+			return;
+		}
+		if (args.length > 0 && args[0].equals("rotate-signing-key")) {
+			SigningKeyRotationCommand.run(IamApplication.class, args);
 			return;
 		}
 		if (args.length > 0 && !args[0].startsWith("--")) { throw new IllegalArgumentException("Unknown maintenance command"); }
