@@ -78,6 +78,17 @@ The public entry point uses HTTPS, terminated by IAM or a trusted proxy. Forward
 java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
+### Container runtime
+
+Configure the JVM image through `.env`:
+
+```bash
+# Copy the configuration example
+cp .env.example .env
+# Configure .env using its comments, then start the service
+docker compose up -d
+```
+
 ## Application integration
 
 There are no default accounts or public registration endpoints. Users are created through an authorized process. The organization verifies each person's identity and delivers a one-time setup credential; the user sets a password before signing in.

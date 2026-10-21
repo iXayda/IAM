@@ -1,0 +1,74 @@
+services:
+  iam:
+    image: ${IAM_IMAGE:-iam:jvm}
+    build:
+      context: .
+      dockerfile: ${IAM_DOCKERFILE:-build/Dockerfile.jvm}
+      args:
+        IAM_PROFILES: ${IAM_PROFILES:-runtime}
+
+    ports:
+      - "${IAM_BIND_ADDRESS:-127.0.0.1}:${IAM_PORT:-8443}:8080"
+
+    environment:
+      SPRING_PROFILES_ACTIVE: ${IAM_PROFILES:-runtime}
+
+      # JVM 运行参数。
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=50.0}
+
+      # 数据库运行连接
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:?Set SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:?Set SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?Set SPRING_DATASOURCE_PASSWORD}
+
+      # HTTPS 或受信代理的 HTTP 回源
+      SERVER_SSL_ENABLED: ${SERVER_SSL_ENABLED:-true}
+      SERVER_SSL_KEYSTORE: file:/run/iam/tls.p12
+      SERVER_SSL_KEYSTOREPASSWORD: ${SERVER_SSL_KEY_STORE_PASSWORD:-}
+      SERVER_FORWARD_HEADERS_STRATEGY: ${SERVER_FORWARD_HEADERS_STRATEGY:-NONE}
+      SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES: ${SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES:-}
+      CURL_CA_BUNDLE: ${CURL_CA_BUNDLE:-/etc/pki/tls/certs/ca-bundle.crt}
+
+      # OIDC 地址
+      IAM_PROTOCOL_ISSUER: ${IAM_PROTOCOL_ISSUER:?Set IAM_PROTOCOL_ISSUER}
+      IAM_PROTOCOL_IDENTITYFRONTENDURI: ${IAM_PROTOCOL_IDENTITY_FRONTEND_URI:?Set IAM_PROTOCOL_IDENTITY_FRONTEND_URI}
+
+      # 持久保护密钥
+      IAM_SIGNING_KEYFILE: /run/iam/signing.key
+      IAM_TOTP_KEYFILE: /run/iam/totp.key
+      IAM_AUTHORIZATION_KEYFILE: /run/iam/authorization.key
+
+    # 运行隔离
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+
+    # 直连容器探针；HTTP 模式须显式信任回环探针地址。
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |-
+          if [ "$${SERVER_SSL_ENABLED}" = "true" ]; then
+            curl --fail --silent --show-error --output /dev/null --max-time 4 \
+            --noproxy '*' --connect-to ::127.0.0.1:8080 \
+            --request-target /readyz "$${IAM_PROTOCOL_ISSUER}";
+          else
+            curl --fail --silent --show-error --output /dev/null --max-time 4 \
+            --noproxy '*' --header 'X-Forwarded-Proto: https' \
+            http://127.0.0.1:8080/readyz;
+          fi
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
+
+    restart: unless-stopped
+    stop_grace_period: 40s
+
+    logging:
+      driver: local

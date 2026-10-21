@@ -78,6 +78,17 @@ psql -X --set=runtime_role=iam_runtime --set=iam_schema=public --file=deploy/pos
 java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
+### 容器运行
+
+使用 `.env` 配置 JVM 镜像：
+
+```bash
+# 复制配置示例
+cp .env.example .env
+# 按 .env 中的注释完成配置后启动
+docker compose up -d
+```
+
 ## 应用接入
 
 应用没有默认账号或公开注册入口。用户需经授权创建，由组织核验身份并交付一次性开通凭据，完成密码设置后登录。

@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1
+
+# Oracle JDK 21
+FROM container-registry.oracle.com/os/oraclelinux:9-slim AS java
+ARG TARGETARCH
+
+ENV JAVA_HOME=/usr/java/default
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+RUN microdnf install -y gzip tar ca-certificates \
+    && microdnf clean all
+
+RUN case "${TARGETARCH}" in \
+        amd64) jdk_arch=x64; jdk_sha256=12f870b21301b42292558a3f872ce543affa2b86cb6458591c78388c41ddb111 ;; \
+        arm64) jdk_arch=aarch64; jdk_sha256=98a0d0ba15d8e21bd80f34af5ba1904bc57c47556b218e4a6a3fcb7112ec962d ;; \
+        *) exit 1 ;; \
+    esac \
+    && curl --fail --location --silent --show-error \
+        --output /tmp/jdk.tar.gz \
+        "https://download.oracle.com/java/21/archive/jdk-21.0.12.1_linux-${jdk_arch}_bin.tar.gz" \
+    && printf '%s  %s\n' "${jdk_sha256}" /tmp/jdk.tar.gz | sha256sum --check --status \
+    && mkdir -p "${JAVA_HOME}" \
+    && tar --extract --gzip --file /tmp/jdk.tar.gz --directory "${JAVA_HOME}" --strip-components=1 \
+    && rm /tmp/jdk.tar.gz
+
+# 构建可执行 JAR
+FROM java AS build
+WORKDIR /build
+
+COPY --chmod=0755 mvnw ./mvnw
+COPY .mvn/wrapper/maven-wrapper.properties .mvn/wrapper/maven-wrapper.properties
+COPY pom.xml ./pom.xml
+COPY src/main ./src/main
+
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw \
+        --batch-mode \
+        --no-transfer-progress \
+        -DskipTests \
+        package
+
+# 运行镜像
+FROM java AS runtime
+ARG IAM_PROFILES=runtime
+
+RUN mkdir -p /apps/iam /run/iam
+
+WORKDIR /apps/iam
+
+COPY --from=build /build/target/*.jar /apps/iam/iam-server.jar
+
+ENV SPRING_PROFILES_ACTIVE=${IAM_PROFILES}
+# 为非堆内存保留余量，堆上限使用容器可用内存的 50%。
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=50.0"
+USER 10001:10001
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "/apps/iam/iam-server.jar"]

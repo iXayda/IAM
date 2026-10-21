@@ -37,3 +37,8 @@ build/
 .env.*
 !.env.example
 node_modules/
+
+### Container build definitions ###
+!/build/
+/build/*
+!/build/Dockerfile.jvm
