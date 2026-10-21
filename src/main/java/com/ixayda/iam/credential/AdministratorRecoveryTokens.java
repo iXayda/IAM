@@ -25,13 +25,21 @@ public final class AdministratorRecoveryTokens {
 	}
 
 	public String digest(UUID userId, UUID recoveryId, String token) {
+		return digest("iam:administrator-recovery:v1:", userId, recoveryId, token);
+	}
+
+	public String credentialRecoveryDigest(UUID userId, UUID recoveryId, String token) {
+		return digest("iam:administrator-credential-recovery:v1:", userId, recoveryId, token);
+	}
+
+	private String digest(String purpose, UUID userId, UUID recoveryId, String token) {
 		if (userId == null || recoveryId == null || token == null || token.length() != 43
 				|| !token.matches("[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")) {
 			throw new IllegalArgumentException("Invalid administrator recovery credential");
 		}
 		try {
 			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(
-					("iam:administrator-recovery:v1:" + userId + ":" + recoveryId + ":" + token).getBytes(StandardCharsets.US_ASCII)));
+					(purpose + userId + ":" + recoveryId + ":" + token).getBytes(StandardCharsets.US_ASCII)));
 		}
 		catch (NoSuchAlgorithmException ex) { throw new IllegalStateException("SHA-256 is unavailable", ex); }
 	}

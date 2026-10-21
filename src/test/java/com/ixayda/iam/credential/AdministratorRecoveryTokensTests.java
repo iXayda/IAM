@@ -27,8 +27,18 @@ class AdministratorRecoveryTokensTests {
 		assertThat(digest).matches("[0-9a-f]{64}").isEqualTo(this.tokens.digest(userId, recoveryId, token))
 				.isNotEqualTo(this.tokens.digest(UUID.randomUUID(), recoveryId, token))
 				.isNotEqualTo(this.tokens.digest(userId, UUID.randomUUID(), token))
+				.isNotEqualTo(this.tokens.credentialRecoveryDigest(userId, recoveryId, token))
 				.isNotEqualTo(new TotpRecoveryTokens().digest(userId, recoveryId, token))
 				.isNotEqualTo(new TotpReplacementTokens().digest(userId, recoveryId, token));
+	}
+
+	@Test
+	void credentialRecoveryProofsBindTheirIdentityAndRecovery() {
+		UUID userId = UUID.randomUUID(); UUID recoveryId = UUID.randomUUID(); String token = this.tokens.generate();
+		assertThat(this.tokens.credentialRecoveryDigest(userId, recoveryId, token)).matches("[0-9a-f]{64}")
+				.isEqualTo(this.tokens.credentialRecoveryDigest(userId, recoveryId, token))
+				.isNotEqualTo(this.tokens.credentialRecoveryDigest(UUID.randomUUID(), recoveryId, token))
+				.isNotEqualTo(this.tokens.credentialRecoveryDigest(userId, UUID.randomUUID(), token));
 	}
 
 	@ParameterizedTest
@@ -36,6 +46,7 @@ class AdministratorRecoveryTokensTests {
 	@ValueSource(strings = { "invalid", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+" })
 	void malformedOrNoncanonicalProofsCannotBeDigested(String token) {
 		assertThatIllegalArgumentException().isThrownBy(() -> this.tokens.digest(UUID.randomUUID(), UUID.randomUUID(), token));
+		assertThatIllegalArgumentException().isThrownBy(() -> this.tokens.credentialRecoveryDigest(UUID.randomUUID(), UUID.randomUUID(), token));
 	}
 
 }
