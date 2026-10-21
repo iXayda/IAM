@@ -41,6 +41,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -58,6 +59,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ExtendedServletRequestDataBinder;
 
 @RestController
+@RegisterReflectionForBinding(IdentityResourceResponse[].class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Tag(name = "resources", description = "需要当前管理员资格及有效的密码和 TOTP 管理会话。写操作携带本次操作的新 TOTP，不延长已有认证期限。")
 @ApiResponse(responseCode = "400", description = "输入、TOTP 或请求格式无效", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })

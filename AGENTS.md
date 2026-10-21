@@ -12,6 +12,7 @@
 
 - 在仓库根目录使用 Maven Wrapper 和 Oracle JDK 21；Java 集成测试需要 Docker。
 - 修改应用示例或浏览器场景时使用 Node.js 22；浏览器还需按下方验证说明安装 Chromium。
+- 原生构建使用 Oracle GraalVM 25+，工具链准备见 [README](README.md#原生运行)。
 
 执行完整 Java 验证并构建 JAR：
 
@@ -31,6 +32,7 @@ java -jar target/iam.jar --spring.profiles.active=runtime
 - 控制器、安全适配器及 CLI 调用 `service`，持久化访问放在 `repository`；`model` 不依赖 Spring 或数据库 API。遵循 [ArchitectureTests](src/test/java/com/ixayda/iam/ArchitectureTests.java)中的依赖和循环约束；任务涉及架构调整时同步更新实现、约束测试及相关说明。
 - 数据结构变化新增 `src/main/resources/db/migration/` 下的 Flyway 迁移，不改写已交付迁移。
 - HTTP 契约变化同步更新受影响控制器、DTO、OpenAPI 和测试。由 Spring Security 处理的登录、退出及协议端点，另核对 [IdentityBrowserOpenApiConfiguration](src/main/java/com/ixayda/iam/security/IdentityBrowserOpenApiConfiguration.java)和 [IdentityProtocolOpenApiConfiguration](src/main/java/com/ixayda/iam/security/IdentityProtocolOpenApiConfiguration.java)中的描述。
+- 原生或 AOT 变更同时检查 `pom.xml` 中的构建 profiles、相关 runtime hints 和运行配置。原生程序只运行 Web 服务，维护命令使用同版本 JAR。
 
 ## 测试与检查
 
@@ -59,6 +61,7 @@ npm --prefix examples/oidc run check
 | 改动 | 补充检查 |
 | --- | --- |
 | 浏览器或协议交互 | 按 [浏览器验证说明](tests/browser/README.md)准备依赖与 Java 夹具，再运行受影响场景 |
+| 原生构建或 AOT | `./mvnw -Pnative clean native:compile`，再按浏览器验证说明对真实原生程序执行相关场景 |
 | 容器定义或 Compose | 按验证工作流执行构建定义和配置检查 |
 | 仅文档 | 检查链接、示例及说明与实现的一致性；涉及可执行示例时验证受影响命令 |
 

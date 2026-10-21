@@ -20,7 +20,7 @@ npm --prefix examples/oidc test
 npm --prefix examples/oidc run check
 ```
 
-浏览器依赖和场景命令见 [浏览器验证说明](tests/browser/README.md)。
+浏览器依赖和场景命令见 [浏览器验证说明](tests/browser/README.md)。原生运行相关改动还需完成 GraalVM 构建，并对原生程序执行对应场景；构建入口见 [README](README.md)。
 
 测试使用隔离数据、测试 issuer 和临时生成的秘密，不依赖生产凭据。不要提交本地日志、验收结果、截图、trace、数据库归档，或含真实配置及凭据的本地环境文件；脱敏配置模板可随功能维护。
 

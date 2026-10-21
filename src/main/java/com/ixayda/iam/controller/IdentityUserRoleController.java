@@ -38,6 +38,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
@@ -56,6 +57,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ExtendedServletRequestDataBinder;
 
 @RestController
+@RegisterReflectionForBinding({ IdentityUserRoleChangeResponse.class, IdentityUserRoleResponse[].class })
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Tag(name = "user-roles", description = "需要当前管理员资格和有效的密码及 TOTP 管理会话。写操作携带本次新 TOTP。绑定配置不直接代表有效应用权限，也不授予 IAM 管理资格。")
 @ApiResponse(responseCode = "400", description = "输入、TOTP 或请求格式无效", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })

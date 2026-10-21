@@ -40,6 +40,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -53,6 +54,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RegisterReflectionForBinding(IdentityResourceSecretResponse.class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Tag(name = "resource-credentials", description = "单资源在线校验身份，与应用客户端秘密隔离。需要当前管理员密码及 TOTP 会话；写操作另需本次新 TOTP。")
 @ApiResponse(responseCode = "400", description = "输入或 TOTP 无效；仅接受 UTF-8 JSON 整数 version 和文本 code，不接受额外、重复字段或查询串", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })

@@ -11,7 +11,7 @@ import { scenarios } from './scenarios/index.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const started = performance.now();
-let fixture, worker, proxy = false, stage = 'suite-selection', suite, cancelled = false;
+let fixture, worker, executable, documentation = false, proxy = false, stage = 'suite-selection', suite, cancelled = false;
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
   cancelled = true;
   void stop(worker, true).catch(() => {});
@@ -20,7 +20,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
 
 function launch(command, args, options) {
   const child = spawn(command, args, options);
-  const running = {child, failed: false};
+  const running = {child, failed: false, processGroup: options.detached === true};
   child.on('error', () => { running.failed = true; });
   running.closed = new Promise(done => child.once('close', (code, signal) => done({code, signal})));
   return running;
@@ -43,7 +43,13 @@ async function stop(running, terminate = false) {
     await Promise.race([closed, delay(terminate ? 5000 : 15000, undefined, {ref: false})]);
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
-  return await closed;
+  const result = await closed;
+  // A failed or cancelled native fixture must not leave its executable running after the JVM exits.
+  if (running.processGroup && child.pid) {
+    try { process.kill(-child.pid, 'SIGKILL'); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
+  }
+  return result;
 }
 
 async function collectResults(stdout, selectedSuite) {
@@ -85,8 +91,9 @@ async function verify(selectedSuite) {
     const fixtureEnvironment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
       !/^(?:SPRING_|SERVER_|IAM_|MANAGEMENT_|LOGGING_|JAVA_TOOL_OPTIONS$|JDK_JAVA_OPTIONS$|_JAVA_OPTIONS$)/.test(name)));
     fixtureLog = await open(join(directory, 'fixture.log'), 'wx', 0o600);
-    fixture = launch(java, ['-Xmx512m', '-cp', classpath, 'com.ixayda.iam.IdentityAcceptanceFixture', directory, issuer, selectedSuite, ...(proxy ? ['--proxy'] : [])], {
-      cwd: root, env: fixtureEnvironment, stdio: ['pipe', fixtureLog.fd, fixtureLog.fd],
+    fixture = launch(java, ['-Xmx512m', '-cp', classpath, 'com.ixayda.iam.IdentityAcceptanceFixture', directory, issuer, selectedSuite,
+      ...(executable ? [executable] : []), ...(documentation ? ['--documentation'] : []), ...(proxy ? ['--proxy'] : [])], {
+      cwd: root, env: fixtureEnvironment, detached: Boolean(executable), stdio: ['pipe', fixtureLog.fd, fixtureLog.fd],
     });
     let configuration;
     const deadline = Date.now() + 120000;
@@ -124,17 +131,28 @@ try {
   process.umask(0o077);
   let selectedSuite;
   for (const argument of process.argv.slice(2)) {
-    if (argument === '--proxy' && !proxy) proxy = true;
-    else if (!selectedSuite && Object.hasOwn(scenarios, argument)) selectedSuite = argument;
-    else throw new Error();
+    if (argument.startsWith('--native=')) {
+      if (executable || argument.length === '--native='.length) throw new Error();
+      executable = resolve(root, argument.slice('--native='.length));
+    } else if (argument === '--documentation') {
+      if (documentation) throw new Error();
+      documentation = true;
+    } else if (argument === '--proxy') {
+      if (proxy) throw new Error();
+      proxy = true;
+    } else {
+      if (selectedSuite || !Object.hasOwn(scenarios, argument)) throw new Error();
+      selectedSuite = argument;
+    }
   }
+  if (documentation && !executable) throw new Error();
   const selected = selectedSuite ? [selectedSuite] : Object.keys(scenarios);
   let checks = 0;
   for (suite of selected) {
     if (cancelled) throw new Error();
     checks += (await verify(suite)).checks;
   }
-  process.stdout.write(JSON.stringify({event: 'browser_verification_passed', transport: proxy ? 'proxy' : 'tls', scenarios: selected.length, checks,
+  process.stdout.write(JSON.stringify({event: 'browser_verification_passed', runtime: executable ? 'native' : 'jvm', documentation, transport: proxy ? 'proxy' : 'tls', scenarios: selected.length, checks,
     skipped: 0, elapsedMs: Math.round(performance.now() - started)}) + '\n');
 } catch {
   process.stderr.write(JSON.stringify({event: 'browser_verification_failed', ...(Object.hasOwn(scenarios, suite) ? {suite} : {}), stage}) + '\n');

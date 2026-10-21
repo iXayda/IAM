@@ -22,6 +22,7 @@ import io.swagger.v3.oas.annotations.security.SecurityScheme;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.core.NativeDetector;
 import org.springframework.core.env.MapPropertySource;
 
 @SpringBootApplication
@@ -42,6 +43,9 @@ public class IamApplication {
 			}
 		}
 		if (args.length > 0 && !args[0].startsWith("--")) {
+			if (NativeDetector.inNativeImage()) {
+				throw new IllegalArgumentException("Native IAM supports the Web runtime; use the JVM JAR for maintenance commands");
+			}
 			switch (args[0]) {
 				case "release-restore" -> RestoreReleaseCommand.run(IamApplication.class, args);
 				case "recover-restored-admin" -> RestoreAdministratorCommand.run(IamApplication.class, args);
