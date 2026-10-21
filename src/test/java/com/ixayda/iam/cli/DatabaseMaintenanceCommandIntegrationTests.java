@@ -128,10 +128,37 @@ class DatabaseMaintenanceCommandIntegrationTests extends BrowserHttpTestSupport 
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = { "migrate", "initialize-signing-key" })
+	@ValueSource(strings = { "migrate", "initialize-signing-key", "preview-protocol-cleanup", "cleanup-protocol-state" })
 	void maintenanceDispatchRejectsAdditionalArguments(String command) {
 		assertThatIllegalArgumentException().isThrownBy(() -> IamApplication.main(new String[] { command, "--server.port=0" }));
 	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "preview-protocol-cleanup", "cleanup-protocol-state" })
+	void protocolCleanupRequiresAMigratedSchemaAndNeverRunsFlyway(String command) {
+		withSystemProperties(Map.of("spring.flyway.enabled", "true"), () -> assertThatThrownBy(() -> runCommand(command)).isInstanceOf(RuntimeException.class));
+		assertThat(this.maintenance.sql("SELECT count(*) FROM pg_tables WHERE schemaname='public'").query(Long.class).single()).isZero();
+		assertThat(this.startedServers).hasValue(0);
+	}
+
+	@Test
+	void protocolCleanupCommandsAreOfflineRepeatableAndRejectRestrictedRuntimeCredentials() throws Exception {
+		runCommand("migrate"); var before = this.maintenance.sql("SELECT row_to_json(t)::text FROM iam_admin_bootstrap t").query(String.class).list();
+		runCommand("preview-protocol-cleanup"); runCommand("cleanup-protocol-state"); runCommand("cleanup-protocol-state");
+		assertThat(this.maintenance.sql("SELECT row_to_json(t)::text FROM iam_admin_bootstrap t").query(String.class).list()).isEqualTo(before);
+		assertThat(this.startedServers).hasValue(0); assertThat(count("iam_security_audit")).isZero();
+		applyGrants("public");
+		for (String command : List.of("preview-protocol-cleanup", "cleanup-protocol-state")) {
+			var restricted = installationProperties(); restricted.put("spring.datasource.username", this.runtime); restricted.put("spring.flyway.enabled", "false");
+			withSystemProperties(restricted, () ->
+					assertThatIllegalStateException().isThrownBy(() -> IamApplication.main(new String[] { command })).withMessageContaining("database owner"));
+		}
+		withSystemProperties(Map.of("iam.protocol-cleanup.seconds", "0"), () ->
+				assertThatIllegalArgumentException().isThrownBy(() -> runCommand("cleanup-protocol-state")));
+		withSystemProperties(Map.of("spring.main.web-application-type", "servlet"), () ->
+				assertThatIllegalStateException().isThrownBy(() -> runCommand("cleanup-protocol-state")).withMessageContaining("non-Web"));
+	}
+
 
 	@Test
 	void runtimeCannotAlterAuditsBootstrapSigningOrSchemaAndRepeatedGrantsRemoveStaleColumnPermissions() throws Exception {

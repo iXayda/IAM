@@ -30,7 +30,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class IamApplication {
 
 	public static void main(String[] args) {
-		if (args.length > 0 && (args[0].equals("migrate") || args[0].equals("initialize-signing-key"))) {
+		if (args.length > 0 && (args[0].equals("migrate") || args[0].equals("initialize-signing-key")
+				|| args[0].equals("preview-protocol-cleanup") || args[0].equals("cleanup-protocol-state"))) {
 			DatabaseMaintenanceCommand.run(IamApplication.class, args);
 			return;
 		}

@@ -112,3 +112,24 @@ java -jar target/iam.jar rotate-signing-key
 业务应用独立清理密钥和在线校验缓存，结束受影响本地会话。完成处置后，用可信签名保护文件执行 `recover-signing-key`，确认暂停签发的失陷密钥，生成新签名身份。旧密钥和已撤销授权不会恢复。
 
 两个命令均使用本指南的 `java -jar` 入口及受控交互终端。保护文件本身也失陷时，先按事件范围隔离受影响历史材料并更换文件，不仅处理当前密钥。
+
+## 清理过期协议状态
+
+用数据库所有者连接操作已迁移的数据库，先预览再清理：
+
+```bash
+java -jar target/iam.jar preview-protocol-cleanup
+java -jar target/iam.jar cleanup-protocol-state
+```
+
+两个命令固定关闭自动迁移，不删除安全审计。只清理越过授权码、Token、刷新家族的最后有效时间及额外 330 秒保留窗口的授权，以及已过期交互；父 Refresh Token 已消费不代表家族可删除。
+
+| 配置属性 | 默认值 | 范围 |
+| --- | --- | --- |
+| `iam.protocol-cleanup.batch-size` | 100 | 1–100 |
+| `iam.protocol-cleanup.maximum` | 1000 | 批大小至 10000 |
+| `iam.protocol-cleanup.seconds` | 30 | 1–300 秒 |
+
+需要调整时通过 JVM 系统属性在 `-jar` 前传入，例如 `java -Diam.protocol-cleanup.maximum=200 -jar target/iam.jar preview-protocol-cleanup`。
+
+预览对授权和交互分别限额，不代表全库总数。清理对两类合计限额，跳过繁忙授权，各批独立提交；某批失败回滚该批，之前已提交批次保留。检查结果后可按维护计划再次运行，不通过直接删表绕开重放保护。
