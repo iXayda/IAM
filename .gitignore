@@ -42,3 +42,4 @@ node_modules/
 !/build/
 /build/*
 !/build/Dockerfile.jvm
+!/build/Dockerfile.native

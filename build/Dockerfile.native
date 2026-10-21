@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1
+
+# AOT 构建与运行使用相同的 Spring profiles。
+ARG IAM_PROFILES=runtime
+
+# 构建原生程序
+FROM container-registry.oracle.com/graalvm/native-image:25.0.4-ol9 AS build
+ARG IAM_PROFILES
+
+WORKDIR /build
+
+COPY --chmod=0755 mvnw ./mvnw
+COPY .mvn/wrapper/maven-wrapper.properties .mvn/wrapper/maven-wrapper.properties
+COPY pom.xml ./pom.xml
+COPY src/main ./src/main
+
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw \
+        --batch-mode \
+        --no-transfer-progress \
+        --activate-profiles native \
+        -DskipTests \
+        -DbuildArgs=-march=compatibility \
+        "-Diam.native.profiles=${IAM_PROFILES}" \
+        native:compile
+
+# 运行镜像
+FROM container-registry.oracle.com/os/oraclelinux:9-slim AS runtime
+ARG IAM_PROFILES
+
+RUN microdnf install -y zlib ca-certificates \
+    && microdnf clean all \
+    && mkdir -p /apps/iam /run/iam
+
+WORKDIR /apps/iam
+
+COPY --from=build /build/target/iam /apps/iam/iam-server
+COPY --from=build /build/target/*.so /apps/iam/
+
+ENV SPRING_PROFILES_ACTIVE=${IAM_PROFILES}
+USER 10001:10001
+EXPOSE 8080
+
+ENTRYPOINT ["/apps/iam/iam-server"]

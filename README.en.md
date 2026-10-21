@@ -96,7 +96,7 @@ Distribute `target/iam` together with the shared libraries in the same directory
 
 ### Container runtime
 
-Configure the JVM image through `.env`:
+Select the native or JVM image in `.env`:
 
 ```bash
 # Copy the configuration example

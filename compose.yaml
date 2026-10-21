@@ -1,9 +1,9 @@
 services:
   iam:
-    image: ${IAM_IMAGE:-iam:jvm}
+    image: ${IAM_IMAGE:-iam:native}
     build:
       context: .
-      dockerfile: ${IAM_DOCKERFILE:-build/Dockerfile.jvm}
+      dockerfile: ${IAM_DOCKERFILE:-build/Dockerfile.native}
       args:
         IAM_PROFILES: ${IAM_PROFILES:-runtime}
 
@@ -13,7 +13,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: ${IAM_PROFILES:-runtime}
 
-      # JVM 运行参数。
+      # JVM 运行参数；原生程序不使用该变量。
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=50.0}
 
       # 数据库运行连接

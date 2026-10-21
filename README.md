@@ -96,7 +96,7 @@ java -jar target/iam.jar --spring.profiles.active=runtime
 
 ### 容器运行
 
-使用 `.env` 配置 JVM 镜像：
+通过 `.env` 选择原生或 JVM 镜像：
 
 ```bash
 # 复制配置示例
