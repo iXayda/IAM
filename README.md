@@ -97,7 +97,7 @@ java -jar target/iam.jar --spring.profiles.active=runtime
 
 ### 容器运行
 
-在宿主机的专用目录中准备与数据库匹配的 `signing.key`、`totp.key` 和 `authorization.key`，IAM 直接提供 HTTPS 时再放入 `tls.p12`。将 `.env` 中的 `IAM_SECRETS_DIR` 设为该目录的绝对路径，并配置 JVM 镜像。Compose 将目录只读挂载至 `/run/iam`，容器用户 UID 10001 需能读取文件。
+在宿主机的专用目录中准备与数据库匹配的 `signing.key`、`totp.key` 和 `authorization.key`，IAM 直接提供 HTTPS 时再放入 `tls.p12`。将 `.env` 中的 `IAM_SECRETS_DIR` 设为该目录的绝对路径，并选择原生或 JVM 镜像。Compose 将目录只读挂载至 `/run/iam`，容器用户 UID 10001 需能读取文件。
 
 ```bash
 # 复制配置示例

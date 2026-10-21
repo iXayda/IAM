@@ -8,7 +8,7 @@
 
 使用专用数据库，维护账号执行迁移和离线命令，Web 使用受限运行账号。连接配置分别注入，Web 进程不持有维护密码。首次安装的角色、连接及启动配置见 [README](../README.md#开发与运行)。
 
-Compose 将宿主机专用目录 `IAM_SECRETS_DIR`（默认 `/etc/iam/secrets`）只读挂载至 `/run/iam`。目录中放置 `signing.key`、`totp.key` 和 `authorization.key`，允许 UID `10001` 读取；IAM 提供 HTTPS 时，还需在此提供 TLS 密钥库。镜像与维护 JAR 保持同一版本。构建见 [容器运行](../README.md#容器运行)及 [.env.example](../.env.example)，运行镜像不包含组织秘密。
+Compose 将宿主机专用目录 `IAM_SECRETS_DIR`（默认 `/etc/iam/secrets`）只读挂载至 `/run/iam`。目录中放置 `signing.key`、`totp.key` 和 `authorization.key`，允许 UID `10001` 读取；IAM 提供 HTTPS 时，还需在此提供 TLS 密钥库。镜像与维护 JAR 保持同一版本。构建和镜像选择见 [容器运行](../README.md#容器运行)及 [.env.example](../.env.example)，运行镜像不包含组织秘密。
 
 原生可执行文件只运行 Web 服务，离线维护继续使用同版本 JAR。`documentation` 功能需要在 AOT 构建和运行时同时选择；功能配置变化后重新构建，构建占位地址不作为运行 issuer。
 

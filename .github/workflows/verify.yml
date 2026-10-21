@@ -183,6 +183,7 @@ jobs:
 
       - name: Check container build definitions
         run: |
+          docker build --check --file build/Dockerfile.native .
           docker build --check --file build/Dockerfile.jvm .
 
       - name: Validate container configuration
@@ -195,7 +196,7 @@ jobs:
           IAM_PROTOCOL_IDENTITY_FRONTEND_URI: https://iam.example.invalid:8443/identity
           IAM_PROFILES: runtime
         run: |
-          for runtime in jvm; do
+          for runtime in jvm native; do
             export IAM_IMAGE="iam:$runtime"
             export IAM_DOCKERFILE="build/Dockerfile.$runtime"
             SERVER_SSL_ENABLED=true SERVER_FORWARD_HEADERS_STRATEGY=NONE \
