@@ -1,6 +1,6 @@
 # 浏览器与独立应用验证
 
-使用真实 Chromium、Docker PostgreSQL 18、受限数据库运行身份和 HTTPS。每次运行创建独立数据库、管理员和临时密钥，整套验证共用该夹具，应用验证启动实际 `examples/oidc` 中的 BFF 与资源进程。
+使用真实 Chromium、Docker PostgreSQL 18、受限数据库运行身份和 HTTPS。每个场景使用独立数据库、管理员、密码、密钥和浏览器会话，应用验证启动实际 `examples/oidc` 中的 BFF 与资源进程。
 
 ## 准备环境
 
@@ -24,13 +24,37 @@ cd ../..
 
 以下运行命令均在仓库根目录执行。
 
-## 运行验证
+## 选择运行方式
 
-执行整套 JVM 浏览器与独立应用验证：
+### JVM
+
+不带场景参数时依次执行全部场景：
 
 ```bash
 node tests/browser/verify.mjs
 ```
+
+## 选择场景
+
+| 场景 | 主要验证 |
+| --- | --- |
+| `accounts` | 浏览器创建与开通用户 |
+| `application-a` | 浏览器注册应用 A 的资源、角色、绑定、客户端及校验凭据，验证登录与资源访问 |
+| `application-b` | 使用独立配置完成应用 B 的注册、登录与资源访问 |
+| `oidc` | 两个独立应用的协议交互及 SSO |
+| `mfa` | 因素注册、更换和恢复等生命周期 |
+
+单独运行场景：
+
+```bash
+node tests/browser/verify.mjs accounts
+node tests/browser/verify.mjs application-a
+node tests/browser/verify.mjs application-b
+node tests/browser/verify.mjs oidc
+node tests/browser/verify.mjs mfa
+```
+
+与当前场景无关的前置用户及应用由夹具调用现有应用服务创建，保留业务校验、事务和审计。CI 在 JVM 模式下通过矩阵并行执行五个场景。
 
 验证会等待真实 TOTP 步长，每个管理敏感操作使用新的动态码，完整运行需要数分钟。不得通过放宽 MFA、重设数据库计数器或跳过场景缩短等待。
 
@@ -39,14 +63,14 @@ node tests/browser/verify.mjs
 验证外部 HTTPS 入口通过受信 HTTP 回源连接 IAM：
 
 ```bash
-node tests/browser/verify.mjs --proxy
+node tests/browser/verify.mjs --proxy oidc
 ```
 
-`--proxy` 启用受信代理验证；测试入口清除外来转发头，再设置 HTTPS 和真实来源地址。未指定时继续使用经过证书验证的 HTTPS 回源。
+`--proxy` 可与任一场景组合；测试入口清除外来转发头，再设置 HTTPS 和真实来源地址。未指定时继续使用经过证书验证的 HTTPS 回源。
 
 ## 结果与故障定位
 
-脚本依据浏览器子进程的退出码判断结果。成功路径输出 `browser_verification_passed` 和检查数；失败路径输出阶段标签及可用的 HTTP 状态。按最后输出的阶段定位后，重新执行整套验证。
+只有场景报告完成、检查数非零且进程正常退出才算通过；失败、取消或缺少报告均返回失败。输出包含场景、固定阶段、HTTP 状态、检查数和耗时。失败时按阶段标签定位，并单独重跑对应场景。
 
 失败时不输出 Playwright 异常、协议 URL、响应体或截图，不记录浏览器 trace。凭据与进程日志位于权限受限的临时目录，结束时清理，数据库容器随夹具结束而销毁。可以将脱敏阶段输出保存到 `target/`，不要提交本地验收结果。
 

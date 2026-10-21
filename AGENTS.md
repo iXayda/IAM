@@ -6,7 +6,7 @@
 
 - `src/main/java/com/ixayda/iam/`：Java 源码；`src/test/java/com/ixayda/iam/`：Java 测试及共享夹具。
 - `examples/oidc/`：独立 BFF 和资源服务示例；`tests/browser/`：浏览器验证，`tests/browser/fixtures/` 下的身份前端仅用于测试。
-- `build/`、`compose.yaml`：容器构建与运行配置。
+- `build/`、`compose.yaml`：容器构建与运行配置；[验证工作流](.github/workflows/verify.yml)：CI 任务及分组。
 
 ## 开发环境
 
@@ -34,7 +34,7 @@ java -jar target/iam.jar --spring.profiles.active=runtime
 
 ## 测试与检查
 
-先运行受影响测试；行为变化同步更新相应测试，按涉及的风险覆盖拒绝、重放、并发和故障回滚。修正后重新测试并审阅 diff。
+先运行受影响测试；行为变化同步更新相应测试，按涉及的风险覆盖拒绝、重放、并发和故障回滚。修正后重新测试并审阅 diff，交付前核对验证工作流中的相关任务。
 
 单个 Java 测试示例，替换为受影响的测试类：
 
@@ -59,6 +59,7 @@ npm --prefix examples/oidc run check
 | 改动 | 补充检查 |
 | --- | --- |
 | 浏览器或协议交互 | 按 [浏览器验证说明](tests/browser/README.md)准备依赖与 Java 夹具，再运行受影响场景 |
+| 容器定义或 Compose | 按验证工作流执行构建定义和配置检查 |
 | 仅文档 | 检查链接、示例及说明与实现的一致性；涉及可执行示例时验证受影响命令 |
 
 ## 安全注意点
