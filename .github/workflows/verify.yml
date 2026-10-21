@@ -104,7 +104,7 @@ jobs:
     name: Browser (${{ matrix.suite }}, ${{ matrix.transport }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    container:
+    container: &browser-container
       # Keep this version aligned with tests/browser/package-lock.json.
       image: mcr.microsoft.com/playwright:v1.64.1-noble
       options: --init --shm-size=1g --add-host=host.docker.internal:host-gateway
@@ -207,6 +207,225 @@ jobs:
               docker compose --env-file /dev/null --file compose.yaml config --quiet
           done
 
+  native-runtime-build:
+    name: Native build (runtime)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Oracle GraalVM
+        uses: actions/setup-java@v5
+        with:
+          distribution: graalvm
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential zlib1g-dev
+
+      - name: Build native application
+        run: >-
+          ./mvnw -B -ntp -Pnative -DskipTests -DbuildArgs=-march=compatibility
+          -Diam.native.profiles=runtime clean native:compile
+
+      - name: Package native application
+        working-directory: target
+        run: tar -czf iam-native.tar.gz iam ./*.so
+
+      - name: Upload native application
+        uses: actions/upload-artifact@v7
+        with:
+          name: iam-native-runtime
+          path: target/iam-native.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  native-runtime-browser:
+    name: Native browser (runtime, ${{ matrix.suite }}, ${{ matrix.transport }})
+    needs: native-runtime-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: *browser-container
+
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        suite: [accounts, application-a, application-b, oidc, mfa]
+        transport: [tls]
+        include:
+          - suite: oidc
+            transport: proxy
+
+    env:
+      BROWSER_SUITE: ${{ matrix.suite }}
+      BROWSER_TRANSPORT: ${{ matrix.transport }}
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Oracle JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: oracle
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            examples/oidc/package-lock.json
+            tests/browser/package-lock.json
+
+      - name: Prepare Java fixture
+        run: >-
+          ./mvnw -B -ntp "-Dmaven.repo.local=$HOME/.m2/repository"
+          test-compile dependency:build-classpath
+          -Dmdep.includeScope=test -Dmdep.outputFile=target/acceptance-classpath.txt
+
+      - name: Download native application
+        uses: actions/download-artifact@v8
+        with:
+          name: iam-native-runtime
+          path: target/native
+
+      - name: Extract native application
+        run: tar -xzf target/native/iam-native.tar.gz -C target/native
+
+      - name: Install browser test dependencies
+        run: |
+          npm --prefix examples/oidc ci --ignore-scripts
+          npm --prefix tests/browser ci --ignore-scripts
+
+      - name: Verify native browser and application integration
+        run: |
+          arguments=(--native=target/native/iam "$BROWSER_SUITE")
+          if [[ "$BROWSER_TRANSPORT" == proxy ]]; then arguments+=(--proxy); fi
+          node tests/browser/verify.mjs "${arguments[@]}"
+
+  native-documentation-build:
+    name: Native build (documentation)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Oracle GraalVM
+        uses: actions/setup-java@v5
+        with:
+          distribution: graalvm
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential zlib1g-dev
+
+      - name: Build native application
+        run: >-
+          ./mvnw -B -ntp -Pnative -DskipTests -DbuildArgs=-march=compatibility
+          -Diam.native.profiles=runtime,documentation clean native:compile
+
+      - name: Package native application
+        working-directory: target
+        run: tar -czf iam-native.tar.gz iam ./*.so
+
+      - name: Upload native application
+        uses: actions/upload-artifact@v7
+        with:
+          name: iam-native-documentation
+          path: target/iam-native.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  native-documentation-browser:
+    name: Native browser (documentation, accounts)
+    needs: native-documentation-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: *browser-container
+
+    env:
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Oracle JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: oracle
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            examples/oidc/package-lock.json
+            tests/browser/package-lock.json
+
+      - name: Prepare Java fixture
+        run: >-
+          ./mvnw -B -ntp "-Dmaven.repo.local=$HOME/.m2/repository"
+          test-compile dependency:build-classpath
+          -Dmdep.includeScope=test -Dmdep.outputFile=target/acceptance-classpath.txt
+
+      - name: Download native application
+        uses: actions/download-artifact@v8
+        with:
+          name: iam-native-documentation
+          path: target/native
+
+      - name: Extract native application
+        run: tar -xzf target/native/iam-native.tar.gz -C target/native
+
+      - name: Install browser test dependencies
+        run: |
+          npm --prefix examples/oidc ci --ignore-scripts
+          npm --prefix tests/browser ci --ignore-scripts
+
+      - name: Verify native browser and application integration
+        run: node tests/browser/verify.mjs --native=target/native/iam --documentation accounts
+
   result:
     name: Required checks
     if: ${{ always() }}
@@ -215,6 +434,10 @@ jobs:
       - examples
       - browser
       - container
+      - native-runtime-build
+      - native-runtime-browser
+      - native-documentation-build
+      - native-documentation-browser
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
