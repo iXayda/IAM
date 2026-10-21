@@ -1,6 +1,8 @@
 package com.ixayda.iam;
 
 import java.io.InputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -10,12 +12,22 @@ import java.sql.DriverManager;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
+import com.ixayda.iam.model.IdentityClientConfiguration;
 import com.ixayda.iam.model.SecurityAuditContext;
 import com.ixayda.iam.model.TotpAuthenticationContext;
 import com.ixayda.iam.service.IdentityAdministrators;
+import com.ixayda.iam.service.IdentityClients;
+import com.ixayda.iam.service.IdentityResourceCredentials;
+import com.ixayda.iam.service.IdentityResourceRoles;
+import com.ixayda.iam.service.IdentityResources;
+import com.ixayda.iam.service.IdentityUserRoles;
+import com.ixayda.iam.service.IdentityUserSetups;
+import com.ixayda.iam.service.IdentityUsers;
 
 import org.bouncycastle.crypto.digests.SHA1Digest;
 import org.bouncycastle.crypto.macs.HMac;
@@ -39,15 +51,18 @@ public final class IdentityAcceptanceFixture {
 
 	public static void main(String[] args) {
 		try {
-			if (args.length < 2 || args.length > 3 || args.length == 3 && !args[2].equals("--proxy")) {
+			if (args.length < 3 || args.length > 4 || args.length == 4 && !args[3].equals("--proxy")) {
 				throw new IllegalArgumentException("Invalid acceptance arguments");
 			}
-			run(Path.of(args[0]), args[1], args.length == 3);
+			run(Path.of(args[0]), args[1], args[2], args.length == 4);
 		}
 		catch (Exception ex) { System.err.println("Isolated acceptance fixture failed"); System.exit(1); }
 	}
 
-	private static void run(Path directory, String issuer, boolean proxy) throws Exception {
+	private static void run(Path directory, String issuer, String suite, boolean proxy) throws Exception {
+		if (!Set.of("accounts", "application-a", "application-b", "oidc", "mfa").contains(suite)) {
+			throw new IllegalArgumentException("Unknown acceptance suite");
+		}
 		if (!issuer.matches("https://127\\.0\\.0\\.1:[0-9]{1,5}")) { throw new IllegalArgumentException("Loopback fixture issuer is required"); }
 		if (!Files.isDirectory(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)
 				|| !Files.getPosixFilePermissions(directory).equals(PosixFilePermissions.fromString("rwx------"))) {
@@ -86,6 +101,7 @@ public final class IdentityAcceptanceFixture {
 				var codes = administrators.bootstrap(id, enrollment.factorId(), adminPassword, otp(enrollment.secret()), authentication).orElseThrow();
 				result.put("adminId", id); result.put("adminUsername", "acceptance-admin"); result.put("adminPassword", adminPassword);
 				result.put("adminTotpSecret", enrollment.secret()); result.put("adminRecoveryCodes", codes.codes());
+				prepareScenario(owner, suite, result, audit);
 			}
 			postgres.copyFileToContainer(MountableFile.forHostPath(Path.of("deploy/postgresql/grant-runtime.sql")), "/tmp/grant-runtime.sql");
 			var granted = postgres.execInContainer("psql", "-X", "-U", "acceptance_owner", "-d", "acceptance", "-v", "runtime_role=acceptance_runtime", "-v", "iam_schema=public", "-f", "/tmp/grant-runtime.sql");
@@ -114,6 +130,42 @@ public final class IdentityAcceptanceFixture {
 				System.out.println("Isolated acceptance fixture ready");
 				while (System.in.read() != -1) { break; }
 			}
+		}
+	}
+
+	private static void prepareScenario(ConfigurableApplicationContext owner, String suite, Map<String, Object> result,
+			SecurityAuditContext audit) throws Exception {
+		if (suite.equals("accounts")) { return; }
+		var user = owner.getBean(IdentityUsers.class).create("browser-user", "Browser user", audit);
+		var setups = owner.getBean(IdentityUserSetups.class);
+		String password = "orchard amber bridge ocean " + UUID.randomUUID();
+		var proof = setups.issue(user.id(), audit);
+		setups.complete(user.id(), proof.token(), password, audit.source(), audit.correlationId());
+		result.put("user", Map.of("id", user.id(), "username", user.username(), "password", password));
+		if (suite.equals("oidc")) {
+			result.put("applications", List.of(
+					prepareApplication(owner, user.id(), "a", "127.0.0.2", "127.0.0.4", audit),
+					prepareApplication(owner, user.id(), "b", "127.0.0.3", "127.0.0.5", audit)));
+		}
+	}
+
+	private static Map<String, Object> prepareApplication(ConfigurableApplicationContext owner, UUID userId, String name,
+			String rpHost, String apiHost, SecurityAuditContext audit) throws Exception {
+		String origin = freeOrigin(rpHost), apiOrigin = freeOrigin(apiHost);
+		var resource = owner.getBean(IdentityResources.class).create("orders-" + name, "Orders " + name, audit);
+		var role = owner.getBean(IdentityResourceRoles.class).create(resource.id(), "reader", "Reader", audit);
+		owner.getBean(IdentityUserRoles.class).change(userId, role.id(), 0, true, audit);
+		var client = owner.getBean(IdentityClients.class).create(new IdentityClientConfiguration("Application " + name,
+				resource.id(), List.of(origin + "/callback"), Set.of("openid", "profile", "offline_access"), Set.of(role.id())), audit);
+		var validator = owner.getBean(IdentityResourceCredentials.class).rotateSecret(resource.id(), 0, audit);
+		return Map.of("name", name, "origin", origin, "apiOrigin", apiOrigin, "audience", resource.audience(),
+				"resourceId", resource.id(), "roleId", role.id(), "clientId", client.client().id(),
+				"clientSecret", client.secret(), "validationSecret", validator.secret());
+	}
+
+	private static String freeOrigin(String host) throws Exception {
+		try (var socket = new ServerSocket(0, 0, InetAddress.getByName(host))) {
+			return "https://" + host + ":" + socket.getLocalPort();
 		}
 	}
 

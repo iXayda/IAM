@@ -1,0 +1,228 @@
+name: Build and Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: 'true'
+
+jobs:
+  java:
+    name: Java (${{ matrix.suite }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - suite: controllers
+            phase: test
+            tests: '**/controller/**,!**/controller/IdentityTotp*,!**/controller/IdentityMfa*'
+          - suite: mfa
+            phase: test
+            tests: '**/controller/IdentityTotp*,**/controller/IdentityMfa*'
+          - suite: services
+            phase: test
+            tests: '**/service/**'
+          - suite: core
+            phase: verify
+            tests: '*,!**/controller/**,!**/service/**'
+
+    env:
+      TEST_SELECTION: ${{ matrix.tests }}
+      MAVEN_PHASE: ${{ matrix.phase }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Oracle JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: oracle
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Run Java tests (${{ matrix.suite }})
+        run: >-
+          ./mvnw -B -ntp -DargLine=-Xmx2g -Dspring.test.context.cache.maxSize=4
+          -DfailIfNoTests=true "-Dtest=$TEST_SELECTION" clean "$MAVEN_PHASE"
+
+  examples:
+    name: OIDC examples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: examples/oidc
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: examples/oidc/package-lock.json
+
+      - name: Install example dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test OIDC examples
+        run: npm test
+
+      - name: Check example syntax
+        run: npm run check
+
+  browser:
+    name: Browser (${{ matrix.suite }}, ${{ matrix.transport }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      # Keep this version aligned with tests/browser/package-lock.json.
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      options: --init --shm-size=1g --add-host=host.docker.internal:host-gateway
+
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        suite: [accounts, application-a, application-b, oidc, mfa]
+        transport: [tls]
+        include:
+          - suite: oidc
+            transport: proxy
+
+    env:
+      BROWSER_SUITE: ${{ matrix.suite }}
+      BROWSER_TRANSPORT: ${{ matrix.transport }}
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Oracle JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: oracle
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            examples/oidc/package-lock.json
+            tests/browser/package-lock.json
+
+      - name: Prepare Java fixture
+        run: >-
+          ./mvnw -B -ntp "-Dmaven.repo.local=$HOME/.m2/repository"
+          test-compile dependency:build-classpath
+          -Dmdep.includeScope=test -Dmdep.outputFile=target/acceptance-classpath.txt
+
+      - name: Install browser test dependencies
+        run: |
+          npm --prefix examples/oidc ci --ignore-scripts
+          npm --prefix tests/browser ci --ignore-scripts
+
+      - name: Test browser helpers
+        if: ${{ matrix.suite == 'mfa' }}
+        run: npm --prefix tests/browser run test:unit
+
+      - name: Verify browser and application integration
+        run: |
+          arguments=("$BROWSER_SUITE")
+          if [[ "$BROWSER_TRANSPORT" == proxy ]]; then arguments+=(--proxy); fi
+          node tests/browser/verify.mjs "${arguments[@]}"
+
+  container:
+    name: Container configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check container build definitions
+        run: |
+          docker build --check --file build/Dockerfile.jvm .
+
+      - name: Validate container configuration
+        env:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://database.example.invalid:5432/iam
+          SPRING_DATASOURCE_USERNAME: iam_runtime
+          SPRING_DATASOURCE_PASSWORD: configuration-check-only
+          SERVER_SSL_KEY_STORE_PASSWORD: configuration-check-only
+          IAM_PROTOCOL_ISSUER: https://iam.example.invalid:8443
+          IAM_PROTOCOL_IDENTITY_FRONTEND_URI: https://iam.example.invalid:8443/identity
+          IAM_PROFILES: runtime
+        run: |
+          for runtime in jvm; do
+            export IAM_IMAGE="iam:$runtime"
+            export IAM_DOCKERFILE="build/Dockerfile.$runtime"
+            SERVER_SSL_ENABLED=true SERVER_FORWARD_HEADERS_STRATEGY=NONE \
+              docker compose --env-file /dev/null --file compose.yaml config --quiet
+            SERVER_SSL_ENABLED=false SERVER_SSL_KEY_STORE_PASSWORD='' \
+              SERVER_FORWARD_HEADERS_STRATEGY=NATIVE \
+              SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES='127\.0\.0\.1' \
+              docker compose --env-file /dev/null --file compose.yaml config --quiet
+          done
+
+  result:
+    name: Required checks
+    if: ${{ always() }}
+    needs:
+      - java
+      - examples
+      - browser
+      - container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+
+    steps:
+      - name: Require successful verification
+        env:
+          CHECKS_PASSED: >-
+            ${{ !contains(needs.*.result, 'failure')
+                && !contains(needs.*.result, 'cancelled')
+                && !contains(needs.*.result, 'skipped') }}
+        run: test "$CHECKS_PASSED" = true
