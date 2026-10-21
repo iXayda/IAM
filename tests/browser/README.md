@@ -1,12 +1,12 @@
 # 浏览器与独立应用验证
 
-使用真实 Chromium、Docker PostgreSQL 18、受限数据库运行身份和 HTTPS。每个场景使用独立数据库、管理员、密码、密钥和浏览器会话，应用验证启动实际 `examples/oidc` 中的 BFF 与资源进程。
+使用真实 Chromium、Docker PostgreSQL 18、受限数据库运行身份和 HTTPS。同一套场景支持 JVM 和原生 Web 服务；每个场景使用独立数据库、管理员、密码、密钥和浏览器会话，应用验证启动实际 `examples/oidc` 中的 BFF 与资源进程。
 
 ## 准备环境
 
-需要 JDK 21、Node.js 22、可用的 Docker，以及 Chromium 运行库。
+需要 JDK 21、Node.js 22、可用的 Docker，以及 Chromium 运行库。原生场景先按 [原生运行说明](../../README.md#原生运行)完成构建；文档场景使用 [接口文档说明](../../README.md#接口文档工具)中的构建配置。
 
-在仓库根目录准备 Java 夹具及测试类路径：
+原生构建完成后，再在仓库根目录准备 Java 夹具及测试类路径；仅运行 JVM 场景时直接从此步骤开始：
 
 ```bash
 ./mvnw test-compile dependency:build-classpath -Dmdep.includeScope=test -Dmdep.outputFile=target/acceptance-classpath.txt
@@ -34,11 +34,28 @@ cd ../..
 node tests/browser/verify.mjs
 ```
 
+### 原生程序
+
+通过 `--native` 指定已构建的真实可执行文件：
+
+```bash
+node tests/browser/verify.mjs --native=target/iam
+node tests/browser/verify.mjs --native=target/iam accounts
+```
+
+### 原生文档功能
+
+使用启用了 `runtime,documentation` 的原生产物，验证 OpenAPI 的 JSON 和 YAML 导出：
+
+```bash
+node tests/browser/verify.mjs --native=target/iam --documentation accounts
+```
+
 ## 选择场景
 
 | 场景 | 主要验证 |
 | --- | --- |
-| `accounts` | 浏览器创建与开通用户 |
+| `accounts` | 浏览器创建与开通用户；原生模式另验证无效配置拒绝启动、离线命令限制和重启后会话及签名身份 |
 | `application-a` | 浏览器注册应用 A 的资源、角色、绑定、客户端及校验凭据，验证登录与资源访问 |
 | `application-b` | 使用独立配置完成应用 B 的注册、登录与资源访问 |
 | `oidc` | 两个独立应用的协议交互及 SSO |
@@ -64,6 +81,7 @@ node tests/browser/verify.mjs mfa
 
 ```bash
 node tests/browser/verify.mjs --proxy oidc
+node tests/browser/verify.mjs --native=target/iam --proxy oidc
 ```
 
 `--proxy` 可与任一场景组合；测试入口清除外来转发头，再设置 HTTPS 和真实来源地址。未指定时继续使用经过证书验证的 HTTPS 回源。

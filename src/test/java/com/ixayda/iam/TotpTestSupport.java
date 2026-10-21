@@ -2,6 +2,7 @@ package com.ixayda.iam;
 
 import java.time.Clock;
 import java.util.Locale;
+import java.util.function.LongFunction;
 import java.util.function.Supplier;
 import java.util.stream.LongStream;
 
@@ -12,7 +13,7 @@ import org.bouncycastle.crypto.macs.HMac;
 import org.bouncycastle.crypto.params.KeyParameter;
 import org.bouncycastle.util.encoders.Base32;
 
-/** Keeps sequential fixture operations from sharing a code across adjacent TOTP steps. */
+/** TOTP generation and step tracking for sequential fixture operations. */
 public final class TotpTestSupport {
 
 	private TotpTestSupport() {
@@ -31,6 +32,15 @@ public final class TotpTestSupport {
 			}
 		}
 		throw new AssertionError("Cannot create distinct adjacent TOTP codes for the fixture");
+	}
+
+	/** Conservatively bounds the previous proof's consumption after its request has completed. */
+	public static long latestMatchingStep(LongFunction<String> otp, long usedStep, long currentStep) {
+		String code = otp.apply(usedStep);
+		for (long candidate = currentStep + 1; candidate > usedStep; candidate--) {
+			if (code.equals(otp.apply(candidate))) { return candidate; }
+		}
+		return usedStep;
 	}
 
 	public static String otp(IdentityTotpEnrollment factor, long step) {

@@ -14,11 +14,16 @@ import io.swagger.v3.oas.models.media.ObjectSchema;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.HeaderParameter;
+import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
+import io.swagger.v3.oas.models.servers.Server;
+import io.swagger.v3.oas.models.tags.Tag;
 
 import org.springdoc.core.customizers.OpenApiCustomizer;
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
@@ -26,6 +31,7 @@ import org.springframework.context.annotation.Configuration;
 
 /** Describes authentication filters and their shared HTTP boundary. */
 @Configuration(proxyBeanMethods = false)
+@RegisterReflectionForBinding({ SecurityRequirement[].class, Server[].class, Tag[].class, Parameter[].class, Schema[].class })
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnProperty(name = "springdoc.api-docs.enabled", havingValue = "true")
 class IdentityBrowserOpenApiConfiguration {

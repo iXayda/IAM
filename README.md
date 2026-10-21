@@ -78,6 +78,22 @@ psql -X --set=runtime_role=iam_runtime --set=iam_schema=public --file=deploy/pos
 java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
+### 原生运行
+
+原生构建使用 Oracle GraalVM 25+，需要 C 编译工具链及 glibc、zlib 开发库。
+
+```bash
+./mvnw -Pnative clean native:compile
+```
+
+完成数据库安装和初始化，配置数据库运行连接、HTTPS 入口、issuer、身份前端地址及保护文件后启动：
+
+```bash
+./target/iam --spring.profiles.active=runtime
+```
+
+交付时保留 `target/iam` 及同目录共享库。原生程序用于 Web 服务，离线维护命令使用同版本 JAR。
+
 ### 容器运行
 
 使用 `.env` 配置 JVM 镜像：
@@ -105,6 +121,13 @@ IAM 会话与应用会话分别管理，IAM 会话不能作为业务 API 的访�
 
 ```bash
 java -jar target/iam.jar --spring.profiles.active=runtime,documentation
+```
+
+原生服务的文档功能需在构建时启用：
+
+```bash
+./mvnw -Pnative -Diam.native.profiles=runtime,documentation clean native:compile
+./target/iam --spring.profiles.active=runtime,documentation
 ```
 
 使用有效会话读取 `/v3/api-docs`（JSON）或 `/v3/api-docs.yaml`（YAML），导出规范到本地后，通过 [独立预览工具](tools/swagger/README.md)校验和查看。

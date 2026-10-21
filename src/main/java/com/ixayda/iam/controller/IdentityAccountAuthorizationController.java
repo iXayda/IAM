@@ -32,6 +32,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -49,6 +50,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ExtendedServletRequestDataBinder;
 
 @RestController
+@RegisterReflectionForBinding({ IdentityAuthorizationPageResponse.class, IdentityAuthorizationResponse[].class })
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Tag(name = "account-authorizations", description = "本人应用授权，与 IAM 浏览器会话及应用本地会话分别管理；仅接受当前密码登录会话，不接受业务 Bearer Token。")
 @ApiResponse(responseCode = "400", description = "查询、路径或请求体无效", content = @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")))

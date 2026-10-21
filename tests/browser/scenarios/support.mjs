@@ -32,6 +32,7 @@ export async function createScenario(directory, suite) {
   const children = [], logs = [], contexts = [];
   const completions = new WeakMap();
   const usedSteps = new Map();
+  usedSteps.set(fixture.adminTotpSecret, fixture.adminTotpUsedStep);
   let browser, stage = 'browser-start', checks = 0, lastStatus, cancelled = false;
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
     cancelled = true; process.exitCode = 1;

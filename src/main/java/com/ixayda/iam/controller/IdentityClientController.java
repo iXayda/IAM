@@ -47,6 +47,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -64,6 +65,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ExtendedServletRequestDataBinder;
 
 @RestController
+@RegisterReflectionForBinding({ IdentityClientSecretResponse.class, IdentityClientSummaryResponse[].class, UUID[].class })
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Tag(name = "clients", description = "保密 Web/BFF 客户端管理。需要当前管理员资格及密码和 TOTP 管理会话；写操作另携带本次新 TOTP。创建或轮换秘密仅在该次成功响应中交付。")
 @ApiResponse(responseCode = "400", description = "输入或 TOTP 无效；JSON 字段须完整且无重复，不进行类型转换", content = { @Content(mediaType = "text/plain", schema = @Schema(type = "string")), @Content(mediaType = "application/json", schema = @Schema(ref = "#/components/schemas/IdentityErrorResponse")) })

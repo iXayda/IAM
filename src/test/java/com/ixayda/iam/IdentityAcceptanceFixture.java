@@ -39,6 +39,7 @@ import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.MountableFile;
 
@@ -51,15 +52,21 @@ public final class IdentityAcceptanceFixture {
 
 	public static void main(String[] args) {
 		try {
-			if (args.length < 3 || args.length > 4 || args.length == 4 && !args[3].equals("--proxy")) {
-				throw new IllegalArgumentException("Invalid acceptance arguments");
+			if (args.length < 3) { throw new IllegalArgumentException("Invalid acceptance arguments"); }
+			Path executable = null; boolean documentation = false; boolean proxy = false;
+			for (int i = 3; i < args.length; i++) {
+				if (args[i].equals("--proxy") && !proxy) { proxy = true; }
+				else if (args[i].equals("--documentation") && !documentation) { documentation = true; }
+				else if (!args[i].startsWith("--") && executable == null) { executable = Path.of(args[i]); }
+				else { throw new IllegalArgumentException("Invalid acceptance arguments"); }
 			}
-			run(Path.of(args[0]), args[1], args[2], args.length == 4);
+			if (documentation && executable == null) { throw new IllegalArgumentException("Documentation acceptance requires the native artifact"); }
+			run(Path.of(args[0]), args[1], args[2], executable, documentation, proxy);
 		}
 		catch (Exception ex) { System.err.println("Isolated acceptance fixture failed"); System.exit(1); }
 	}
 
-	private static void run(Path directory, String issuer, String suite, boolean proxy) throws Exception {
+	private static void run(Path directory, String issuer, String suite, Path executable, boolean documentation, boolean proxy) throws Exception {
 		if (!Set.of("accounts", "application-a", "application-b", "oidc", "mfa").contains(suite)) {
 			throw new IllegalArgumentException("Unknown acceptance suite");
 		}
@@ -98,9 +105,12 @@ public final class IdentityAcceptanceFixture {
 				var id = administrators.createCandidate("acceptance-admin", "Acceptance administrator", adminPassword, audit);
 				var authentication = new TotpAuthenticationContext("deployment:fixture", java.net.InetAddress.getLoopbackAddress(), UUID.randomUUID());
 				var enrollment = administrators.prepareCandidate(id, adminPassword, authentication).orElseThrow().enrollment().orElseThrow();
-				var codes = administrators.bootstrap(id, enrollment.factorId(), adminPassword, otp(enrollment.secret()), authentication).orElseThrow();
+				long step = Instant.now().getEpochSecond() / 30;
+				var codes = administrators.bootstrap(id, enrollment.factorId(), adminPassword, otp(enrollment.secret(), step), authentication).orElseThrow();
 				result.put("adminId", id); result.put("adminUsername", "acceptance-admin"); result.put("adminPassword", adminPassword);
 				result.put("adminTotpSecret", enrollment.secret()); result.put("adminRecoveryCodes", codes.codes());
+				result.put("adminTotpUsedStep", owner.getBean(JdbcClient.class).sql("SELECT last_used_step FROM iam_user_totp WHERE user_id=:id AND factor_id=:factorId")
+						.param("id", id).param("factorId", enrollment.factorId()).query(Long.class).single());
 				prepareScenario(owner, suite, result, audit);
 			}
 			postgres.copyFileToContainer(MountableFile.forHostPath(Path.of("deploy/postgresql/grant-runtime.sql")), "/tmp/grant-runtime.sql");
@@ -120,17 +130,34 @@ public final class IdentityAcceptanceFixture {
 				properties.put("server.ssl.key-store", store.toUri().toString()); properties.put("server.ssl.key-store-password", tlsPassword);
 			}
 			properties.put("spring.datasource.username", "acceptance_runtime"); properties.put("spring.datasource.password", runtimePassword);
-			properties.put("spring.profiles.active", "runtime");
+			properties.put("spring.profiles.active", documentation ? "runtime,documentation" : "runtime");
 			properties.put("spring.flyway.enabled", false); properties.put("iam.database.restricted-runtime", true);
-			try (var runtime = start(properties, WebApplicationType.SERVLET)) {
-				int port = ((WebServerApplicationContext) runtime).getWebServer().getPort();
-				result.put("issuer", issuer); result.put("backend", (proxy ? "http" : "https") + "://127.0.0.1:" + port);
-				result.put("certificate", certificate.toString()); result.put("privateKey", privateKey.toString());
-				protectedFile(directory.resolve("fixture.json"), new JsonMapper().writeValueAsBytes(result));
-				System.out.println("Isolated acceptance fixture ready");
-				while (System.in.read() != -1) { break; }
+			result.put("issuer", issuer); result.put("certificate", certificate.toString()); result.put("privateKey", privateKey.toString());
+			if (executable == null) {
+				try (var runtime = start(properties, WebApplicationType.SERVLET)) {
+					int port = ((WebServerApplicationContext) runtime).getWebServer().getPort();
+					awaitBrowser(directory, result, (proxy ? "http" : "https") + "://127.0.0.1:" + port);
+				}
+			}
+			else {
+				if (suite.equals("accounts")) {
+					IdentityNativeAcceptanceRuntime.verifyStartupRejections(executable, directory, properties, ownerPassword);
+				}
+				try (var runtime = IdentityNativeAcceptanceRuntime.start(executable, directory, properties)) {
+					if (suite.equals("accounts")) {
+						runtime.verifySessionRestart(result, step -> otp((String) result.get("adminTotpSecret"), step), documentation);
+					}
+					awaitBrowser(directory, result, runtime.origin());
+				}
 			}
 		}
+	}
+
+	private static void awaitBrowser(Path directory, Map<String, Object> result, String backend) throws Exception {
+		result.put("backend", backend);
+		protectedFile(directory.resolve("fixture.json"), new JsonMapper().writeValueAsBytes(result));
+		System.out.println("Isolated acceptance fixture ready");
+		System.in.read();
 	}
 
 	private static void prepareScenario(ConfigurableApplicationContext owner, String suite, Map<String, Object> result,
@@ -200,8 +227,7 @@ public final class IdentityAcceptanceFixture {
 		return ("-----BEGIN " + type + "-----\n" + Base64.getMimeEncoder(64, new byte[] { '\n' }).encodeToString(encoded)
 				+ "\n-----END " + type + "-----\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
 	}
-	private static String otp(String secret) {
-		long step = Instant.now().getEpochSecond() / 30 - 1;
+	private static String otp(String secret, long step) {
 		byte[] counter = java.nio.ByteBuffer.allocate(8).putLong(step).array();
 		var hmac = new HMac(new SHA1Digest()); hmac.init(new KeyParameter(Base32.decode(secret))); hmac.update(counter, 0, counter.length);
 		byte[] hash = new byte[20]; hmac.doFinal(hash, 0); int position = hash[19] & 15;

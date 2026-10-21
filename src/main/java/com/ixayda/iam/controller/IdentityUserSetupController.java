@@ -29,6 +29,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -45,6 +46,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ExtendedServletRequestDataBinder;
 
 @RestController
+@RegisterReflectionForBinding(IdentityUserSetupResponse.class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @Tag(name = "account-setup", description = "受控账号开通凭据")
 public class IdentityUserSetupController {

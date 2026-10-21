@@ -22,6 +22,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.authentication.ProviderManager;
@@ -43,6 +44,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 /** Fixed-issuer protocol entrypoints; browser authentication remains in its own security chain. */
 @Configuration(proxyBeanMethods = false)
+@ImportRuntimeHints(IdentityProtocolRuntimeHints.class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnProperty(name = "iam.protocol.issuer")
 public class IdentityProtocolConfiguration {

@@ -78,6 +78,22 @@ The public entry point uses HTTPS, terminated by IAM or a trusted proxy. Forward
 java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
+### Native runtime
+
+Native builds use Oracle GraalVM 25+ and require a C compiler toolchain plus the glibc and zlib development libraries.
+
+```bash
+./mvnw -Pnative clean native:compile
+```
+
+After installing and initializing the database, configure the runtime database connection, HTTPS entry point, issuer, identity frontend URL, and protection files, then start the service:
+
+```bash
+./target/iam --spring.profiles.active=runtime
+```
+
+Distribute `target/iam` together with the shared libraries in the same directory. The native executable runs the web service; use the JAR from the same version for offline maintenance commands.
+
 ### Container runtime
 
 Configure the JVM image through `.env`:
@@ -105,6 +121,13 @@ springdoc generates the API specification from controllers and DTOs, with additi
 
 ```bash
 java -jar target/iam.jar --spring.profiles.active=runtime,documentation
+```
+
+Native services require documentation support to be enabled at build time:
+
+```bash
+./mvnw -Pnative -Diam.native.profiles=runtime,documentation clean native:compile
+./target/iam --spring.profiles.active=runtime,documentation
 ```
 
 Use a valid session to read `/v3/api-docs` (JSON) or `/v3/api-docs.yaml` (YAML). Export the specification locally, then validate and view it with the [standalone preview tool](tools/swagger/README.md).

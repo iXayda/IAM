@@ -20,6 +20,7 @@ import io.swagger.v3.oas.annotations.security.SecurityScheme;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.core.NativeDetector;
 
 @SpringBootApplication
 @OpenAPIDefinition(info = @Info(title = "IAM API", version = "0.1.0",
@@ -33,6 +34,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class IamApplication {
 
 	public static void main(String[] args) {
+		if (NativeDetector.inNativeImage() && args.length > 0 && !args[0].startsWith("--")) {
+			throw new IllegalArgumentException("Native IAM supports the Web runtime; use the JVM JAR for maintenance commands");
+		}
 		if (args.length > 0 && args[0].equals("release-restore")) {
 			RestoreReleaseCommand.run(IamApplication.class, args);
 			return;

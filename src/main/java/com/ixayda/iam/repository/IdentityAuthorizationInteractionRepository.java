@@ -12,6 +12,8 @@ import java.util.UUID;
 import com.ixayda.iam.credential.AuthorizationSecrets;
 import com.ixayda.iam.model.IdentityAuthorizationInteraction;
 
+import org.springframework.aot.hint.annotation.RegisterReflectionForBinding;
+
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Repository;
 
 /** Immutable encrypted requests; only digests and authenticated timing bounds remain queryable. */
 @Repository
+@RegisterReflectionForBinding(IdentityAuthorizationInteraction.Request.class)
 public class IdentityAuthorizationInteractionRepository {
 
 	private static final JsonMapper JSON = JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
