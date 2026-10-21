@@ -8,6 +8,8 @@
 
 使用专用数据库，维护账号执行迁移和离线命令，Web 使用受限运行账号。连接配置分别注入，Web 进程不持有维护密码。首次安装的角色、连接及启动配置见 [README](../README.md#开发与运行)。
 
+Compose 将宿主机专用目录 `IAM_SECRETS_DIR`（默认 `/etc/iam/secrets`）只读挂载至 `/run/iam`。目录中放置 `signing.key`、`totp.key` 和 `authorization.key`，允许 UID `10001` 读取；IAM 提供 HTTPS 时，还需在此提供 TLS 密钥库。镜像与维护 JAR 保持同一版本。构建见 [容器运行](../README.md#容器运行)及 [.env.example](../.env.example)，运行镜像不包含组织秘密。
+
 ## 持久保护文件
 
 | 环境变量 | 内容 |

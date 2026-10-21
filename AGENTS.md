@@ -6,6 +6,7 @@
 
 - `src/main/java/com/ixayda/iam/`：Java 源码；`src/test/java/com/ixayda/iam/`：Java 测试及共享夹具。
 - `examples/oidc/`：独立 BFF 和资源服务示例；`tests/browser/`：浏览器验证，`tests/browser/fixtures/` 下的身份前端仅用于测试。
+- `build/`、`compose.yaml`：容器构建与运行配置。
 
 ## 开发环境
 

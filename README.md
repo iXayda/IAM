@@ -79,6 +79,17 @@ psql -X --set=runtime_role=iam_runtime --set=iam_schema=public --file=deploy/pos
 java -jar target/iam.jar --spring.profiles.active=runtime
 ```
 
+### 容器运行
+
+在宿主机的专用目录中准备与数据库匹配的 `signing.key`、`totp.key` 和 `authorization.key`，IAM 直接提供 HTTPS 时再放入 `tls.p12`。将 `.env` 中的 `IAM_SECRETS_DIR` 设为该目录的绝对路径，并配置 JVM 镜像。Compose 将目录只读挂载至 `/run/iam`，容器用户 UID 10001 需能读取文件。
+
+```bash
+# 复制配置示例
+cp .env.example .env
+# 按 .env 中的注释完成配置后启动
+docker compose up -d
+```
+
 ## 应用接入
 
 应用没有默认账号或公开注册入口。用户需经授权创建，由组织核验身份并交付一次性开通凭据，完成密码设置后登录。
