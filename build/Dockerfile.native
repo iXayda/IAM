@@ -24,6 +24,31 @@ RUN --mount=type=cache,target=/root/.m2 \
         "-Diam.native.profiles=${IAM_PROFILES}" \
         native:compile
 
+# 汇总应用、依赖及 GraalVM 许可
+RUN microdnf install -y unzip findutils diffutils \
+    && microdnf clean all
+
+COPY LICENSE ./LICENSE
+COPY .github/packaging/license-overrides.xml .github/packaging/license-overrides.xml
+COPY .github/scripts/collect-notices.sh .github/scripts/collect-notices.sh
+
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw \
+        --batch-mode \
+        --no-transfer-progress \
+        --activate-profiles native,licenses \
+        "-Diam.native.profiles=${IAM_PROFILES}" \
+        -DincludeScope=runtime \
+        -Dmdep.copyPom=true \
+        -Dmdep.useRepositoryLayout=true \
+        -DoutputDirectory=target/runtime-dependencies \
+        generate-resources dependency:copy-dependencies \
+    && bash .github/scripts/collect-notices.sh \
+        target/iam.jar target/runtime-dependencies target/legal target/third-party \
+    && mkdir -p target/legal/oracle-graalvm \
+    && cp "${JAVA_HOME}/LICENSE.txt" "${JAVA_HOME}/NOTICE.txt" target/legal/oracle-graalvm/ \
+    && cp -RL "${JAVA_HOME}/legal" target/legal/oracle-graalvm/
+
 # 运行镜像
 FROM container-registry.oracle.com/os/oraclelinux:9-slim AS runtime
 ARG IAM_PROFILES
@@ -36,6 +61,7 @@ WORKDIR /apps/iam
 
 COPY --from=build /build/target/iam /apps/iam/iam-server
 COPY --from=build /build/target/*.so /apps/iam/
+COPY --from=build /build/target/legal/ /apps/iam/legal/
 
 ENV SPRING_PROFILES_ACTIVE=${IAM_PROFILES}
 USER 10001:10001

@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      POSTGRES_PASSWORD: ${SMOKE_POSTGRES_PASSWORD:?}
+    ports:
+      - "127.0.0.1::5432"
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, postgres]
+      interval: 1s
+      timeout: 3s
+      retries: 30
