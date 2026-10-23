@@ -1,0 +1,221 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: 'true'
+
+jobs:
+  version:
+    name: Validate RC version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out source revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Oracle JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: oracle
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Read and validate project version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(./mvnw -B -ntp -q help:evaluate -Dexpression=project.version -DforceStdout)
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.(0|[1-9][0-9]*)$ ]]; then
+            printf 'Expected an x.y.z-rc.N project version, got: %s\n' "$version" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Verify release source
+    needs: version
+    uses: ./.github/workflows/verify.yml
+    with:
+      package: true
+
+  images:
+    name: Package ${{ matrix.runtime }} image
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [jvm, native]
+
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      RUNTIME: ${{ matrix.runtime }}
+      IMAGE_ARCHIVE: target/rc-images/iam-${{ needs.version.outputs.version }}-image-${{ matrix.runtime }}-linux-amd64.tar.gz
+
+    steps:
+      - name: Check out source revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Build and archive image
+        run: |
+          set -euo pipefail
+          image="iam:${VERSION}-${RUNTIME}"
+          docker build --platform linux/amd64 --build-arg IAM_PROFILES=runtime \
+            --file "build/Dockerfile.${RUNTIME}" --tag "$image" .
+          expected_id=$(docker image inspect --format '{{.Id}}' "$image")
+          mkdir -p "$(dirname "$IMAGE_ARCHIVE")"
+          docker image save "$image" | gzip -1 > "$IMAGE_ARCHIVE.partial"
+          mv "$IMAGE_ARCHIVE.partial" "$IMAGE_ARCHIVE"
+          docker image rm "$image"
+          gzip -dc "$IMAGE_ARCHIVE" | docker image load
+          actual_id=$(docker image inspect --format '{{.Id}}' "$image")
+          if [[ "$actual_id" != "$expected_id" ]]; then
+            printf 'Loaded image ID does not match the built image\n' >&2
+            exit 1
+          fi
+          docker run --rm --network none --entrypoint /bin/sh "$image" -c \
+            'test -r /apps/iam/legal/LICENSE &&
+             test -s /apps/iam/legal/THIRD-PARTY-NOTICES && test -s /apps/iam/legal/INVENTORY.tsv'
+          if [[ "$RUNTIME" == native ]]; then
+            docker run --rm --network none --entrypoint /bin/sh "$image" -c \
+              'test -r /apps/iam/legal/oracle-graalvm/LICENSE.txt &&
+               test -r /apps/iam/legal/oracle-graalvm/NOTICE.txt &&
+               test -d /apps/iam/legal/oracle-graalvm/legal'
+          fi
+
+      - name: Upload image archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: iam-image-${{ matrix.runtime }}
+          path: ${{ env.IMAGE_ARCHIVE }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  assemble:
+    name: Assemble verified RC artifacts
+    needs: [version, verify, images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    steps:
+      - name: Check out source revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Oracle JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: oracle
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Download verified JAR
+        uses: actions/download-artifact@v8
+        with:
+          name: iam-jar
+          path: target/rc-inputs/jar
+
+      - name: Download verified native application
+        uses: actions/download-artifact@v8
+        with:
+          name: iam-native-runtime
+          path: target/rc-inputs/native
+
+      - name: Download JVM image archive
+        uses: actions/download-artifact@v8
+        with:
+          name: iam-image-jvm
+          path: target/rc-inputs/jvm-image
+
+      - name: Download native image archive
+        uses: actions/download-artifact@v8
+        with:
+          name: iam-image-native
+          path: target/rc-inputs/native-image
+
+      - name: Collect runtime licenses and dependencies
+        run: |
+          set -euo pipefail
+          ./mvnw -B -ntp -Plicenses generate-resources dependency:copy-dependencies -DincludeScope=runtime \
+            -Dmdep.copyPom=true -Dmdep.useRepositoryLayout=true \
+            -DoutputDirectory=target/rc-dependencies
+
+      - name: Assemble RC distribution
+        run: |
+          set -euo pipefail
+          bash .github/scripts/package-rc.sh "$VERSION"
+
+      - name: Upload verified RC distribution
+        uses: actions/upload-artifact@v7
+        with:
+          name: iam-${{ needs.version.outputs.version }}
+          path: target/rc/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    name: Publish RC release
+    needs: [version, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out source revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download verified RC distribution
+        uses: actions/download-artifact@v8
+        with:
+          name: iam-${{ needs.version.outputs.version }}
+          path: target/rc
+
+      - name: Create tag and publish prerelease
+        run: bash .github/scripts/publish-rc.sh "$VERSION"

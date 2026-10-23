@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<licenseSummary>
+  <dependencies>
+    <!-- These POMs publish no URL. Preserve their metadata and the JAR's original license. -->
+    <dependency>
+      <groupId>\Qorg.springframework.session\E</groupId>
+      <artifactId>spring-session-(core|jdbc)</artifactId>
+      <version>\Q4.1.1\E</version>
+      <matchLicenses>
+        <license>
+          <name>\QBroadcom Foundation License\E</name>
+        </license>
+      </matchLicenses>
+      <licenses approved="true"/>
+    </dependency>
+    <!-- Use the complete license of this exact Jakarta Annotations release. -->
+    <dependency>
+      <groupId>\Qjakarta.annotation\E</groupId>
+      <artifactId>\Qjakarta.annotation-api\E</artifactId>
+      <version>\Q3.0.0\E</version>
+      <matchLicenses>
+        <license>
+          <name>\QEPL 2.0\E</name>
+          <url>\Qhttps://www.eclipse.org/legal/epl-2.0\E</url>
+          <distribution>\Qrepo\E</distribution>
+        </license>
+        <license>
+          <name>\QGPL2 w/ CPE\E</name>
+          <url>\Qhttps://www.gnu.org/software/classpath/license.html\E</url>
+          <distribution>\Qrepo\E</distribution>
+        </license>
+      </matchLicenses>
+      <licenses>
+        <license>
+          <name>EPL 2.0</name>
+          <url>https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.txt</url>
+        </license>
+        <license>
+          <name>GPL2 w/ CPE</name>
+          <url>https://raw.githubusercontent.com/jakartaee/common-annotations-api/3.0.0/LICENSE.md</url>
+        </license>
+      </licenses>
+    </dependency>
+    <!-- The POM links to a README rather than the Apache license text. -->
+    <dependency>
+      <groupId>\Qorg.flywaydb\E</groupId>
+      <artifactId>flyway-(core|database-postgresql)</artifactId>
+      <version>\Q12.4.0\E</version>
+      <matchLicenses>
+        <license>
+          <name>\QApache License, Version 2.0\E</name>
+          <url>\Qhttps://github.com/flyway/flyway/blob/main/README.txt\E</url>
+          <distribution>\Qrepo\E</distribution>
+        </license>
+      </matchLicenses>
+      <licenses>
+        <license>
+          <name>Apache License, Version 2.0</name>
+          <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
+      </licenses>
+    </dependency>
+  </dependencies>
+</licenseSummary>

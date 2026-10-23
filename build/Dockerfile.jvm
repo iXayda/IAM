@@ -39,6 +39,27 @@ RUN --mount=type=cache,target=/root/.m2 \
         -DskipTests \
         package
 
+# 汇总应用及依赖许可
+RUN microdnf install -y unzip findutils diffutils \
+    && microdnf clean all
+
+COPY LICENSE ./LICENSE
+COPY .github/packaging/license-overrides.xml .github/packaging/license-overrides.xml
+COPY .github/scripts/collect-notices.sh .github/scripts/collect-notices.sh
+
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw \
+        --batch-mode \
+        --no-transfer-progress \
+        --activate-profiles licenses \
+        -DincludeScope=runtime \
+        -Dmdep.copyPom=true \
+        -Dmdep.useRepositoryLayout=true \
+        -DoutputDirectory=target/runtime-dependencies \
+        generate-resources dependency:copy-dependencies \
+    && bash .github/scripts/collect-notices.sh \
+        target/iam.jar target/runtime-dependencies target/legal target/third-party
+
 # 运行镜像
 FROM java AS runtime
 ARG IAM_PROFILES=runtime
@@ -48,6 +69,7 @@ RUN mkdir -p /apps/iam /run/iam
 WORKDIR /apps/iam
 
 COPY --from=build /build/target/*.jar /apps/iam/iam-server.jar
+COPY --from=build /build/target/legal/ /apps/iam/legal/
 
 ENV SPRING_PROFILES_ACTIVE=${IAM_PROFILES}
 # 为非堆内存保留余量，堆上限使用容器可用内存的 50%。

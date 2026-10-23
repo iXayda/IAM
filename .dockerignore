@@ -3,3 +3,6 @@
 !pom.xml
 !.mvn/wrapper/maven-wrapper.properties
 !src/main/**
+!LICENSE
+!.github/scripts/collect-notices.sh
+!.github/packaging/license-overrides.xml

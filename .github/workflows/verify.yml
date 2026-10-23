@@ -5,12 +5,18 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      package:
+        description: Preserve the verified JAR for RC packaging
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -68,6 +74,16 @@ jobs:
         run: >-
           ./mvnw -B -ntp -DargLine=-Xmx2g -Dspring.test.context.cache.maxSize=4
           -DfailIfNoTests=true "-Dtest=$TEST_SELECTION" clean "$MAVEN_PHASE"
+
+      - name: Preserve verified JAR
+        if: ${{ inputs.package && matrix.suite == 'core' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: iam-jar
+          path: target/iam.jar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
 
   examples:
     name: OIDC examples
@@ -186,6 +202,12 @@ jobs:
           docker build --check --file build/Dockerfile.native .
           docker build --check --file build/Dockerfile.jvm .
 
+      - name: Check packaging script syntax
+        run: |
+          for script in .github/scripts/*.sh; do
+            bash -n "$script"
+          done
+
       - name: Validate container configuration
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://database.example.invalid:5432/iam
@@ -239,8 +261,7 @@ jobs:
           -Diam.native.profiles=runtime clean native:compile
 
       - name: Package native application
-        working-directory: target
-        run: tar -czf iam-native.tar.gz iam ./*.so
+        run: bash .github/scripts/package-native.sh runtime
 
       - name: Upload native application
         uses: actions/upload-artifact@v7
@@ -356,8 +377,7 @@ jobs:
           -Diam.native.profiles=runtime,documentation clean native:compile
 
       - name: Package native application
-        working-directory: target
-        run: tar -czf iam-native.tar.gz iam ./*.so
+        run: bash .github/scripts/package-native.sh runtime,documentation
 
       - name: Upload native application
         uses: actions/upload-artifact@v7
